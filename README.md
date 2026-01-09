@@ -1,3 +1,5 @@
+on system : emacs/slime,sbcl,quicklisp,raylib,raygui
+
 Open main.lisp
 
 M-x slime
