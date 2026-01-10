@@ -2,7 +2,7 @@
 
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
-(defparameter *player-speed* 120.0)
+(defparameter *player-speed* 222.0)
 (defparameter *player-sprite-dir* "../assets/1 Characters/1")
 (defparameter *sprite-frame-width* 32.0)
 (defparameter *sprite-frame-height* 32.0)
