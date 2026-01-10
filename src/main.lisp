@@ -10,10 +10,12 @@
 (defparameter *sprite-scale* 4.0)
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ; Atlas image used for floor tiles.
-(defparameter *tile-size* 16.0) ; Source tile size in the atlas, in pixels.
+(defparameter *tile-size* 16) ; Source tile size in the atlas, in pixels.
 (defparameter *tile-scale* 4.0) ; Scale factor for drawing tiles to the screen.
 (defparameter *tileset-columns* 19) ; Number of columns in the atlas grid.
 (defparameter *floor-tile-index* 20) ; Which atlas tile index to use for the floor fill.
+(defparameter *floor-variant-indices* '(0 21 22 23)) ; Occasional variants (0 means "empty").
+(defparameter *floor-variant-mod* 10) ; 1 in N chance to use a variant instead of main.
 (defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
 (defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
@@ -27,6 +29,10 @@
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
+(defparameter +key-left-bracket+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-bracket))
+(defparameter +key-right-bracket+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-bracket))
+(defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
+(defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
 
 (defun move-player (x y dt)
   (let ((dx 0.0)
@@ -61,23 +67,58 @@
 (defun player-state (dx dy)
   (if (and (zerop dx) (zerop dy)) :idle :walk))
 
-(defun tile-source-rect (tile-index)
+(defun shift-held-p ()
+  (or (raylib:is-key-down +key-left-shift+)
+      (raylib:is-key-down +key-right-shift+)))
+
+(defun hash-xy (x y)
+  (let* ((n (+ (* x 374761393) (* y 668265263)))
+         (n (logxor n (ash n -13))))
+    (abs n)))
+
+(defun choose-floor-tile (x y main-index variant-indices)
+  (let* ((variant-count (length variant-indices))
+         (h (hash-xy x y)))
+    (if (and (> variant-count 0)
+             (zerop (mod h *floor-variant-mod*)))
+        (nth (mod (ash h -4) variant-count) variant-indices)
+        main-index)))
+
+(defun build-floor-map (map-width map-height main-index variant-indices)
+  (let ((map (make-array (list map-height map-width))))
+    (loop :for row :below map-height
+          :do (loop :for col :below map-width
+                    :do (setf (aref map row col)
+                              (choose-floor-tile col row main-index variant-indices))))
+    map))
+
+(defun set-rectangle (rect x y width height)
+  (setf (raylib:rectangle-x rect) x
+        (raylib:rectangle-y rect) y
+        (raylib:rectangle-width rect) width
+        (raylib:rectangle-height rect) height)
+  rect)
+
+(defun set-tile-source-rect (rect tile-index tile-size-f)
   (let* ((col (mod tile-index *tileset-columns*))
          (row (floor tile-index *tileset-columns*)))
-    (raylib:make-rectangle
-     :x (* col *tile-size*)
-     :y (* row *tile-size*)
-     :width *tile-size*
-     :height *tile-size*)))
+    (set-rectangle rect
+                   (* col tile-size-f)
+                   (* row tile-size-f)
+                   tile-size-f
+                   tile-size-f)))
 
 (defun run ()
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
-    (let* ((tile-dest-size (* *tile-size* *tile-scale*))
+    (let* ((tile-size-f (float *tile-size* 1.0))
+           (tile-dest-size (* tile-size-f *tile-scale*))
            (map-width (ceiling (/ *window-width* tile-dest-size)))
            (map-height (ceiling (/ *window-height* tile-dest-size)))
-           (floor-map (make-array (list map-height map-width)
-                                  :initial-element *floor-tile-index*))
+           (floor-index *floor-tile-index*)
+           (floor-map (build-floor-map map-width map-height
+                                        floor-index *floor-variant-indices*))
+           (floor-index-text (format nil "Floor tile: ~d" floor-index))
            (scaled-width (* *sprite-frame-width* *sprite-scale*))
            (scaled-height (* *sprite-frame-height* *sprite-scale*))
            (half-sprite-width (/ scaled-width 2.0))
@@ -90,6 +131,11 @@
            (player-direction :down)
            (frame-index 0)
            (frame-timer 0.0)
+           (origin (raylib:make-vector2 :x 0.0 :y 0.0))
+           (tile-source (raylib:make-rectangle))
+           (tile-dest (raylib:make-rectangle))
+           (player-source (raylib:make-rectangle))
+           (player-dest (raylib:make-rectangle))
            (tileset (raylib:load-texture *tileset-path*))
            (down-idle (raylib:load-texture (sprite-path "D_Idle.png")))
            (down-walk (raylib:load-texture (sprite-path "D_Walk.png")))
@@ -105,6 +151,19 @@
                                       (- *window-width* half-sprite-width)))
                        (setf y (clamp y half-sprite-height
                                       (- *window-height* half-sprite-height)))
+                       (let* ((step (if (shift-held-p) 10 1))
+                              (changed nil))
+                         (when (raylib:is-key-pressed +key-left-bracket+)
+                           (setf floor-index (clamp (- floor-index step) 0 208)
+                                 changed t))
+                         (when (raylib:is-key-pressed +key-right-bracket+)
+                           (setf floor-index (clamp (+ floor-index step) 0 208)
+                                 changed t))
+                         (when changed
+                           (setf floor-map
+                                 (build-floor-map map-width map-height
+                                                  floor-index *floor-variant-indices*)
+                                 floor-index-text (format nil "Floor tile: ~d" floor-index))))
                        (let* ((state (player-state dx dy))
                               (direction (player-direction dx dy))
                               (frame-count (if (eq state :walk)
@@ -127,51 +186,47 @@
                                          (mod (1+ frame-index) frame-count)))
                          (raylib:with-drawing
                            (raylib:clear-background raylib:+black+)
-                           (let ((origin (raylib:make-vector2 :x 0.0 :y 0.0)))
-                             (loop :for row :below map-height
-                                   :for dest-y :from 0.0 :by tile-dest-size
-                                   :do (loop :for col :below map-width
-                                             :for dest-x :from 0.0 :by tile-dest-size
-                                             :for tile-index = (aref floor-map row col)
-                                             :for source = (tile-source-rect tile-index)
-                                             :for dest = (raylib:make-rectangle
-                                                          :x dest-x
-                                                          :y dest-y
-                                                          :width tile-dest-size
-                                                          :height tile-dest-size)
-                                             :do (raylib:draw-texture-pro tileset
-                                                                          source
-                                                                          dest
+                           (loop :for row :below map-height
+                                 :for dest-y :from 0.0 :by tile-dest-size
+                                 :do (loop :for col :below map-width
+                                           :for dest-x :from 0.0 :by tile-dest-size
+                                           :for tile-index = (aref floor-map row col)
+                                           :when (not (zerop tile-index))
+                                             :do (set-tile-source-rect tile-source tile-index tile-size-f)
+                                                 (set-rectangle tile-dest dest-x dest-y
+                                                                tile-dest-size tile-dest-size)
+                                                 (raylib:draw-texture-pro tileset
+                                                                          tile-source
+                                                                          tile-dest
                                                                           origin
                                                                           0.0
                                                                           raylib:+white+)))
-                             (let* ((texture (ecase direction
-                                               (:down (if (eq state :walk) down-walk down-idle))
-                                               (:up (if (eq state :walk) up-walk up-idle))
-                                               (:side (if (eq state :walk) side-walk side-idle))))
-                                    (src-x (* frame-index *sprite-frame-width*))
-                                    (src-x (if flip
-                                               (+ src-x *sprite-frame-width*)
-                                               src-x))
-                                    (src-width (if flip
-                                                   (- *sprite-frame-width*)
-                                                   *sprite-frame-width*))
-                                    (source (raylib:make-rectangle
-                                             :x src-x
-                                             :y 0.0
-                                             :width src-width
-                                             :height *sprite-frame-height*))
-                                    (dest (raylib:make-rectangle
-                                           :x (- x half-sprite-width)
-                                           :y (- y half-sprite-height)
-                                           :width scaled-width
-                                           :height scaled-height)))
-                               (raylib:draw-texture-pro texture
-                                                        source
-                                                        dest
-                                                        origin
-                                                        0.0
-                                                        raylib:+white+)))))))
+                           (let* ((texture (ecase direction
+                                             (:down (if (eq state :walk) down-walk down-idle))
+                                             (:up (if (eq state :walk) up-walk up-idle))
+                                             (:side (if (eq state :walk) side-walk side-idle))))
+                                  (src-x (* frame-index *sprite-frame-width*))
+                                  (src-x (if flip
+                                             (+ src-x *sprite-frame-width*)
+                                             src-x))
+                                  (src-width (if flip
+                                                 (- *sprite-frame-width*)
+                                                 *sprite-frame-width*)))
+                             (set-rectangle player-source
+                                            src-x 0.0
+                                            src-width *sprite-frame-height*)
+                             (set-rectangle player-dest
+                                            (- x half-sprite-width)
+                                            (- y half-sprite-height)
+                                            scaled-width scaled-height)
+                             (raylib:draw-texture-pro texture
+                                                      player-source
+                                                      player-dest
+                                                      origin
+                                                      0.0
+                                                      raylib:+white+))
+                           (raylib:draw-text floor-index-text
+                                             10 10 20 raylib:+white+)))))
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)

@@ -50,3 +50,11 @@ Given i:
 - One layer only (floor)
 - No walls, collision, camera, or Tiled integration yet
 - Use Tileset.png atlas (don’t load individual Tile_XX.png)
+
+## How to keep it smooth as we scale
+
+- Avoid per‑frame consing in hot loops: reuse rectangles, vectors, strings, and animation state.
+- Cull off‑screen tiles/sprites; draw only what’s visible.
+- Chunk the map (e.g., 32×32 tiles) and cache static chunks in a render texture.
+- Keep entity data in arrays/structs, not lists; use object pools.
+- Separate update/draw; keep animation state lightweight.
