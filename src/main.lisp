@@ -6,6 +6,7 @@
 (defparameter *player-sprite-dir* "../assets/1 Characters/1")
 (defparameter *sprite-frame-width* 32.0)
 (defparameter *sprite-frame-height* 32.0)
+(defparameter *sprite-scale* 4.0)
 (defparameter *idle-frame-count* 4)
 (defparameter *walk-frame-count* 6)
 (defparameter *idle-frame-time* 0.25)
@@ -56,80 +57,82 @@
 (defun run ()
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
-    (let* ((half-sprite-width (/ *sprite-frame-width* 2.0))
-           (half-sprite-height (/ *sprite-frame-height* 2.0))
+    (let* ((scaled-width (* *sprite-frame-width* *sprite-scale*))
+           (scaled-height (* *sprite-frame-height* *sprite-scale*))
+           (half-sprite-width (/ scaled-width 2.0))
+           (half-sprite-height (/ scaled-height 2.0))
            (x (/ *window-width* 2.0))
            (y (/ *window-height* 2.0))
-          (dx 0.0)
-          (dy 0.0)
-          (player-state :idle)
-          (player-direction :down)
-          (frame-index 0)
-          (frame-timer 0.0)
-          (down-idle (raylib:load-texture (sprite-path "D_Idle.png")))
-          (down-walk (raylib:load-texture (sprite-path "D_Walk.png")))
-          (up-idle (raylib:load-texture (sprite-path "U_Idle.png")))
-          (up-walk (raylib:load-texture (sprite-path "U_Walk.png")))
-          (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
-          (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
+           (dx 0.0)
+           (dy 0.0)
+           (player-state :idle)
+           (player-direction :down)
+           (frame-index 0)
+           (frame-timer 0.0)
+           (down-idle (raylib:load-texture (sprite-path "D_Idle.png")))
+           (down-walk (raylib:load-texture (sprite-path "D_Walk.png")))
+           (up-idle (raylib:load-texture (sprite-path "U_Idle.png")))
+           (up-walk (raylib:load-texture (sprite-path "U_Walk.png")))
+           (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
+           (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
       (unwind-protect
-          (loop :until (raylib:window-should-close)
-                :do (let ((dt (raylib:get-frame-time)))
-                      (multiple-value-setq (x y dx dy) (move-player x y dt))
-                      (setf x (clamp x half-sprite-width
-                                     (- *window-width* half-sprite-width)))
-                      (setf y (clamp y half-sprite-height
-                                     (- *window-height* half-sprite-height)))
-                      (let* ((state (player-state dx dy))
-                             (direction (player-direction dx dy))
-                             (frame-count (if (eq state :walk)
-                                              *walk-frame-count*
-                                              *idle-frame-count*))
-                             (frame-time (if (eq state :walk)
-                                             *walk-frame-time*
-                                             *idle-frame-time*))
-                             (flip (and (eq direction :side) (< dx 0.0))))
-                        (unless (and (eq state player-state)
-                                     (eq direction player-direction))
-                          (setf player-state state
-                                player-direction direction
-                                frame-index 0
-                                frame-timer 0.0))
-                        (incf frame-timer dt)
-                        (loop :while (>= frame-timer frame-time)
-                              :do (decf frame-timer frame-time)
-                                  (setf frame-index
-                                        (mod (1+ frame-index) frame-count)))
-                        (raylib:with-drawing
-                          (raylib:clear-background raylib:+black+)
-                          (let* ((texture (ecase direction
-                                            (:down (if (eq state :walk) down-walk down-idle))
-                                            (:up (if (eq state :walk) up-walk up-idle))
-                                            (:side (if (eq state :walk) side-walk side-idle))))
-                                 (src-x (* frame-index *sprite-frame-width*))
-                                 (src-x (if flip
-                                            (+ src-x *sprite-frame-width*)
-                                            src-x))
-                                 (src-width (if flip
-                                                (- *sprite-frame-width*)
-                                                *sprite-frame-width*))
-                                 (source (raylib:make-rectangle
-                                          :x src-x
-                                          :y 0.0
-                                          :width src-width
-                                          :height *sprite-frame-height*))
-                                 (dest (raylib:make-rectangle
-                                        :x (- x (/ *sprite-frame-width* 2.0))
-                                        :y (- y (/ *sprite-frame-height* 2.0))
-                                        :width *sprite-frame-width*
-                                        :height *sprite-frame-height*))
-                                 (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
-                            (raylib:draw-texture-pro texture
-                                                     source
-                                                     dest
-                                                     origin
-                                                     0.0
-                                                     raylib:+white+))))))
+           (loop :until (raylib:window-should-close)
+                 :do (let ((dt (raylib:get-frame-time)))
+                       (multiple-value-setq (x y dx dy) (move-player x y dt))
+                       (setf x (clamp x half-sprite-width
+                                      (- *window-width* half-sprite-width)))
+                       (setf y (clamp y half-sprite-height
+                                      (- *window-height* half-sprite-height)))
+                       (let* ((state (player-state dx dy))
+                              (direction (player-direction dx dy))
+                              (frame-count (if (eq state :walk)
+                                               *walk-frame-count*
+                                               *idle-frame-count*))
+                              (frame-time (if (eq state :walk)
+                                              *walk-frame-time*
+                                              *idle-frame-time*))
+                             (flip (and (eq direction :side) (> dx 0.0))))
+                         (unless (and (eq state player-state)
+                                      (eq direction player-direction))
+                           (setf player-state state
+                                 player-direction direction
+                                 frame-index 0
+                                 frame-timer 0.0))
+                         (incf frame-timer dt)
+                         (loop :while (>= frame-timer frame-time)
+                               :do (decf frame-timer frame-time)
+                                   (setf frame-index
+                                         (mod (1+ frame-index) frame-count)))
+                         (raylib:with-drawing
+                           (raylib:clear-background raylib:+black+)
+                           (let* ((texture (ecase direction
+                                             (:down (if (eq state :walk) down-walk down-idle))
+                                             (:up (if (eq state :walk) up-walk up-idle))
+                                             (:side (if (eq state :walk) side-walk side-idle))))
+                                  (src-x (* frame-index *sprite-frame-width*))
+                                  (src-x (if flip
+                                             (+ src-x *sprite-frame-width*)
+                                             src-x))
+                                  (src-width (if flip
+                                                 (- *sprite-frame-width*)
+                                                 *sprite-frame-width*))
+                                  (source (raylib:make-rectangle
+                                           :x src-x
+                                           :y 0.0
+                                           :width src-width
+                                           :height *sprite-frame-height*))
+                                  (dest (raylib:make-rectangle
+                                         :x (- x half-sprite-width)
+                                         :y (- y half-sprite-height)
+                                         :width scaled-width
+                                         :height scaled-height))
+                                  (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+                             (raylib:draw-texture-pro texture
+                                                      source
+                                                      dest
+                                                      origin
+                                                      0.0
+                                                      raylib:+white+))))))
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)
         (raylib:unload-texture up-idle)
