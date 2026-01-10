@@ -1,37 +1,6 @@
 # AGENTS.md
 
-Minimal “prove-it” Common Lisp + raylib project.
-
-Goal: open a raylib window from Common Lisp via `claw-raylib`, and move a pixel (tiny rectangle) on screen.
-
----
-
-## What this project is (right now)
-
-- One executable-ish entrypoint you run from SLIME/REPL.
-- One moving “player pixel”.
-- No networking, no database, no assets pipeline.
-- A foundation we can later split into client/server.
-
-This exists purely to prove:
-> **Common Lisp + raylib works and feels good to iterate on.**
-
----
-
-## Prerequisites (Arch Linux)
-
-System packages:
-
-```bash
-sudo pacman -S raylib sbcl
-```
-
-You also need:
-- SBCL (DONE)
-- Quicklisp (DONE)
-- Emacs + SLIME (DONE)
-
----
+Minimal Common Lisp + raylib project slowly iterating in to a single player rpg.
 
 ## Project layout
 
@@ -39,44 +8,86 @@ You also need:
 mmorpg/
   AGENTS.md
   mmorpg.asd
+  assets/*
+    ...
   src/
     package.lisp
     main.lisp
-```
-
-This repo should depend **only** on `claw-raylib` for the graphics proof.
-
----
-
-## “Hello MMO” proof target
-
-We want the absolute minimum:
-
-- A window
-- A 2x2 or 4x4 rectangle (the “player”)
-- Move with arrow keys or WASD
-- 60 FPS loop
-- Runnable from SLIME
-
-Entry point:
-```lisp
-(mmorpg:run)
+  docs/
+    raylib_cheatsheet.md
+    claw-raylib-readme.org
 ```
 
 ---
 
-## Development workflow
+## Current Task
 
-1. Start SBCL via SLIME.
-2. Load project:
-   ```lisp
-   (ql:quickload :mmorpg)
-   ```
-3. Run:
-   ```lisp
-   (mmorpg:run)
-   ```
-4. Edit code.
-5. `C-c C-c` functions to redefine live.
-6. Observe changes instantly.
-7. Close window via Escape or window close.
+Replace the player placeholder rectangle with an animated sprite.
+
+Use the png files found in './assets/1 Characters/1'
+
+Only **Idle** and **Walk** animations are required at this stage.
+
+Do not introduce combat, camera changes, physics systems, or additional game states.
+
+---
+
+## Player Sprite Contract
+
+### Frame Size
+- All character animation frames are **32×32 pixels**
+
+### Layout
+- Animations are stored as **single-row horizontal strips**
+- Frames are ordered left → right
+
+### Directions
+- `U` = Up
+- `D` = Down
+- `S` = Side (right-facing only)
+- Left-facing movement mirrors `S_*` animations horizontally in code
+
+### Supported States (for now)
+| State | Frames |
+|------|--------|
+| Idle | 4 |
+| Walk | 6 |
+
+### Naming Convention
+- Sprite files follow: `<DIR>_<STATE>.png`
+- Examples:
+  - `D_Idle.png`
+  - `U_Walk.png`
+  - `S_Walk.png`
+
+---
+
+## Animation Behavior
+
+- Idle animation plays when player velocity is `(0, 0)`
+- Walk animation plays when player velocity is non-zero
+- Direction selection:
+  - If `abs(vx) > abs(vy)` → Side
+  - Else if `vy < 0` → Up
+  - Else → Down
+
+---
+
+## Rendering Rules
+
+- Player position is world-space pixel coordinates
+- Sprite is drawn **centered** on the player position
+- Use raylib texture source rectangles for frame selection
+- Horizontal mirroring is used for left-facing movement
+- No sprite rotation is used
+
+---
+
+## Constraints
+
+- Do not change movement logic
+- Do not modify tilemap or camera behavior
+- Do not add new assets or animation states
+- Do not refactor unrelated systems
+
+Focus only on replacing the placeholder rectangle with animated Idle/Walk sprites.

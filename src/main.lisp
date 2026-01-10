@@ -1,7 +1,7 @@
 (in-package #:mmorpg)
 
-(defparameter *window-width* 800)
-(defparameter *window-height* 450)
+(defparameter *window-width* 1280)
+(defparameter *window-height* 720)
 (defparameter *player-size* 4)
 (defparameter *player-speed* 120.0)
 
