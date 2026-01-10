@@ -1,0 +1,9 @@
+# Common Lisp compiled files
+*.fasl
+*.fsl
+*.dfsl
+
+# ASDF / implementation caches
+.cache/
+.asdf/
+.sbcl/
