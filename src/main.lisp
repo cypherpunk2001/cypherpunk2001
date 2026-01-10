@@ -2,7 +2,6 @@
 
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
-(defparameter *player-size* 4)
 (defparameter *player-speed* 120.0)
 (defparameter *player-sprite-dir* "../assets/1 Characters/1")
 (defparameter *sprite-frame-width* 32.0)
@@ -57,8 +56,10 @@
 (defun run ()
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
-    (let ((x (/ (- *window-width* *player-size*) 2.0))
-          (y (/ (- *window-height* *player-size*) 2.0))
+    (let* ((half-sprite-width (/ *sprite-frame-width* 2.0))
+           (half-sprite-height (/ *sprite-frame-height* 2.0))
+           (x (/ *window-width* 2.0))
+           (y (/ *window-height* 2.0))
           (dx 0.0)
           (dy 0.0)
           (player-state :idle)
@@ -75,8 +76,10 @@
           (loop :until (raylib:window-should-close)
                 :do (let ((dt (raylib:get-frame-time)))
                       (multiple-value-setq (x y dx dy) (move-player x y dt))
-                      (setf x (clamp x 0.0 (- *window-width* *player-size*)))
-                      (setf y (clamp y 0.0 (- *window-height* *player-size*)))
+                      (setf x (clamp x half-sprite-width
+                                     (- *window-width* half-sprite-width)))
+                      (setf y (clamp y half-sprite-height
+                                     (- *window-height* half-sprite-height)))
                       (let* ((state (player-state dx dy))
                              (direction (player-direction dx dy))
                              (frame-count (if (eq state :walk)
