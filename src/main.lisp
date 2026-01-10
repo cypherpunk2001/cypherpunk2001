@@ -165,6 +165,14 @@
            (frame-index 0)
            (frame-timer 0.0)
            (origin (raylib:make-vector2 :x 0.0 :y 0.0))
+           (camera (raylib:make-camera-2d
+                    :target (raylib:make-vector2 :x x :y y)
+                    :offset (raylib:make-vector2
+                             :x (/ *window-width* 2.0)
+                             :y (/ *window-height* 2.0))
+                    :rotation 0.0
+                    :zoom 1.0))
+           (camera-target (raylib:camera-2d-target camera))
            (tile-source (raylib:make-rectangle))
            (tile-dest (raylib:make-rectangle))
            (player-source (raylib:make-rectangle))
@@ -180,10 +188,8 @@
            (loop :until (raylib:window-should-close)
                  :do (let ((dt (raylib:get-frame-time)))
                        (multiple-value-setq (x y dx dy) (move-player x y dt))
-                       (setf x (clamp x half-sprite-width
-                                      (- *window-width* half-sprite-width)))
-                       (setf y (clamp y half-sprite-height
-                                      (- *window-height* half-sprite-height)))
+                       (setf (raylib:vector2-x camera-target) x
+                             (raylib:vector2-y camera-target) y)
                        (let* ((step (if (shift-held-p) 10 1))
                               (changed nil))
                          (when (raylib:is-key-pressed +key-left-bracket+)
@@ -229,51 +235,64 @@
                                :do (decf frame-timer frame-time)
                                    (setf frame-index
                                          (mod (1+ frame-index) frame-count)))
-                         (raylib:with-drawing
-                           (raylib:clear-background raylib:+black+)
-                           (loop :for row :below map-height
-                                 :for dest-y :from 0.0 :by tile-dest-size
-                                 :do (loop :for col :below map-width
-                                           :for dest-x :from 0.0 :by tile-dest-size
-                                           :for tile-index = (aref floor-map row col)
-                                           :when (not (zerop tile-index))
-                                             :do (set-tile-source-rect tile-source tile-index tile-size-f)
-                                                 (set-rectangle tile-dest dest-x dest-y
-                                                                tile-dest-size tile-dest-size)
-                                                 (raylib:draw-texture-pro tileset
-                                                                          tile-source
-                                                                          tile-dest
-                                                                          origin
-                                                                          0.0
-                                                                          raylib:+white+)))
-                           (let* ((texture (ecase direction
-                                             (:down (if (eq state :walk) down-walk down-idle))
-                                             (:up (if (eq state :walk) up-walk up-idle))
-                                             (:side (if (eq state :walk) side-walk side-idle))))
-                                  (src-x (* frame-index *sprite-frame-width*))
-                                  (src-x (if flip
-                                             (+ src-x *sprite-frame-width*)
-                                             src-x))
-                                  (src-width (if flip
-                                                 (- *sprite-frame-width*)
-                                                 *sprite-frame-width*)))
-                             (set-rectangle player-source
-                                            src-x 0.0
-                                            src-width *sprite-frame-height*)
-                             (set-rectangle player-dest
-                                            (- x half-sprite-width)
-                                            (- y half-sprite-height)
-                                            scaled-width scaled-height)
-                             (raylib:draw-texture-pro texture
-                                                      player-source
-                                                      player-dest
-                                                      origin
-                                                      0.0
-                                                      raylib:+white+))
-                           (raylib:draw-text floor-index-text
-                                             10 10 20 raylib:+white+)
-                           (raylib:draw-text gc-text
-                                             10 34 20 raylib:+white+)))))
+                       (raylib:with-drawing
+                         (raylib:clear-background raylib:+black+)
+                         (raylib:with-mode-2d camera
+                           (let* ((half-view-width (/ *window-width* 2.0))
+                                  (half-view-height (/ *window-height* 2.0))
+                                  (view-left (- x half-view-width))
+                                  (view-right (+ x half-view-width))
+                                  (view-top (- y half-view-height))
+                                  (view-bottom (+ y half-view-height))
+                                  (start-col (floor view-left tile-dest-size))
+                                  (end-col (ceiling view-right tile-dest-size))
+                                  (start-row (floor view-top tile-dest-size))
+                                  (end-row (ceiling view-bottom tile-dest-size)))
+                             (loop :for row :from start-row :to end-row
+                                   :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+                                   :for map-row = (mod row map-height)
+                                   :do (loop :for col :from start-col :to end-col
+                                             :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                                             :for map-col = (mod col map-width)
+                                             :for tile-index = (aref floor-map map-row map-col)
+                                             :when (not (zerop tile-index))
+                                               :do (set-tile-source-rect tile-source tile-index tile-size-f)
+                                                   (set-rectangle tile-dest dest-x dest-y
+                                                                  tile-dest-size tile-dest-size)
+                                                   (raylib:draw-texture-pro tileset
+                                                                            tile-source
+                                                                            tile-dest
+                                                                            origin
+                                                                            0.0
+                                                                            raylib:+white+)))
+                             (let* ((texture (ecase direction
+                                               (:down (if (eq state :walk) down-walk down-idle))
+                                               (:up (if (eq state :walk) up-walk up-idle))
+                                               (:side (if (eq state :walk) side-walk side-idle))))
+                                    (src-x (* frame-index *sprite-frame-width*))
+                                    (src-x (if flip
+                                               (+ src-x *sprite-frame-width*)
+                                               src-x))
+                                    (src-width (if flip
+                                                   (- *sprite-frame-width*)
+                                                   *sprite-frame-width*)))
+                               (set-rectangle player-source
+                                              src-x 0.0
+                                              src-width *sprite-frame-height*)
+                               (set-rectangle player-dest
+                                              (- x half-sprite-width)
+                                              (- y half-sprite-height)
+                                              scaled-width scaled-height)
+                               (raylib:draw-texture-pro texture
+                                                        player-source
+                                                        player-dest
+                                                        origin
+                                                        0.0
+                                                        raylib:+white+))))
+                         (raylib:draw-text floor-index-text
+                                           10 10 20 raylib:+white+)
+                         (raylib:draw-text gc-text
+                                           10 34 20 raylib:+white+)))))
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)
