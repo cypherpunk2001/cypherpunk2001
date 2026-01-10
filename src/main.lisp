@@ -13,9 +13,10 @@
 (defparameter *tile-size* 16) ; Source tile size in the atlas, in pixels.
 (defparameter *tile-scale* 4.0) ; Scale factor for drawing tiles to the screen.
 (defparameter *tileset-columns* 19) ; Number of columns in the atlas grid.
-(defparameter *floor-tile-index* 20) ; Which atlas tile index to use for the floor fill.
-(defparameter *floor-variant-indices* '(0 21 22 23)) ; Occasional variants (0 means "empty").
+(defparameter *floor-tile-index* 40) ; Which atlas tile index to use for the floor fill.
+(defparameter *floor-variant-indices* '(41 42)) ; Occasional variants (0 can be used for empty).
 (defparameter *floor-variant-mod* 10) ; 1 in N chance to use a variant instead of main.
+(defparameter *floor-cluster-size* 3) ; Size of clustered variant blocks, in tiles.
 (defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
 (defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
@@ -72,17 +73,23 @@
   (or (raylib:is-key-down +key-left-shift+)
       (raylib:is-key-down +key-right-shift+)))
 
-(defun hash-xy (x y)
-  (let* ((n (+ (* x 374761393) (* y 668265263)))
-         (n (logxor n (ash n -13))))
-    (abs n)))
+(defun u32-hash (x y &optional (seed 1337))
+  (logand #xffffffff
+          (+ (* x 73856093)
+             (* y 19349663)
+             (* seed 83492791))))
 
-(defun choose-floor-tile (x y main-index variant-indices)
-  (let* ((variant-count (length variant-indices))
-         (h (hash-xy x y)))
+(defun floor-tile-at (x y main-index variant-indices)
+  (let* ((cluster-size (max 1 *floor-cluster-size*))
+         (variant-count (length variant-indices))
+         (variant-mod (max 1 *floor-variant-mod*))
+         (cx (floor x cluster-size))
+         (cy (floor y cluster-size))
+         (h (u32-hash cx cy))
+         (h2 (u32-hash (+ cx 17) (+ cy 31) 7331)))
     (if (and (> variant-count 0)
-             (zerop (mod h *floor-variant-mod*)))
-        (nth (mod (ash h -4) variant-count) variant-indices)
+             (zerop (mod h variant-mod)))
+        (nth (mod h2 variant-count) variant-indices)
         main-index)))
 
 (defun build-floor-map (map-width map-height main-index variant-indices)
@@ -90,7 +97,7 @@
     (loop :for row :below map-height
           :do (loop :for col :below map-width
                     :do (setf (aref map row col)
-                              (choose-floor-tile col row main-index variant-indices))))
+                              (floor-tile-at col row main-index variant-indices))))
     map))
 
 (defun set-rectangle (rect x y width height)
