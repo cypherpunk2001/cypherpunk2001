@@ -22,19 +22,42 @@ mmorpg/
 
 ## Current Task
 
-Next task: add a world-space camera that follows the player.
+## Next Task: World Travel + Mouse Navigation + Landmarks
 
-Requirements:
-- Introduce a camera offset so the world scrolls under the player
-- Player should remain near the screen center while moving
-- Floor tiles and player are drawn in world coordinates
-- No gameplay changes (movement logic stays the same)
-- No collision, walls, or map generation changes
-- No point-and-click yet
+Goal: make the game feel like a real world you travel through, not a repeating fishtank.
 
-Definition of done:
-- Walking causes the floor to move beneath the player
-- The player can travel indefinitely without hitting a “screen edge”
+### 1) Infinite Non-Repeating Floor
+- Remove modulo/repeating lookup into a prebuilt floor array.
+- For each visible world tile coordinate `(tx, ty)`, compute the atlas tile index directly via `floor-tile-at(tx, ty, ...)`.
+- Use world tile coordinates (derived from camera bounds), not local map indices.
+- Keep deterministic behavior via `*floor-seed*`.
+- Continue culling tiles to only those visible in the camera view.
+
+### 2) Point-and-Click Movement (No Pathfinding)
+- On left mouse click, convert mouse position from screen space to world space.
+- Set a player target position in world coordinates.
+- Move the player toward the target at constant speed.
+- Stop movement when within a small epsilon distance and return to Idle.
+- Keyboard movement may remain enabled and override mouse movement.
+- Draw a small debug marker at the target position.
+
+### 3) Sparse World Landmarks (Visual Only)
+- Add a second, optional decorative overlay selection (still walkable).
+- Use a deterministic hash of `(tx, ty)` to place decorations very sparsely (e.g. 1 in 60–100 tiles).
+- Draw overlay tiles after the floor layer (and before or after the player as appropriate).
+- No collision or gameplay logic associated with decorations.
+
+### Constraints
+- No collision, walls, or pathfinding.
+- No gameplay changes beyond movement targeting.
+- Keep all rendering in world coordinates under the existing camera.
+- Keep systems simple and deterministic.
+
+### Definition of Done
+- The floor no longer repeats as the player travels.
+- The player can click to move and visibly travel across the world.
+- Sparse landmarks make movement and distance readable.
+- The world feels continuous and explorable.
 
 ## How to keep it smooth as we scale
 

@@ -17,6 +17,12 @@
 (defparameter *floor-variant-indices* '(41 42)) ; Occasional variants (0 can be used for empty).
 (defparameter *floor-variant-mod* 10) ; 1 in N chance to use a variant instead of main.
 (defparameter *floor-cluster-size* 3) ; Size of clustered variant blocks, in tiles.
+(defparameter *floor-seed* 1337) ; Seed for deterministic floor variation.
+(defparameter *landmark-indices* '(101 102 105)) ; Sparse decorative overlays.
+(defparameter *landmark-mod* 80) ; 1 in N tiles become a landmark.
+(defparameter *landmark-seed* 7331) ; Seed for deterministic landmark placement.
+(defparameter *target-epsilon* 6.0) ; Stop distance for click-to-move.
+(defparameter *target-marker-radius* 6.0) ; Radius of the click target marker.
 (defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
 (defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
@@ -35,6 +41,7 @@
 (defparameter +key-right-bracket+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-bracket))
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
+(defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
 
 (defun move-player (x y dt)
   (let ((dx 0.0)
@@ -85,12 +92,22 @@
          (variant-mod (max 1 *floor-variant-mod*))
          (cx (floor x cluster-size))
          (cy (floor y cluster-size))
-         (h (u32-hash cx cy))
-         (h2 (u32-hash (+ cx 17) (+ cy 31) 7331)))
+         (h (u32-hash cx cy *floor-seed*))
+         (h2 (u32-hash (+ cx 17) (+ cy 31) (+ *floor-seed* 7331))))
     (if (and (> variant-count 0)
              (zerop (mod h variant-mod)))
         (nth (mod h2 variant-count) variant-indices)
         main-index)))
+
+(defun landmark-tile-at (x y)
+  (let* ((variant-count (length *landmark-indices*))
+         (variant-mod (max 1 *landmark-mod*))
+         (h (u32-hash x y *landmark-seed*))
+         (h2 (u32-hash (+ x 19) (+ y 47) (+ *landmark-seed* 101))))
+    (if (and (> variant-count 0)
+             (zerop (mod h variant-mod)))
+        (nth (mod h2 variant-count) *landmark-indices*)
+        0)))
 
 (defun build-floor-map (map-width map-height main-index variant-indices)
   (let ((map (make-array (list map-height map-width))))
@@ -99,6 +116,15 @@
                     :do (setf (aref map row col)
                               (floor-tile-at col row main-index variant-indices))))
     map))
+
+(defun screen-to-world (screen-x screen-y target-x target-y camera-offset camera-zoom)
+  (let* ((zoom (if (zerop camera-zoom) 1.0 camera-zoom))
+         (sx (float screen-x 1.0))
+         (sy (float screen-y 1.0)))
+    (values (+ (/ (- sx (raylib:vector2-x camera-offset)) zoom)
+               target-x)
+            (+ (/ (- sy (raylib:vector2-y camera-offset)) zoom)
+               target-y))))
 
 (defun set-rectangle (rect x y width height)
   (setf (raylib:rectangle-x rect) x
@@ -138,11 +164,7 @@
     (raylib:set-target-fps 60)
     (let* ((tile-size-f (float *tile-size* 1.0))
            (tile-dest-size (* tile-size-f *tile-scale*))
-           (map-width (ceiling (/ *window-width* tile-dest-size)))
-           (map-height (ceiling (/ *window-height* tile-dest-size)))
            (floor-index *floor-tile-index*)
-           (floor-map (build-floor-map map-width map-height
-                                        floor-index *floor-variant-indices*))
            (floor-index-text (format nil "Floor tile: ~d" floor-index))
            #+sbcl (last-bytes-consed (sb-ext:get-bytes-consed))
            #+sbcl (last-gc-run-time sb-ext:*gc-run-time*)
@@ -165,14 +187,18 @@
            (frame-index 0)
            (frame-timer 0.0)
            (origin (raylib:make-vector2 :x 0.0 :y 0.0))
+           (camera-offset (raylib:make-vector2
+                           :x (/ *window-width* 2.0)
+                           :y (/ *window-height* 2.0)))
            (camera (raylib:make-camera-2d
                     :target (raylib:make-vector2 :x x :y y)
-                    :offset (raylib:make-vector2
-                             :x (/ *window-width* 2.0)
-                             :y (/ *window-height* 2.0))
+                    :offset camera-offset
                     :rotation 0.0
                     :zoom 1.0))
            (camera-target (raylib:camera-2d-target camera))
+           (target-x x)
+           (target-y y)
+           (target-active nil)
            (tile-source (raylib:make-rectangle))
            (tile-dest (raylib:make-rectangle))
            (player-source (raylib:make-rectangle))
@@ -188,6 +214,33 @@
            (loop :until (raylib:window-should-close)
                  :do (let ((dt (raylib:get-frame-time)))
                        (multiple-value-setq (x y dx dy) (move-player x y dt))
+                       (when (raylib:is-mouse-button-pressed +mouse-left+)
+                         (multiple-value-setq (target-x target-y)
+                           (screen-to-world (raylib:get-mouse-x)
+                                            (raylib:get-mouse-y)
+                                            x
+                                            y
+                                            camera-offset
+                                            (raylib:camera-2d-zoom camera)))
+                         (setf target-active t))
+                       (when (and target-active (zerop dx) (zerop dy))
+                         (let* ((to-x (- target-x x))
+                                (to-y (- target-y y))
+                                (dist (sqrt (+ (* to-x to-x) (* to-y to-y))))
+                                (step (* *player-speed* dt)))
+                           (if (or (<= dist *target-epsilon*)
+                                   (<= dist step))
+                               (setf x target-x
+                                     y target-y
+                                     dx 0.0
+                                     dy 0.0
+                                     target-active nil)
+                               (let ((nx (/ to-x dist))
+                                     (ny (/ to-y dist)))
+                                 (setf x (+ x (* nx step))
+                                       y (+ y (* ny step))
+                                       dx nx
+                                       dy ny)))))
                        (setf (raylib:vector2-x camera-target) x
                              (raylib:vector2-y camera-target) y)
                        (let* ((step (if (shift-held-p) 10 1))
@@ -199,10 +252,7 @@
                            (setf floor-index (clamp (+ floor-index step) 0 208)
                                  changed t))
                          (when changed
-                           (setf floor-map
-                                 (build-floor-map map-width map-height
-                                                  floor-index *floor-variant-indices*)
-                                 floor-index-text (format nil "Floor tile: ~d" floor-index))))
+                           (setf floor-index-text (format nil "Floor tile: ~d" floor-index))))
                        (incf gc-timer dt)
                        #+sbcl
                        (when (>= gc-timer *gc-overlay-interval*)
@@ -238,8 +288,9 @@
                        (raylib:with-drawing
                          (raylib:clear-background raylib:+black+)
                          (raylib:with-mode-2d camera
-                           (let* ((half-view-width (/ *window-width* 2.0))
-                                  (half-view-height (/ *window-height* 2.0))
+                           (let* ((zoom (raylib:camera-2d-zoom camera))
+                                  (half-view-width (/ *window-width* (* 2.0 zoom)))
+                                  (half-view-height (/ *window-height* (* 2.0 zoom)))
                                   (view-left (- x half-view-width))
                                   (view-right (+ x half-view-width))
                                   (view-top (- y half-view-height))
@@ -248,24 +299,33 @@
                                   (end-col (ceiling view-right tile-dest-size))
                                   (start-row (floor view-top tile-dest-size))
                                   (end-row (ceiling view-bottom tile-dest-size)))
-                             (loop :for row :from start-row :to end-row
-                                   :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-                                   :for map-row = (mod row map-height)
-                                   :do (loop :for col :from start-col :to end-col
-                                             :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                                             :for map-col = (mod col map-width)
-                                             :for tile-index = (aref floor-map map-row map-col)
-                                             :when (not (zerop tile-index))
-                                               :do (set-tile-source-rect tile-source tile-index tile-size-f)
-                                                   (set-rectangle tile-dest dest-x dest-y
-                                                                  tile-dest-size tile-dest-size)
-                                                   (raylib:draw-texture-pro tileset
-                                                                            tile-source
-                                                                            tile-dest
-                                                                            origin
-                                                                            0.0
-                                                                            raylib:+white+)))
-                             (let* ((texture (ecase direction
+                            (loop :for row :from start-row :to end-row
+                                  :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+                                  :do (loop :for col :from start-col :to end-col
+                                            :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                                            :for tile-index = (floor-tile-at col row
+                                                                             floor-index
+                                                                             *floor-variant-indices*)
+                                            :do (set-rectangle tile-dest dest-x dest-y
+                                                               tile-dest-size tile-dest-size)
+                                                (when (not (zerop tile-index))
+                                                  (set-tile-source-rect tile-source tile-index tile-size-f)
+                                                  (raylib:draw-texture-pro tileset
+                                                                           tile-source
+                                                                           tile-dest
+                                                                           origin
+                                                                           0.0
+                                                                           raylib:+white+))
+                                                (let ((landmark-index (landmark-tile-at col row)))
+                                                  (when (not (zerop landmark-index))
+                                                    (set-tile-source-rect tile-source landmark-index tile-size-f)
+                                                    (raylib:draw-texture-pro tileset
+                                                                             tile-source
+                                                                             tile-dest
+                                                                             origin
+                                                                             0.0
+                                                                             raylib:+white+))))))
+                            (let* ((texture (ecase direction
                                                (:down (if (eq state :walk) down-walk down-idle))
                                                (:up (if (eq state :walk) up-walk up-idle))
                                                (:side (if (eq state :walk) side-walk side-idle))))
@@ -288,7 +348,12 @@
                                                         player-dest
                                                         origin
                                                         0.0
-                                                        raylib:+white+))))
+                                                        raylib:+white+))
+                             (when target-active
+                               (raylib:draw-circle (floor target-x)
+                                                   (floor target-y)
+                                                   *target-marker-radius*
+                                                   raylib:+yellow+))))
                          (raylib:draw-text floor-index-text
                                            10 10 20 raylib:+white+)
                          (raylib:draw-text gc-text
@@ -299,4 +364,4 @@
         (raylib:unload-texture up-idle)
         (raylib:unload-texture up-walk)
         (raylib:unload-texture side-idle)
-        (raylib:unload-texture side-walk)))))
+        (raylib:unload-texture side-walk))))
