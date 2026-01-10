@@ -20,6 +20,7 @@
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
 (defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
 (defparameter *walk-frame-time* 0.12) ; Seconds per walk frame.
+(defparameter *gc-overlay-interval* 0.5) ; Seconds between GC stats updates.
 
 (defparameter +key-right+ (cffi:foreign-enum-value 'raylib:keyboard-key :right))
 (defparameter +key-left+ (cffi:foreign-enum-value 'raylib:keyboard-key :left))
@@ -108,6 +109,23 @@
                    tile-size-f
                    tile-size-f)))
 
+#+sbcl
+(defun gc-overlay-update (last-consed last-run last-real last-count interval fps frame-ms)
+  (let* ((bytes (sb-ext:get-bytes-consed))
+         (delta-bytes (- bytes last-consed))
+         (gc-count (sb-ext:generation-number-of-gcs 0))
+         (delta-gc (- gc-count last-count))
+         (run sb-ext:*gc-run-time*)
+         (real sb-ext:*gc-real-time*)
+         (delta-real (- real last-real))
+         (units internal-time-units-per-second)
+         (secs (max interval 0.001))
+         (consed-kb-per-sec (/ delta-bytes 1024.0 secs))
+         (gc-ms (* 1000.0 (/ delta-real units))))
+    (values (format nil "FPS: ~d (~,1fms) | GC g0: ~d (+~d) consed ~,1f KB/s gc ~,2fms"
+                    fps frame-ms gc-count delta-gc consed-kb-per-sec gc-ms)
+            bytes run real gc-count)))
+
 (defun run ()
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
@@ -119,6 +137,14 @@
            (floor-map (build-floor-map map-width map-height
                                         floor-index *floor-variant-indices*))
            (floor-index-text (format nil "Floor tile: ~d" floor-index))
+           #+sbcl (last-bytes-consed (sb-ext:get-bytes-consed))
+           #+sbcl (last-gc-run-time sb-ext:*gc-run-time*)
+           #+sbcl (last-gc-real-time sb-ext:*gc-real-time*)
+           #+sbcl (last-gc-count (sb-ext:generation-number-of-gcs 0))
+           (gc-text #+sbcl (format nil "FPS: -- (--ms) | GC g0: ~d (+0) consed 0.0 KB/s gc 0.00ms"
+                                   last-gc-count)
+                    #-sbcl "GC: n/a")
+           (gc-timer 0.0)
            (scaled-width (* *sprite-frame-width* *sprite-scale*))
            (scaled-height (* *sprite-frame-height* *sprite-scale*))
            (half-sprite-width (/ scaled-width 2.0))
@@ -164,6 +190,18 @@
                                  (build-floor-map map-width map-height
                                                   floor-index *floor-variant-indices*)
                                  floor-index-text (format nil "Floor tile: ~d" floor-index))))
+                       (incf gc-timer dt)
+                       #+sbcl
+                       (when (>= gc-timer *gc-overlay-interval*)
+                         (decf gc-timer *gc-overlay-interval*)
+                         (let* ((fps (raylib:get-fps))
+                                (frame-ms (if (plusp fps) (/ 1000.0 fps) 0.0)))
+                           (multiple-value-setq (gc-text last-bytes-consed last-gc-run-time
+                                                         last-gc-real-time last-gc-count)
+                             (gc-overlay-update last-bytes-consed last-gc-run-time
+                                                last-gc-real-time last-gc-count
+                                                *gc-overlay-interval*
+                                                fps frame-ms))))
                        (let* ((state (player-state dx dy))
                               (direction (player-direction dx dy))
                               (frame-count (if (eq state :walk)
@@ -226,7 +264,9 @@
                                                       0.0
                                                       raylib:+white+))
                            (raylib:draw-text floor-index-text
-                                             10 10 20 raylib:+white+)))))
+                                             10 10 20 raylib:+white+)
+                           (raylib:draw-text gc-text
+                                             10 34 20 raylib:+white+)))))
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)
