@@ -11,6 +11,7 @@
 (defparameter *camera-zoom-min* 0.5) ; Minimum zoom level.
 (defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
 (defparameter *camera-zoom-step* 0.1) ; Zoom step per mouse wheel tick.
+(defparameter *mouse-hold-repeat-seconds* 0.25) ; Repeat rate for mouse-held updates.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3")
 (defparameter *sprite-frame-width* 32.0)
@@ -263,6 +264,7 @@
            (target-x x)
            (target-y y)
            (target-active nil)
+           (mouse-hold-timer 0.0)
            (auto-right nil)
            (auto-left nil)
            (auto-down nil)
@@ -293,6 +295,7 @@
                        (let ((input-dx 0.0)
                              (input-dy 0.0)
                              (mouse-clicked nil)
+                             (mouse-down nil)
                              (key-pressed nil))
                          (let ((wheel (raylib:get-mouse-wheel-move)))
                            (when (not (zerop wheel))
@@ -304,7 +307,8 @@
                            (setf camera-zoom *camera-zoom-default*))
                          (setf dx 0.0
                                dy 0.0)
-                         (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
+                         (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+)
+                               mouse-down (raylib:is-mouse-button-down +mouse-left+))
                          (when mouse-clicked
                            (setf auto-right nil
                                  auto-left nil
@@ -317,7 +321,26 @@
                                               y
                                               camera-offset
                                               camera-zoom))
-                           (setf target-active t))
+                           (setf target-active t
+                                 mouse-hold-timer 0.0))
+                         (when (and mouse-down (not mouse-clicked))
+                           (incf mouse-hold-timer dt)
+                           (when (>= mouse-hold-timer *mouse-hold-repeat-seconds*)
+                             (setf mouse-hold-timer 0.0
+                                   auto-right nil
+                                   auto-left nil
+                                   auto-down nil
+                                   auto-up nil)
+                             (multiple-value-setq (target-x target-y)
+                               (screen-to-world (raylib:get-mouse-x)
+                                                (raylib:get-mouse-y)
+                                                x
+                                                y
+                                                camera-offset
+                                                camera-zoom))
+                             (setf target-active t)))
+                         (unless mouse-down
+                           (setf mouse-hold-timer 0.0))
                          (unless mouse-clicked
                            (let* ((shift-held (or (raylib:is-key-down +key-left-shift+)
                                                   (raylib:is-key-down +key-right-shift+)))
