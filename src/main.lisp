@@ -367,10 +367,15 @@
            (menu-volume-bars-x (+ menu-volume-up-x
                                   menu-volume-button-width
                                   menu-volume-gap))
+           (menu-toggle-gap 18)
            (menu-debug-size 18)
            (menu-debug-x (+ menu-panel-x menu-padding))
            (menu-debug-y (+ menu-volume-y menu-volume-button-height 24))
            (menu-debug-label "Debug Collision Overlay")
+           (menu-fullscreen-size 18)
+           (menu-fullscreen-x menu-debug-x)
+           (menu-fullscreen-y (+ menu-debug-y menu-debug-size menu-toggle-gap))
+           (menu-fullscreen-label "Fullscreen | Windowed")
            (running nil)
            (run-stamina *run-stamina-max*)
            (mouse-hold-timer 0.0)
@@ -521,7 +526,12 @@
                                                menu-debug-x menu-debug-y
                                                menu-debug-size menu-debug-size)
                               (setf *debug-collision-overlay*
-                                    (not *debug-collision-overlay*)))))))
+                                    (not *debug-collision-overlay*)))
+                             ((point-in-rect-p mx my
+                                               menu-fullscreen-x menu-fullscreen-y
+                                               menu-fullscreen-size
+                                               menu-fullscreen-size)
+                              (raylib:toggle-fullscreen))))))
                        (when (and mouse-clicked (not menu-open))
                          (setf auto-right nil
                                auto-left nil
@@ -850,9 +860,21 @@
                                     (volume-label-y (- menu-volume-y 26))
                                     (volume-bars-text (aref volume-bars volume-level))
                                     (debug-on *debug-collision-overlay*)
-                                    (debug-box-color (if debug-on
-                                                         menu-button-color
-                                                         menu-panel-color)))
+                                    (hover-debug (point-in-rect-p mouse-x mouse-y
+                                                                  menu-debug-x menu-debug-y
+                                                                  menu-debug-size menu-debug-size))
+                                    (fs-on (raylib:is-window-fullscreen))
+                                    (hover-fs (point-in-rect-p mouse-x mouse-y
+                                                               menu-fullscreen-x menu-fullscreen-y
+                                                               menu-fullscreen-size menu-fullscreen-size))
+                                    (debug-box-color (cond
+                                                       (hover-debug menu-button-hover-color)
+                                                       (debug-on menu-button-color)
+                                                       (t menu-panel-color)))
+                                    (fs-box-color (cond
+                                                    (hover-fs menu-button-hover-color)
+                                                    (fs-on menu-button-color)
+                                                    (t menu-panel-color))))
                                (raylib:draw-rectangle 0 0 *window-width* *window-height*
                                                       menu-overlay-color)
                                (raylib:draw-rectangle menu-panel-x menu-panel-y
@@ -939,6 +961,21 @@
                                (raylib:draw-text menu-debug-label
                                                  (+ menu-debug-x 28)
                                                  (- menu-debug-y 2)
+                                                 menu-volume-text-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-fullscreen-x
+                                                      menu-fullscreen-y
+                                                      menu-fullscreen-size
+                                                      menu-fullscreen-size
+                                                      fs-box-color)
+                               (raylib:draw-rectangle-lines menu-fullscreen-x
+                                                            menu-fullscreen-y
+                                                            menu-fullscreen-size
+                                                            menu-fullscreen-size
+                                                            menu-text-color)
+                               (raylib:draw-text menu-fullscreen-label
+                                                 (+ menu-fullscreen-x 28)
+                                                 (- menu-fullscreen-y 2)
                                                  menu-volume-text-size
                                                  menu-text-color)
                                (raylib:draw-rectangle menu-button-x menu-button-y
