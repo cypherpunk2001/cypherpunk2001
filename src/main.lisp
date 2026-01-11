@@ -31,6 +31,7 @@
 (defparameter *wall-tile-indices* '(107)) ; Wall tile variants.
 (defparameter *wall-seed* 2468) ; Seed for wall tile variation.
 (defparameter *player-collision-scale* 2.0) ; Collision box size relative to one tile.
+(defparameter *target-epsilon* 6.0) ; Stop distance for click-to-move.
 
 (defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
@@ -45,6 +46,7 @@
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
+(defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
 
 (defun clamp (value min-value max-value)
   (max min-value (min value max-value)))
@@ -65,6 +67,15 @@
               (raylib:is-key-down +key-w+))
       (decf dy 1.0))
     (values dx dy)))
+
+(defun screen-to-world (screen-x screen-y target-x target-y camera-offset camera-zoom)
+  (let* ((zoom (if (zerop camera-zoom) 1.0 camera-zoom))
+         (sx (float screen-x 1.0))
+         (sy (float screen-y 1.0)))
+    (values (+ (/ (- sx (raylib:vector2-x camera-offset)) zoom)
+               target-x)
+            (+ (/ (- sy (raylib:vector2-y camera-offset)) zoom)
+               target-y))))
 
 (defun sprite-path (filename)
   (format nil "~a/~a" *player-sprite-dir* filename))
@@ -235,6 +246,9 @@
                            :x (/ *window-width* 2.0)
                            :y (/ *window-height* 2.0)))
            (camera-zoom 1.0)
+           (target-x x)
+           (target-y y)
+           (target-active nil)
            (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
            (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
            (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -259,19 +273,53 @@
            (loop :until (raylib:window-should-close)
                  :do (let ((dt (raylib:get-frame-time)))
                        (let ((input-dx 0.0)
-                             (input-dy 0.0))
+                             (input-dy 0.0)
+                             (mouse-clicked nil))
                          (setf dx 0.0
                                dy 0.0)
                          (multiple-value-setq (input-dx input-dy) (read-input-direction))
+                         (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
+                         (when mouse-clicked
+                           (multiple-value-setq (target-x target-y)
+                             (screen-to-world (raylib:get-mouse-x)
+                                              (raylib:get-mouse-y)
+                                              x
+                                              y
+                                              camera-offset
+                                              camera-zoom))
+                           (setf target-active t))
+                         (when mouse-clicked
+                           (setf input-dx 0.0
+                                 input-dy 0.0))
                          (cond
                            ((or (not (zerop input-dx))
                                 (not (zerop input-dy)))
+                            (setf target-active nil)
                             (multiple-value-setq (x y dx dy)
                               (attempt-move wall-map x y input-dx input-dy
                                             (* *player-speed* dt)
                                             collision-half-width
                                             collision-half-height
                                             tile-dest-size)))
+                           (target-active
+                            (let* ((to-x (- target-x x))
+                                   (to-y (- target-y y))
+                                   (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
+                              (if (<= dist *target-epsilon*)
+                                  (setf target-active nil
+                                        dx 0.0
+                                        dy 0.0)
+                                  (let* ((dir-x (/ to-x dist))
+                                         (dir-y (/ to-y dist))
+                                         (step (min (* *player-speed* dt) dist)))
+                                    (multiple-value-setq (x y dx dy)
+                                      (attempt-move wall-map x y dir-x dir-y step
+                                                    collision-half-width
+                                                    collision-half-height
+                                                    tile-dest-size))
+                                    (when (or (<= dist step)
+                                              (and (zerop dx) (zerop dy)))
+                                      (setf target-active nil))))))
                            (t
                             (setf dx 0.0
                                   dy 0.0))))
