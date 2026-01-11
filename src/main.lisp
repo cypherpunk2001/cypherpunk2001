@@ -475,9 +475,13 @@
                               (frame-count (if (eq state :walk)
                                                *walk-frame-count*
                                                *idle-frame-count*))
-                              (frame-time (if (eq state :walk)
-                                              *walk-frame-time*
-                                              *idle-frame-time*))
+                              (base-frame-time (if (eq state :walk)
+                                                   *walk-frame-time*
+                                                   *idle-frame-time*))
+                              (run-anim-mult (if (and running (eq state :walk) (> run-stamina 0.0))
+                                                 *run-speed-mult*
+                                                 1.0))
+                              (frame-time (/ base-frame-time run-anim-mult))
                               (flip (and (eq direction :side) (> dx 0.0))))
                          (unless (and (eq state player-state)
                                       (eq direction player-direction))
