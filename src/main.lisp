@@ -12,7 +12,7 @@
 (defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
 (defparameter *camera-zoom-step* 0.1) ; Zoom step per mouse wheel tick.
 (defparameter *run-speed-mult* 2.0) ; Movement speed multiplier while running.
-(defparameter *run-stamina-max* 30.0) ; Seconds of run stamina when full.
+(defparameter *run-stamina-max* 10.0) ; Seconds of run stamina when full.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ; Repeat rate for mouse-held updates.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3")
@@ -54,7 +54,7 @@
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
-(defparameter +key-r+ (cffi:foreign-enum-value 'raylib:keyboard-key :r))
+(defparameter +key-tab+ (cffi:foreign-enum-value 'raylib:keyboard-key :tab))
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
@@ -400,7 +400,7 @@
                                      (normalize-direction input-dx input-dy)))
                                  (multiple-value-setq (input-dx input-dy)
                                    (read-input-direction)))))
-                         (when (raylib:is-key-pressed +key-r+)
+                         (when (raylib:is-key-pressed +key-tab+)
                            (if (> run-stamina 0.0)
                                (setf running (not running))
                                (setf running nil)))
@@ -588,13 +588,13 @@
                                                            player-dest
                                                            origin
                                                            0.0
-                                                           raylib:+white+))))))
+                                                           raylib:+white+)))))
                            (let* ((run-seconds (max 0 (min (truncate run-stamina)
                                                            (truncate *run-stamina-max*))))
-                                  (run-text (format nil "Run: ~2d" run-seconds)))
-                             (raylib:draw-rectangle 6 6 92 24 hud-bg-color)
+                                  (run-text (format nil "Stamina: ~2d" run-seconds)))
+                             (raylib:draw-rectangle 6 6 110 24 hud-bg-color)
                              (raylib:draw-text run-text 10 10 20 raylib:+white+))
-                         )))
+                         ))))
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)
