@@ -29,6 +29,13 @@
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 2.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 3.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Ending.wav" *soundtrack-dir*)))
+(defparameter *soundtrack-display-names*
+  (vector
+   "Title Screen"
+   "Level 1"
+   "Level 2"
+   "Level 3"
+   "Ending"))
 (defparameter *tile-size* 16) ; Source tile size in the atlas, in pixels.
 (defparameter *tile-scale* 4.0) ; Scale factor for drawing tiles to the screen.
 (defparameter *tileset-columns* 19) ; Number of columns in the atlas grid.
@@ -109,6 +116,15 @@
        (< x (+ rx rw))
        (>= y ry)
        (< y (+ ry rh))))
+
+(defun basename (path)
+  (let* ((path-str (string path))
+         (slash (position #\/ path-str :from-end t))
+         (backslash (position #\\ path-str :from-end t))
+         (cut (max (or slash -1) (or backslash -1))))
+    (if (>= cut 0)
+        (subseq path-str (1+ cut))
+        path-str)))
 
 (defun sprite-path (filename)
   (format nil "~a/~a" *player-sprite-dir* filename))
@@ -381,10 +397,10 @@
            (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
       (loop :for index :from 0 :below soundtrack-count
             :for path = (aref *soundtrack-tracks* index)
-            :for pathname = (pathname path)
-            :for name = (pathname-name pathname)
-            :for type = (pathname-type pathname)
-            :for display = (if type (format nil "~a.~a" name type) name)
+            :for display = (if (and (< index (length *soundtrack-display-names*))
+                                    (aref *soundtrack-display-names* index))
+                               (aref *soundtrack-display-names* index)
+                               (basename path))
             :for label = (format nil "Now Playing: ~a" display)
             :do (setf (aref soundtrack-names index) display
                       (aref soundtrack-labels index) label
