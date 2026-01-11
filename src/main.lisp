@@ -6,6 +6,7 @@
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
 (defparameter *player-speed* 222.0)
+(defparameter *auto-walk-enabled* t) ; When true, WASD toggles auto-walk direction.
 (defparameter *camera-zoom-default* 1.0) ; Default camera zoom level.
 (defparameter *camera-zoom-min* 0.5) ; Minimum zoom level.
 (defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
@@ -50,11 +51,19 @@
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
+(defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
+(defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
 (defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle))
 
 (defun clamp (value min-value max-value)
   (max min-value (min value max-value)))
+
+(defun normalize-direction (dx dy)
+  (if (and (not (zerop dx)) (not (zerop dy)))
+      (let ((len (sqrt (+ (* dx dx) (* dy dy)))))
+        (values (/ dx len) (/ dy len)))
+      (values dx dy)))
 
 (defun read-input-direction ()
   (let ((dx 0.0)
@@ -71,7 +80,7 @@
     (when (or (raylib:is-key-down +key-up+)
               (raylib:is-key-down +key-w+))
       (decf dy 1.0))
-    (values dx dy)))
+    (normalize-direction dx dy)))
 
 (defun screen-to-world (screen-x screen-y target-x target-y camera-offset camera-zoom)
   (let* ((zoom (if (zerop camera-zoom) 1.0 camera-zoom))
@@ -254,6 +263,10 @@
            (target-x x)
            (target-y y)
            (target-active nil)
+           (auto-right nil)
+           (auto-left nil)
+           (auto-down nil)
+           (auto-up nil)
            (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
            (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
            (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -279,7 +292,8 @@
                  :do (let ((dt (raylib:get-frame-time)))
                        (let ((input-dx 0.0)
                              (input-dy 0.0)
-                             (mouse-clicked nil))
+                             (mouse-clicked nil)
+                             (key-pressed nil))
                          (let ((wheel (raylib:get-mouse-wheel-move)))
                            (when (not (zerop wheel))
                              (setf camera-zoom
@@ -290,9 +304,12 @@
                            (setf camera-zoom *camera-zoom-default*))
                          (setf dx 0.0
                                dy 0.0)
-                         (multiple-value-setq (input-dx input-dy) (read-input-direction))
                          (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
                          (when mouse-clicked
+                           (setf auto-right nil
+                                 auto-left nil
+                                 auto-down nil
+                                 auto-up nil)
                            (multiple-value-setq (target-x target-y)
                              (screen-to-world (raylib:get-mouse-x)
                                               (raylib:get-mouse-y)
@@ -301,9 +318,58 @@
                                               camera-offset
                                               camera-zoom))
                            (setf target-active t))
-                         (when mouse-clicked
-                           (setf input-dx 0.0
-                                 input-dy 0.0))
+                         (unless mouse-clicked
+                           (let* ((shift-held (or (raylib:is-key-down +key-left-shift+)
+                                                  (raylib:is-key-down +key-right-shift+)))
+                                  (pressed-right (or (raylib:is-key-pressed +key-right+)
+                                                     (raylib:is-key-pressed +key-d+)))
+                                  (pressed-left (or (raylib:is-key-pressed +key-left+)
+                                                    (raylib:is-key-pressed +key-a+)))
+                                  (pressed-down (or (raylib:is-key-pressed +key-down+)
+                                                    (raylib:is-key-pressed +key-s+)))
+                                  (pressed-up (or (raylib:is-key-pressed +key-up+)
+                                                  (raylib:is-key-pressed +key-w+))))
+                             (when (or pressed-right pressed-left pressed-down pressed-up)
+                               (if shift-held
+                                   (setf *auto-walk-enabled* t)
+                                   (progn
+                                     (setf *auto-walk-enabled* nil
+                                           auto-right nil
+                                           auto-left nil
+                                           auto-down nil
+                                           auto-up nil))))
+                             (if *auto-walk-enabled*
+                                 (progn
+                                   (when pressed-right
+                                     (setf key-pressed t
+                                           auto-right (not auto-right))
+                                     (when auto-right
+                                       (setf auto-left nil)))
+                                   (when pressed-left
+                                     (setf key-pressed t
+                                           auto-left (not auto-left))
+                                     (when auto-left
+                                       (setf auto-right nil)))
+                                   (when pressed-down
+                                     (setf key-pressed t
+                                           auto-down (not auto-down))
+                                     (when auto-down
+                                       (setf auto-up nil)))
+                                   (when pressed-up
+                                     (setf key-pressed t
+                                           auto-up (not auto-up))
+                                     (when auto-up
+                                       (setf auto-down nil)))
+                                   (when key-pressed
+                                     (setf target-active nil))
+                                   (setf input-dx (+ (if auto-right 1.0 0.0)
+                                                     (if auto-left -1.0 0.0))
+                                         input-dy (+ (if auto-down 1.0 0.0)
+                                                     (if auto-up -1.0 0.0)))
+                                   (multiple-value-setq (input-dx input-dy)
+                                     (normalize-direction input-dx input-dy)))
+                                 (multiple-value-setq (input-dx input-dy)
+                                   (read-input-direction)))))
                          (cond
                            ((or (not (zerop input-dx))
                                 (not (zerop input-dy)))
