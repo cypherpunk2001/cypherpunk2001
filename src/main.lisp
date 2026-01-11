@@ -104,6 +104,12 @@
             (+ (/ (- sy (raylib:vector2-y camera-offset)) zoom)
                target-y))))
 
+(defun point-in-rect-p (x y rx ry rw rh)
+  (and (>= x rx)
+       (< x (+ rx rw))
+       (>= y ry)
+       (< y (+ ry rh))))
+
 (defun sprite-path (filename)
   (format nil "~a/~a" *player-sprite-dir* filename))
 
@@ -252,7 +258,24 @@
            (wall-map-height (array-dimension wall-map 0))
            (soundtrack-count (length *soundtrack-tracks*))
            (soundtrack-music (make-array soundtrack-count))
+           (soundtrack-names (make-array soundtrack-count))
+           (soundtrack-labels (make-array soundtrack-count))
            (soundtrack-index 0)
+           (menu-no-music-label "No music loaded")
+           (current-track-label menu-no-music-label)
+           (volume-steps 10)
+           (volume-level volume-steps)
+           (volume-bars (let ((bars (make-array (1+ volume-steps))))
+                          (loop :for i :from 0 :to volume-steps
+                                :do (let ((s (make-string (+ volume-steps 2)
+                                                          :initial-element #\-)))
+                                      (setf (aref s 0) #\[)
+                                      (setf (aref s (1+ volume-steps)) #\])
+                                      (dotimes (j i)
+                                        (setf (aref s (1+ j)) #\|))
+                                      (setf (aref bars i) s)))
+                          bars))
+           (music-volume (/ volume-level (float volume-steps 1.0)))
            (current-music nil)
            (scaled-width (* *sprite-frame-width* *sprite-scale*))
            (scaled-height (* *sprite-frame-height* *sprite-scale*))
@@ -284,17 +307,50 @@
            (target-active nil)
            (menu-open nil)
            (exit-requested nil)
-           (menu-panel-width 360)
-           (menu-panel-height 200)
+           (menu-padding 32)
+           (menu-panel-width (truncate (* *window-width* 0.92)))
+           (menu-panel-height (truncate (* *window-height* 0.92)))
            (menu-panel-x (truncate (/ (- *window-width* menu-panel-width) 2)))
            (menu-panel-y (truncate (/ (- *window-height* menu-panel-height) 2)))
-           (menu-button-width 200)
-           (menu-button-height 44)
-           (menu-button-x (truncate (/ (- *window-width* menu-button-width) 2)))
-           (menu-button-y (+ menu-panel-y 110))
            (menu-title "Escape Menu")
            (menu-hint "Press Esc to close")
+           (menu-track-title "Music")
            (menu-button-label "Quit")
+           (menu-prev-label "Prev")
+           (menu-next-label "Next")
+           (menu-vol-down-label "Vol -")
+           (menu-vol-up-label "Vol +")
+           (menu-title-size 34)
+           (menu-hint-size 18)
+           (menu-track-size 20)
+           (menu-button-text-size 22)
+           (menu-nav-text-size 18)
+           (menu-volume-text-size 18)
+           (menu-button-width 260)
+           (menu-button-height 56)
+           (menu-button-x (truncate (/ (- *window-width* menu-button-width) 2)))
+           (menu-button-y (- (+ menu-panel-y menu-panel-height)
+                             menu-padding
+                             menu-button-height))
+           (menu-nav-button-width 140)
+           (menu-nav-button-height 44)
+           (menu-nav-gap 16)
+           (menu-nav-y (+ menu-panel-y 140))
+           (menu-prev-x (+ menu-panel-x menu-padding))
+           (menu-next-x (+ menu-prev-x menu-nav-button-width menu-nav-gap))
+           (menu-track-text-x (+ menu-panel-x menu-padding))
+           (menu-track-text-y (+ menu-nav-y menu-nav-button-height 22))
+           (menu-volume-button-width 110)
+           (menu-volume-button-height 40)
+           (menu-volume-gap 12)
+           (menu-volume-y (+ menu-track-text-y 40))
+           (menu-volume-down-x (+ menu-panel-x menu-padding))
+           (menu-volume-up-x (+ menu-volume-down-x
+                                menu-volume-button-width
+                                menu-volume-gap))
+           (menu-volume-bars-x (+ menu-volume-up-x
+                                  menu-volume-button-width
+                                  menu-volume-gap))
            (running nil)
            (run-stamina *run-stamina-max*)
            (mouse-hold-timer 0.0)
@@ -303,8 +359,8 @@
            (auto-down nil)
            (auto-up nil)
            (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
-           (menu-overlay-color (raylib:make-color :r 0 :g 0 :b 0 :a 140))
-           (menu-panel-color (raylib:make-color :r 18 :g 18 :b 18 :a 220))
+           (menu-overlay-color (raylib:make-color :r 0 :g 0 :b 0 :a 110))
+           (menu-panel-color (raylib:make-color :r 18 :g 18 :b 18 :a 200))
            (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
            (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
            (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
@@ -324,11 +380,21 @@
            (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
            (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
       (loop :for index :from 0 :below soundtrack-count
-            :do (setf (aref soundtrack-music index)
-                      (raylib:load-music-stream (aref *soundtrack-tracks* index))))
+            :for path = (aref *soundtrack-tracks* index)
+            :for pathname = (pathname path)
+            :for name = (pathname-name pathname)
+            :for type = (pathname-type pathname)
+            :for display = (if type (format nil "~a.~a" name type) name)
+            :for label = (format nil "Now Playing: ~a" display)
+            :do (setf (aref soundtrack-names index) display
+                      (aref soundtrack-labels index) label
+                      (aref soundtrack-music index)
+                      (raylib:load-music-stream path)))
       (when (> soundtrack-count 0)
-        (setf current-music (aref soundtrack-music 0))
-        (raylib:play-music-stream current-music))
+        (setf current-music (aref soundtrack-music 0)
+              current-track-label (aref soundtrack-labels 0))
+        (raylib:play-music-stream current-music)
+        (raylib:set-music-volume current-music music-volume))
       (when *verbose-logs*
         (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
                 tile-dest-size collision-half-width collision-half-height
@@ -349,11 +415,16 @@
                                 (track-played (raylib:get-music-time-played current-music)))
                            (when (and (> track-length 0.0)
                                       (>= track-played (- track-length 0.05)))
-                             (setf soundtrack-index
-                                   (mod (1+ soundtrack-index) soundtrack-count)
-                                   current-music
-                                   (aref soundtrack-music soundtrack-index))
-                             (raylib:play-music-stream current-music))))
+                             (let ((old-music current-music))
+                               (setf soundtrack-index
+                                     (mod (1+ soundtrack-index) soundtrack-count)
+                                     current-music
+                                     (aref soundtrack-music soundtrack-index)
+                                     current-track-label
+                                     (aref soundtrack-labels soundtrack-index))
+                               (raylib:stop-music-stream old-music)
+                               (raylib:play-music-stream current-music)
+                               (raylib:set-music-volume current-music music-volume))))
                          (let ((wheel (raylib:get-mouse-wheel-move)))
                            (when (not (zerop wheel))
                              (setf camera-zoom
@@ -371,12 +442,62 @@
                        (when (and menu-open mouse-clicked)
                          (let ((mx (raylib:get-mouse-x))
                                (my (raylib:get-mouse-y)))
-                           (when (and (>= mx menu-button-x)
-                                      (< mx (+ menu-button-x menu-button-width))
-                                      (>= my menu-button-y)
-                                      (< my (+ menu-button-y menu-button-height)))
-                             (setf exit-requested t))))
-                       (when mouse-clicked
+                           (cond
+                             ((point-in-rect-p mx my
+                                               menu-button-x menu-button-y
+                                               menu-button-width menu-button-height)
+                              (setf exit-requested t))
+                             ((and (> soundtrack-count 0)
+                                   (point-in-rect-p mx my
+                                                    menu-prev-x menu-nav-y
+                                                    menu-nav-button-width
+                                                    menu-nav-button-height))
+                              (let ((old-music current-music))
+                                (setf soundtrack-index
+                                      (mod (1- soundtrack-index) soundtrack-count)
+                                      current-music
+                                      (aref soundtrack-music soundtrack-index)
+                                      current-track-label
+                                      (aref soundtrack-labels soundtrack-index))
+                                (when old-music
+                                  (raylib:stop-music-stream old-music))
+                                (raylib:play-music-stream current-music)
+                                (raylib:set-music-volume current-music music-volume)))
+                             ((and (> soundtrack-count 0)
+                                   (point-in-rect-p mx my
+                                                    menu-next-x menu-nav-y
+                                                    menu-nav-button-width
+                                                    menu-nav-button-height))
+                              (let ((old-music current-music))
+                                (setf soundtrack-index
+                                      (mod (1+ soundtrack-index) soundtrack-count)
+                                      current-music
+                                      (aref soundtrack-music soundtrack-index)
+                                      current-track-label
+                                      (aref soundtrack-labels soundtrack-index))
+                                (when old-music
+                                  (raylib:stop-music-stream old-music))
+                                (raylib:play-music-stream current-music)
+                                (raylib:set-music-volume current-music music-volume)))
+                             ((point-in-rect-p mx my
+                                               menu-volume-down-x menu-volume-y
+                                               menu-volume-button-width
+                                               menu-volume-button-height)
+                              (setf volume-level (max 0 (1- volume-level))
+                                    music-volume (/ volume-level
+                                                    (float volume-steps 1.0)))
+                              (when current-music
+                                (raylib:set-music-volume current-music music-volume)))
+                             ((point-in-rect-p mx my
+                                               menu-volume-up-x menu-volume-y
+                                               menu-volume-button-width
+                                               menu-volume-button-height)
+                              (setf volume-level (min volume-steps (1+ volume-level))
+                                    music-volume (/ volume-level
+                                                    (float volume-steps 1.0)))
+                              (when current-music
+                                (raylib:set-music-volume current-music music-volume)))))))
+                       (when (and mouse-clicked (not menu-open))
                          (setf auto-right nil
                                auto-left nil
                                auto-down nil
@@ -390,7 +511,7 @@
                                             camera-zoom))
                          (setf target-active t
                                mouse-hold-timer 0.0))
-                       (when (and mouse-down (not mouse-clicked))
+                       (when (and mouse-down (not mouse-clicked) (not menu-open))
                          (incf mouse-hold-timer dt)
                          (when (>= mouse-hold-timer *mouse-hold-repeat-seconds*)
                            (setf mouse-hold-timer 0.0
@@ -661,37 +782,130 @@
                            (when menu-open
                              (let* ((mouse-x (raylib:get-mouse-x))
                                     (mouse-y (raylib:get-mouse-y))
-                                    (hover (and (>= mouse-x menu-button-x)
-                                                (< mouse-x (+ menu-button-x menu-button-width))
-                                                (>= mouse-y menu-button-y)
-                                                (< mouse-y (+ menu-button-y menu-button-height))))
-                                    (button-color (if hover
+                                    (hover-quit (point-in-rect-p mouse-x mouse-y
+                                                                 menu-button-x menu-button-y
+                                                                 menu-button-width menu-button-height))
+                                    (hover-prev (point-in-rect-p mouse-x mouse-y
+                                                                 menu-prev-x menu-nav-y
+                                                                 menu-nav-button-width
+                                                                 menu-nav-button-height))
+                                    (hover-next (point-in-rect-p mouse-x mouse-y
+                                                                 menu-next-x menu-nav-y
+                                                                 menu-nav-button-width
+                                                                 menu-nav-button-height))
+                                    (hover-vol-down (point-in-rect-p mouse-x mouse-y
+                                                                     menu-volume-down-x
+                                                                     menu-volume-y
+                                                                     menu-volume-button-width
+                                                                     menu-volume-button-height))
+                                    (hover-vol-up (point-in-rect-p mouse-x mouse-y
+                                                                   menu-volume-up-x
+                                                                   menu-volume-y
+                                                                   menu-volume-button-width
+                                                                   menu-volume-button-height))
+                                    (quit-color (if hover-quit
+                                                    menu-button-hover-color
+                                                    menu-button-color))
+                                    (prev-color (if hover-prev
+                                                    menu-button-hover-color
+                                                    menu-button-color))
+                                    (next-color (if hover-next
+                                                    menu-button-hover-color
+                                                    menu-button-color))
+                                    (vol-down-color (if hover-vol-down
+                                                        menu-button-hover-color
+                                                        menu-button-color))
+                                    (vol-up-color (if hover-vol-up
                                                       menu-button-hover-color
-                                                      menu-button-color)))
+                                                      menu-button-color))
+                                    (title-x (+ menu-panel-x menu-padding))
+                                    (title-y (+ menu-panel-y menu-padding))
+                                    (hint-y (+ menu-panel-y menu-padding 44))
+                                    (track-title-y (- menu-nav-y 28))
+                                    (volume-label-y (- menu-volume-y 26))
+                                    (volume-bars-text (aref volume-bars volume-level)))
                                (raylib:draw-rectangle 0 0 *window-width* *window-height*
                                                       menu-overlay-color)
                                (raylib:draw-rectangle menu-panel-x menu-panel-y
                                                       menu-panel-width menu-panel-height
                                                       menu-panel-color)
                                (raylib:draw-text menu-title
-                                                 (+ menu-panel-x 24)
-                                                 (+ menu-panel-y 24)
-                                                 28
+                                                 title-x
+                                                 title-y
+                                                 menu-title-size
                                                  menu-text-color)
                                (raylib:draw-text menu-hint
-                                                 (+ menu-panel-x 24)
-                                                 (+ menu-panel-y 64)
-                                                 16
+                                                 title-x
+                                                 hint-y
+                                                 menu-hint-size
+                                                 menu-text-color)
+                               (raylib:draw-text menu-track-title
+                                                 title-x
+                                                 track-title-y
+                                                 menu-track-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-prev-x menu-nav-y
+                                                      menu-nav-button-width
+                                                      menu-nav-button-height
+                                                      prev-color)
+                               (raylib:draw-text menu-prev-label
+                                                 (+ menu-prev-x 18)
+                                                 (+ menu-nav-y 12)
+                                                 menu-nav-text-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-next-x menu-nav-y
+                                                      menu-nav-button-width
+                                                      menu-nav-button-height
+                                                      next-color)
+                               (raylib:draw-text menu-next-label
+                                                 (+ menu-next-x 18)
+                                                 (+ menu-nav-y 12)
+                                                 menu-nav-text-size
+                                                 menu-text-color)
+                               (raylib:draw-text current-track-label
+                                                 menu-track-text-x
+                                                 menu-track-text-y
+                                                 menu-track-size
+                                                 menu-text-color)
+                               (raylib:draw-text "Volume"
+                                                 menu-track-text-x
+                                                 volume-label-y
+                                                 menu-volume-text-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-volume-down-x
+                                                      menu-volume-y
+                                                      menu-volume-button-width
+                                                      menu-volume-button-height
+                                                      vol-down-color)
+                               (raylib:draw-text menu-vol-down-label
+                                                 (+ menu-volume-down-x 14)
+                                                 (+ menu-volume-y 10)
+                                                 menu-volume-text-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-volume-up-x
+                                                      menu-volume-y
+                                                      menu-volume-button-width
+                                                      menu-volume-button-height
+                                                      vol-up-color)
+                               (raylib:draw-text menu-vol-up-label
+                                                 (+ menu-volume-up-x 14)
+                                                 (+ menu-volume-y 10)
+                                                 menu-volume-text-size
+                                                 menu-text-color)
+                               (raylib:draw-text volume-bars-text
+                                                 menu-volume-bars-x
+                                                 (+ menu-volume-y 10)
+                                                 menu-volume-text-size
                                                  menu-text-color)
                                (raylib:draw-rectangle menu-button-x menu-button-y
                                                       menu-button-width menu-button-height
-                                                      button-color)
+                                                      quit-color)
                                (raylib:draw-text menu-button-label
                                                  (+ menu-button-x 24)
-                                                 (+ menu-button-y 10)
-                                                 22
+                                                 (+ menu-button-y 16)
+                                                 menu-button-text-size
                                                  menu-text-color))))
-                         ))))
+                         )))
         (loop :for index :from 0 :below soundtrack-count
               :do (raylib:unload-music-stream (aref soundtrack-music index)))
         (raylib:close-audio-device)
@@ -701,4 +915,5 @@
         (raylib:unload-texture up-idle)
         (raylib:unload-texture up-walk)
         (raylib:unload-texture side-idle)
-        (raylib:unload-texture side-walk))))
+        (raylib:unload-texture side-walk))
+    )))
