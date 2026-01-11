@@ -367,6 +367,10 @@
            (menu-volume-bars-x (+ menu-volume-up-x
                                   menu-volume-button-width
                                   menu-volume-gap))
+           (menu-debug-size 18)
+           (menu-debug-x (+ menu-panel-x menu-padding))
+           (menu-debug-y (+ menu-volume-y menu-volume-button-height 24))
+           (menu-debug-label "Debug Collision Overlay")
            (running nil)
            (run-stamina *run-stamina-max*)
            (mouse-hold-timer 0.0)
@@ -512,7 +516,12 @@
                                     music-volume (/ volume-level
                                                     (float volume-steps 1.0)))
                               (when current-music
-                                (raylib:set-music-volume current-music music-volume)))))))
+                                (raylib:set-music-volume current-music music-volume)))
+                             ((point-in-rect-p mx my
+                                               menu-debug-x menu-debug-y
+                                               menu-debug-size menu-debug-size)
+                              (setf *debug-collision-overlay*
+                                    (not *debug-collision-overlay*)))))))
                        (when (and mouse-clicked (not menu-open))
                          (setf auto-right nil
                                auto-left nil
@@ -839,7 +848,11 @@
                                     (hint-y (+ menu-panel-y menu-padding 44))
                                     (track-title-y (- menu-nav-y 28))
                                     (volume-label-y (- menu-volume-y 26))
-                                    (volume-bars-text (aref volume-bars volume-level)))
+                                    (volume-bars-text (aref volume-bars volume-level))
+                                    (debug-on *debug-collision-overlay*)
+                                    (debug-box-color (if debug-on
+                                                         menu-button-color
+                                                         menu-panel-color)))
                                (raylib:draw-rectangle 0 0 *window-width* *window-height*
                                                       menu-overlay-color)
                                (raylib:draw-rectangle menu-panel-x menu-panel-y
@@ -911,6 +924,21 @@
                                (raylib:draw-text volume-bars-text
                                                  menu-volume-bars-x
                                                  (+ menu-volume-y 10)
+                                                 menu-volume-text-size
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-debug-x
+                                                      menu-debug-y
+                                                      menu-debug-size
+                                                      menu-debug-size
+                                                      debug-box-color)
+                               (raylib:draw-rectangle-lines menu-debug-x
+                                                            menu-debug-y
+                                                            menu-debug-size
+                                                            menu-debug-size
+                                                            menu-text-color)
+                               (raylib:draw-text menu-debug-label
+                                                 (+ menu-debug-x 28)
+                                                 (- menu-debug-y 2)
                                                  menu-volume-text-size
                                                  menu-text-color)
                                (raylib:draw-rectangle menu-button-x menu-button-y
