@@ -6,8 +6,12 @@
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
 (defparameter *player-speed* 222.0)
+(defparameter *camera-zoom-default* 1.0) ; Default camera zoom level.
+(defparameter *camera-zoom-min* 0.5) ; Minimum zoom level.
+(defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
+(defparameter *camera-zoom-step* 0.1) ; Zoom step per mouse wheel tick.
 
-(defparameter *player-sprite-dir* "../assets/1 Characters/1")
+(defparameter *player-sprite-dir* "../assets/1 Characters/3")
 (defparameter *sprite-frame-width* 32.0)
 (defparameter *sprite-frame-height* 32.0)
 (defparameter *sprite-scale* 4.0)
@@ -21,11 +25,11 @@
 (defparameter *floor-variant-mod* 10) ; 1 in N chance to use a variant instead of main.
 (defparameter *floor-cluster-size* 3) ; Size of clustered variant blocks, in tiles.
 (defparameter *floor-seed* 1337) ; Seed for deterministic floor variation.
-(defparameter *landmark-indices* '(101 102 105)) ; Sparse decorative overlays.
+(defparameter *landmark-indices* '(41 42)) ; Sparse decorative overlays.
 (defparameter *landmark-mod* 80) ; 1 in N tiles become a landmark.
 (defparameter *landmark-seed* 7331) ; Seed for deterministic landmark placement.
-(defparameter *wall-map-width* 20) ; Width of the test wall map in tiles.
-(defparameter *wall-map-height* 12) ; Height of the test wall map in tiles.
+(defparameter *wall-map-width* 40) ; Width of the test wall map in tiles.
+(defparameter *wall-map-height* 24) ; Height of the test wall map in tiles.
 (defparameter *wall-origin-x* 0) ; World tile X where the wall map starts.
 (defparameter *wall-origin-y* 0) ; World tile Y where the wall map starts.
 (defparameter *wall-tile-indices* '(107)) ; Wall tile variants.
@@ -47,6 +51,7 @@
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
+(defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle))
 
 (defun clamp (value min-value max-value)
   (max min-value (min value max-value)))
@@ -245,7 +250,7 @@
            (camera-offset (raylib:make-vector2
                            :x (/ *window-width* 2.0)
                            :y (/ *window-height* 2.0)))
-           (camera-zoom 1.0)
+           (camera-zoom *camera-zoom-default*)
            (target-x x)
            (target-y y)
            (target-active nil)
@@ -275,6 +280,14 @@
                        (let ((input-dx 0.0)
                              (input-dy 0.0)
                              (mouse-clicked nil))
+                         (let ((wheel (raylib:get-mouse-wheel-move)))
+                           (when (not (zerop wheel))
+                             (setf camera-zoom
+                                   (clamp (+ camera-zoom (* wheel *camera-zoom-step*))
+                                          *camera-zoom-min*
+                                          *camera-zoom-max*))))
+                         (when (raylib:is-mouse-button-pressed +mouse-middle+)
+                           (setf camera-zoom *camera-zoom-default*))
                          (setf dx 0.0
                                dy 0.0)
                          (multiple-value-setq (input-dx input-dy) (read-input-direction))
