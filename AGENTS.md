@@ -13,6 +13,7 @@ mmorpg/
   src/
     package.lisp
     main.lisp
+    ...
   docs/
     raylib_cheatsheet.md
     claw-raylib-readme.org
@@ -20,47 +21,131 @@ mmorpg/
 
 ---
 
-## Current Task - Fix wall collisions
+## Current Task
 
-approx: top left of literal visual square wall tile: pos=336.60,197.20 tile=5,3
-top right lit vis sq wall tile: pos=943.40,197.20 tile=14,3
-bottom left lit vis sq wall tile: pos=336.60,552.40 tile=5,8
-bottom right lit vis sq wall tile: pos=947.11,552.40 tile=14,8
+# AGENTS.md
 
-now this is how far in the map i can actually get before i hit collision square:
+This document defines how **agents** (human players, NPCs, bots) communicate in-game.
+We start with a **chat system** that is fully decoupled from rendering and gameplay authority.
+Once chat is working, we will add the first NPC agent (LLM-backed via Ollama) as a chat participant.
 
-top left extremity colission hit: pos=129.40,130.60 tile=2,2
-top right: pos=1149.44,128.06 tile=17,2
-bottom left: pos=129.40,637.50 tile=2,9
-bottom right: pos=1149.44,638.71 tile=17,9
+---
 
-Debug overlay needed to fix wall/collision mismatch:
+## Part 1 — Chat System (Foundation)
 
-- Draw world tile grid in world space (inside camera mode):
-  - tile_px = *tile-size* * *tile-scale*
-  - for visible tiles: draw thin grid lines or faint rect outlines
+### Goal
+Implement a chat system where:
+- Press **T** to enter typing mode
+- Typing writes to an input buffer
+- **Enter** sends the message to the public arena chat
+- **Esc** cancels typing
+- Chat is **decoupled from rendering**
+- Chat output can later be shown as:
+  - a chat log UI panel
+  - floating text above character heads (optional later)
 
-- Draw blocked collision cells (from collision grid) as translucent red rects:
-  - dst rect for tile (tx,ty):
-    x = tx * tile_px
-    y = ty * tile_px
-    w = tile_px
-    h = tile_px
+### Key rule
+Chat is a **data + events system**, not a render system.
 
-- Draw wall-layer tile dst rects as translucent blue rects using the SAME dst math.
+Rendering will consume chat state, but chat will not depend on rendering.
 
-- Draw player collision box as a green rect (in world space).
+---
 
-- Print, each frame:
-  - player world pos
-  - collider center world pos
-  - computed tile coords from collider center:
-    tx = floor(cx / tile_px), ty = floor(cy / tile_px)
-  - computed tile coords from collider "feet" point:
-    fx = cx, fy = cy + collider_h/2
-    tx_feet = floor(fx / tile_px), ty_feet = floor(fy / tile_px)
+## Chat Architecture
 
-Goal: red collision tiles must exactly overlap blue wall tiles.
+### Components
+
+#### 1) ChatInput (state machine)
+Tracks whether the player is typing and what’s in the current buffer.
+
+- `active_p` — whether typing mode is enabled
+- `buffer` — current input line
+- `max_len` — clamp input length
+
+Typing mode should suppress movement controls so WASD doesn’t move the player while typing.
+
+#### 2) ChatLog (history)
+Stores chat messages for:
+- chat window UI
+- debugging
+- later replay
+
+The log is game-state data, not UI.
+
+#### 3) ChatBus (publish/subscribe seam)
+A simple interface for emitting chat messages.
+
+Today:
+- `publish(msg)` just queues locally
+
+Later:
+- `publish(msg)` sends to server
+- incoming messages are delivered from server into the client log
+
+This is the seam that allows client/server migration without rewriting the game.
+
+---
+
+## Chat Message Contract
+
+A message is a plain data object with these minimum fields:
+
+- `from_id` — player id / agent id
+- `channel` — `:public` for now (future: :local, :guild, :whisper)
+- `text` — the message content
+- `time_ms` — timestamp or tick when sent
+
+Optional future fields (not required for part 1):
+- `pos` / `zone` (for proximity and overhead bubbles)
+- `to_id` (directed messages, whispers, npc targeting)
+- `conversation_id` (for NPC memory)
+
+---
+
+## Input Handling Rules (Raylib / game loop)
+
+### Enter typing mode
+- When not typing:
+  - If **T** is pressed: activate chat input (clear buffer)
+
+### Capture typed characters
+- When typing:
+  - Characters come from `GetCharPressed()` (loop until 0)
+  - Append printable characters to buffer
+  - Clamp length to `max_len`
+
+### Editing
+- When typing:
+  - Backspace deletes last character
+
+### Submit
+- When typing:
+  - Enter sends message:
+    - trim whitespace
+    - ignore empty messages
+    - create `chat-message`
+    - push to `chat-log`
+    - publish to `chat-bus`
+    - exit typing mode
+
+### Cancel
+- When typing:
+  - Esc cancels:
+    - clear buffer
+    - exit typing mode
+
+---
+
+## Non-Goals for Part 1
+- Networking
+- Message moderation/filters
+- Overhead bubbles / proximity logic
+- Chat commands (`/w`, `/me`, etc.)
+- NPC logic
+
+Those come after the foundation is stable.
+
+---
 
 ## How to keep it smooth as we scale
 
