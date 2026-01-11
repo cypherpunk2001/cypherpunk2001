@@ -1,7 +1,7 @@
 (in-package #:mmorpg)
 
 (defparameter *verbose-logs* nil) ; When true, logs player position and collider info per frame.
-(defparameter *debug-collision-overlay* nil) ; Draws debug grid and collision overlays.
+(defparameter *debug-collision-overlay* t) ; Draws debug grid and collision overlays.
 
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
@@ -21,6 +21,14 @@
 (defparameter *sprite-scale* 4.0)
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ; Atlas image used for floor tiles.
+(defparameter *soundtrack-dir* "../assets/6 Soundtrack")
+(defparameter *soundtrack-tracks*
+  (vector
+   (format nil "~a/Juhani Junkala [Retro Game Music Pack] Title Screen.wav" *soundtrack-dir*)
+   (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 1.wav" *soundtrack-dir*)
+   (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 2.wav" *soundtrack-dir*)
+   (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 3.wav" *soundtrack-dir*)
+   (format nil "~a/Juhani Junkala [Retro Game Music Pack] Ending.wav" *soundtrack-dir*)))
 (defparameter *tile-size* 16) ; Source tile size in the atlas, in pixels.
 (defparameter *tile-scale* 4.0) ; Scale factor for drawing tiles to the screen.
 (defparameter *tileset-columns* 19) ; Number of columns in the atlas grid.
@@ -50,6 +58,7 @@
 (defparameter +key-left+ (cffi:foreign-enum-value 'raylib:keyboard-key :left))
 (defparameter +key-down+ (cffi:foreign-enum-value 'raylib:keyboard-key :down))
 (defparameter +key-up+ (cffi:foreign-enum-value 'raylib:keyboard-key :up))
+(defparameter +key-escape+ (cffi:foreign-enum-value 'raylib:keyboard-key :escape))
 (defparameter +key-d+ (cffi:foreign-enum-value 'raylib:keyboard-key :d))
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
@@ -233,12 +242,18 @@
 (defun run ()
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
+    (raylib:set-exit-key 0)
+    (raylib:init-audio-device)
     (let* ((tile-size-f (float *tile-size* 1.0))
            (tile-dest-size (* tile-size-f *tile-scale*))
            (floor-index *floor-tile-index*)
            (wall-map (build-wall-map))
            (wall-map-width (array-dimension wall-map 1))
            (wall-map-height (array-dimension wall-map 0))
+           (soundtrack-count (length *soundtrack-tracks*))
+           (soundtrack-music (make-array soundtrack-count))
+           (soundtrack-index 0)
+           (current-music nil)
            (scaled-width (* *sprite-frame-width* *sprite-scale*))
            (scaled-height (* *sprite-frame-height* *sprite-scale*))
            (half-sprite-width (/ scaled-width 2.0))
@@ -267,6 +282,19 @@
            (target-x x)
            (target-y y)
            (target-active nil)
+           (menu-open nil)
+           (exit-requested nil)
+           (menu-panel-width 360)
+           (menu-panel-height 200)
+           (menu-panel-x (truncate (/ (- *window-width* menu-panel-width) 2)))
+           (menu-panel-y (truncate (/ (- *window-height* menu-panel-height) 2)))
+           (menu-button-width 200)
+           (menu-button-height 44)
+           (menu-button-x (truncate (/ (- *window-width* menu-button-width) 2)))
+           (menu-button-y (+ menu-panel-y 110))
+           (menu-title "Escape Menu")
+           (menu-hint "Press Esc to close")
+           (menu-button-label "Quit")
            (running nil)
            (run-stamina *run-stamina-max*)
            (mouse-hold-timer 0.0)
@@ -275,6 +303,11 @@
            (auto-down nil)
            (auto-up nil)
            (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
+           (menu-overlay-color (raylib:make-color :r 0 :g 0 :b 0 :a 140))
+           (menu-panel-color (raylib:make-color :r 18 :g 18 :b 18 :a 220))
+           (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
+           (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
+           (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
            (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
            (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
            (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -290,13 +323,19 @@
            (up-walk (raylib:load-texture (sprite-path "U_Walk.png")))
            (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
            (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
+      (loop :for index :from 0 :below soundtrack-count
+            :do (setf (aref soundtrack-music index)
+                      (raylib:load-music-stream (aref *soundtrack-tracks* index))))
+      (when (> soundtrack-count 0)
+        (setf current-music (aref soundtrack-music 0))
+        (raylib:play-music-stream current-music))
       (when *verbose-logs*
         (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
                 tile-dest-size collision-half-width collision-half-height
                 wall-min-x wall-max-x wall-min-y wall-max-y)
         (finish-output))
       (unwind-protect
-           (loop :until (raylib:window-should-close)
+           (loop :until (or (raylib:window-should-close) exit-requested)
                  :do (let* ((dt (raylib:get-frame-time))
                             (input-dx 0.0)
                             (input-dy 0.0)
@@ -304,6 +343,17 @@
                             (speed-mult 1.0)
                             (mouse-down nil)
                             (key-pressed nil))
+                       (when current-music
+                         (raylib:update-music-stream current-music)
+                         (let* ((track-length (raylib:get-music-time-length current-music))
+                                (track-played (raylib:get-music-time-played current-music)))
+                           (when (and (> track-length 0.0)
+                                      (>= track-played (- track-length 0.05)))
+                             (setf soundtrack-index
+                                   (mod (1+ soundtrack-index) soundtrack-count)
+                                   current-music
+                                   (aref soundtrack-music soundtrack-index))
+                             (raylib:play-music-stream current-music))))
                          (let ((wheel (raylib:get-mouse-wheel-move)))
                            (when (not (zerop wheel))
                              (setf camera-zoom
@@ -312,12 +362,39 @@
                                           *camera-zoom-max*))))
                          (when (raylib:is-mouse-button-pressed +mouse-middle+)
                            (setf camera-zoom *camera-zoom-default*))
-                         (setf dx 0.0
-                               dy 0.0)
-                         (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+)
-                               mouse-down (raylib:is-mouse-button-down +mouse-left+))
-                         (when mouse-clicked
-                           (setf auto-right nil
+                       (setf dx 0.0
+                             dy 0.0)
+                       (setf mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+)
+                             mouse-down (raylib:is-mouse-button-down +mouse-left+))
+                       (when (raylib:is-key-pressed +key-escape+)
+                         (setf menu-open (not menu-open)))
+                       (when (and menu-open mouse-clicked)
+                         (let ((mx (raylib:get-mouse-x))
+                               (my (raylib:get-mouse-y)))
+                           (when (and (>= mx menu-button-x)
+                                      (< mx (+ menu-button-x menu-button-width))
+                                      (>= my menu-button-y)
+                                      (< my (+ menu-button-y menu-button-height)))
+                             (setf exit-requested t))))
+                       (when mouse-clicked
+                         (setf auto-right nil
+                               auto-left nil
+                               auto-down nil
+                               auto-up nil)
+                         (multiple-value-setq (target-x target-y)
+                           (screen-to-world (raylib:get-mouse-x)
+                                            (raylib:get-mouse-y)
+                                            x
+                                            y
+                                            camera-offset
+                                            camera-zoom))
+                         (setf target-active t
+                               mouse-hold-timer 0.0))
+                       (when (and mouse-down (not mouse-clicked))
+                         (incf mouse-hold-timer dt)
+                         (when (>= mouse-hold-timer *mouse-hold-repeat-seconds*)
+                           (setf mouse-hold-timer 0.0
+                                 auto-right nil
                                  auto-left nil
                                  auto-down nil
                                  auto-up nil)
@@ -328,28 +405,11 @@
                                               y
                                               camera-offset
                                               camera-zoom))
-                           (setf target-active t
-                                 mouse-hold-timer 0.0))
-                         (when (and mouse-down (not mouse-clicked))
-                           (incf mouse-hold-timer dt)
-                           (when (>= mouse-hold-timer *mouse-hold-repeat-seconds*)
-                             (setf mouse-hold-timer 0.0
-                                   auto-right nil
-                                   auto-left nil
-                                   auto-down nil
-                                   auto-up nil)
-                             (multiple-value-setq (target-x target-y)
-                               (screen-to-world (raylib:get-mouse-x)
-                                                (raylib:get-mouse-y)
-                                                x
-                                                y
-                                                camera-offset
-                                                camera-zoom))
-                             (setf target-active t)))
-                         (unless mouse-down
-                           (setf mouse-hold-timer 0.0))
-                         (unless mouse-clicked
-                           (let* ((shift-held (or (raylib:is-key-down +key-left-shift+)
+                           (setf target-active t)))
+                       (unless mouse-down
+                         (setf mouse-hold-timer 0.0))
+                       (unless mouse-clicked
+                         (let* ((shift-held (or (raylib:is-key-down +key-left-shift+)
                                                   (raylib:is-key-down +key-right-shift+)))
                                   (pressed-right (or (raylib:is-key-pressed +key-right+)
                                                      (raylib:is-key-pressed +key-d+)))
@@ -598,11 +658,47 @@
                                   (run-text (format nil "Stamina: ~2d" run-seconds)))
                              (raylib:draw-rectangle 6 6 110 24 hud-bg-color)
                              (raylib:draw-text run-text 10 10 20 raylib:+white+))
+                           (when menu-open
+                             (let* ((mouse-x (raylib:get-mouse-x))
+                                    (mouse-y (raylib:get-mouse-y))
+                                    (hover (and (>= mouse-x menu-button-x)
+                                                (< mouse-x (+ menu-button-x menu-button-width))
+                                                (>= mouse-y menu-button-y)
+                                                (< mouse-y (+ menu-button-y menu-button-height))))
+                                    (button-color (if hover
+                                                      menu-button-hover-color
+                                                      menu-button-color)))
+                               (raylib:draw-rectangle 0 0 *window-width* *window-height*
+                                                      menu-overlay-color)
+                               (raylib:draw-rectangle menu-panel-x menu-panel-y
+                                                      menu-panel-width menu-panel-height
+                                                      menu-panel-color)
+                               (raylib:draw-text menu-title
+                                                 (+ menu-panel-x 24)
+                                                 (+ menu-panel-y 24)
+                                                 28
+                                                 menu-text-color)
+                               (raylib:draw-text menu-hint
+                                                 (+ menu-panel-x 24)
+                                                 (+ menu-panel-y 64)
+                                                 16
+                                                 menu-text-color)
+                               (raylib:draw-rectangle menu-button-x menu-button-y
+                                                      menu-button-width menu-button-height
+                                                      button-color)
+                               (raylib:draw-text menu-button-label
+                                                 (+ menu-button-x 24)
+                                                 (+ menu-button-y 10)
+                                                 22
+                                                 menu-text-color))))
                          ))))
+        (loop :for index :from 0 :below soundtrack-count
+              :do (raylib:unload-music-stream (aref soundtrack-music index)))
+        (raylib:close-audio-device)
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
         (raylib:unload-texture down-walk)
         (raylib:unload-texture up-idle)
         (raylib:unload-texture up-walk)
         (raylib:unload-texture side-idle)
-        (raylib:unload-texture side-walk)))))
+        (raylib:unload-texture side-walk))))
