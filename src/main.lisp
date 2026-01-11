@@ -1,7 +1,7 @@
 (in-package #:mmorpg)
 
 (defparameter *verbose-logs* nil) ; When true, logs player position and collider info per frame.
-(defparameter *debug-collision-overlay* t) ; Draws debug grid and collision overlays.
+(defparameter *debug-collision-overlay* nil) ; Draws debug grid and collision overlays.
 
 (defparameter *window-width* 1280)
 (defparameter *window-height* 720)
@@ -11,6 +11,8 @@
 (defparameter *camera-zoom-min* 0.5) ; Minimum zoom level.
 (defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
 (defparameter *camera-zoom-step* 0.1) ; Zoom step per mouse wheel tick.
+(defparameter *run-speed-mult* 2.0) ; Movement speed multiplier while running.
+(defparameter *run-stamina-max* 30.0) ; Seconds of run stamina when full.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ; Repeat rate for mouse-held updates.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3")
@@ -52,6 +54,7 @@
 (defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
+(defparameter +key-r+ (cffi:foreign-enum-value 'raylib:keyboard-key :r))
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
@@ -264,11 +267,14 @@
            (target-x x)
            (target-y y)
            (target-active nil)
+           (running nil)
+           (run-stamina *run-stamina-max*)
            (mouse-hold-timer 0.0)
            (auto-right nil)
            (auto-left nil)
            (auto-down nil)
            (auto-up nil)
+           (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
            (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
            (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
            (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -291,12 +297,13 @@
         (finish-output))
       (unwind-protect
            (loop :until (raylib:window-should-close)
-                 :do (let ((dt (raylib:get-frame-time)))
-                       (let ((input-dx 0.0)
-                             (input-dy 0.0)
-                             (mouse-clicked nil)
-                             (mouse-down nil)
-                             (key-pressed nil))
+                 :do (let* ((dt (raylib:get-frame-time))
+                            (input-dx 0.0)
+                            (input-dy 0.0)
+                            (mouse-clicked nil)
+                            (speed-mult 1.0)
+                            (mouse-down nil)
+                            (key-pressed nil))
                          (let ((wheel (raylib:get-mouse-wheel-move)))
                            (when (not (zerop wheel))
                              (setf camera-zoom
@@ -393,13 +400,33 @@
                                      (normalize-direction input-dx input-dy)))
                                  (multiple-value-setq (input-dx input-dy)
                                    (read-input-direction)))))
+                         (when (raylib:is-key-pressed +key-r+)
+                           (if (> run-stamina 0.0)
+                               (setf running (not running))
+                               (setf running nil)))
+                         (let ((moving (or (not (zerop input-dx))
+                                           (not (zerop input-dy))
+                                           target-active)))
+                           (if (and running moving (> run-stamina 0.0))
+                               (progn
+                                 (decf run-stamina dt)
+                                 (when (<= run-stamina 0.0)
+                                   (setf run-stamina 0.0
+                                         running nil)))
+                               (when (< run-stamina *run-stamina-max*)
+                                 (incf run-stamina dt)
+                                 (when (>= run-stamina *run-stamina-max*)
+                                   (setf run-stamina *run-stamina-max*)))))
+                           (setf speed-mult (if (and running (> run-stamina 0.0))
+                                                *run-speed-mult*
+                                                1.0))
                          (cond
                            ((or (not (zerop input-dx))
                                 (not (zerop input-dy)))
                             (setf target-active nil)
                             (multiple-value-setq (x y dx dy)
                               (attempt-move wall-map x y input-dx input-dy
-                                            (* *player-speed* dt)
+                                            (* *player-speed* speed-mult dt)
                                             collision-half-width
                                             collision-half-height
                                             tile-dest-size)))
@@ -413,7 +440,7 @@
                                         dy 0.0)
                                   (let* ((dir-x (/ to-x dist))
                                          (dir-y (/ to-y dist))
-                                         (step (min (* *player-speed* dt) dist)))
+                                         (step (min (* *player-speed* speed-mult dt) dist)))
                                     (multiple-value-setq (x y dx dy)
                                       (attempt-move wall-map x y dir-x dir-y step
                                                     collision-half-width
@@ -424,7 +451,7 @@
                                       (setf target-active nil))))))
                            (t
                             (setf dx 0.0
-                                  dy 0.0))))
+                                  dy 0.0)))
                        (setf x (clamp x wall-min-x wall-max-x)
                              y (clamp y wall-min-y wall-max-y))
                        (when *verbose-logs*
@@ -562,6 +589,11 @@
                                                            origin
                                                            0.0
                                                            raylib:+white+))))))
+                           (let* ((run-seconds (max 0 (min (truncate run-stamina)
+                                                           (truncate *run-stamina-max*))))
+                                  (run-text (format nil "Run: ~2d" run-seconds)))
+                             (raylib:draw-rectangle 6 6 92 24 hud-bg-color)
+                             (raylib:draw-text run-text 10 10 20 raylib:+white+))
                          )))
         (raylib:unload-texture tileset)
         (raylib:unload-texture down-idle)
