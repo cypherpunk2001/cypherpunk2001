@@ -14,6 +14,7 @@ Update flow (high level)
 
 Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera.
+- Uses world bounds to choose a safe spawn center.
 - `update-game`: orchestrates system updates.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 

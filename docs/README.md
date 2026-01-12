@@ -3,6 +3,12 @@
 These docs are meant to teach the architecture and the design choices behind this RPG prototype.
 The goal is to help you learn the reasoning, not just the API.
 
+## Why This Architecture
+- **Systems over scripts**: behavior lives in systems, not in the main loop.
+- **Intent layer**: input and AI both write intent; movement/combat consume it.
+- **Data-driven**: tunables and archetypes live in `data/game-data.lisp`.
+- **Rendering is read-only**: the render pipeline never mutates gameplay state.
+
 ## How To Read
 Start with the game loop, then follow the data flow:
 1) `docs/main.md` (orchestration)

@@ -140,4 +140,4 @@
    :aggro-mode :provoked
    :retaliate t
    :flee-at-hits 2
-   :perception-tiles 8.0)))
+   :perception-tiles 8.0))

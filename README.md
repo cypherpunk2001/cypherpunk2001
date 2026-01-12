@@ -1,15 +1,7 @@
 # mmorpg
 
-Minimal Common Lisp + raylib RPG prototype focused on clean architecture and
-system separation. The codebase is intentionally small but structured to teach
-modern game design habits: data-driven content, intent-based actions, and a
-strict update/draw split.
-
-## Why This Architecture
-- **Systems over scripts**: behavior lives in systems, not in the main loop.
-- **Intent layer**: input and AI both write intent; movement/combat consume it.
-- **Data-driven**: tunables and archetypes live in `data/game-data.lisp`.
-- **Rendering is read-only**: the render pipeline never mutates gameplay state.
+Common Lisp + raylib MMORPG prototype focused on clean architecture and
+system separation. The codebase is structured to teach modern game design habits: data-driven content, intent-based actions, and a strict update/draw split.
 
 ## Requirements
 - SBCL + Quicklisp
@@ -31,18 +23,13 @@ Open `src/main.lisp`, start SLIME (or your REPL), then:
 ```
 
 ## Tests
+- `make checkparens` Checks all `.lisp` files in `data/` and `src/` for balanced parentheses and general sexp structure.
 - `make ci` runs a cold compile check (no window, no GPU needed).
 - `make smoke` opens the game for a short run and exits automatically.
   It runs from `src/` so existing `../assets` paths resolve correctly.
   The smoke target is wrapped in a Linux `timeout` to kill hung runs.
   Defaults: 2 seconds runtime, 5 seconds timeout.
-
-Optional smoke settings:
-```
-MMORPG_SMOKE_SECONDS=5.0 make smoke
-MMORPG_SMOKE_FRAMES=300 make smoke
-SMOKE_TIMEOUT=30s make smoke
-```
+- `make checkdocs` Checks that every `src/foo.lisp` has a matching `docs/foo.md`, errors if any are missing, otherwise prints a friendly reminder when all pass.
 
 ## Learn The Codebase
 Start with the documentation index and follow the suggested reading order.

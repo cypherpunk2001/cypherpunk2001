@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Minimal Common Lisp + raylib project slowly iterating in to a single player rpg.
+Common Lisp + raylib project slowly iterating in to a mmorpg.
 
 ## Project layout
 
@@ -35,9 +35,22 @@ mmorpg/
 
 ## Current Task
 
+Fix bugs (debug collision is enabled in the following bug description:)
+
+- Currently a character and a rat npc spawn on top of each other, alongside the right collision world edge.
+- They should spawn near each other, but not on top of each other, and not alongside the right-colission-edge of the world, somewhere in the middle would be wise.
+
 ---
 
-## Future Tasks / Roadmap (Do not perform these at this time)
+## Future Tasks / Roadmap
+
+- The rat npc animation when hit with mele attack draws blood correctly, but does not always take damage. It seems it usually takes about 6-10 hits to kill the rat. In debug mode, clearly the red mele attack box of the attacker is visually hitting within the green square of the rat, but the rat is not always taking damage.
+
+- The rat is not moving around on spawn, is standing still
+
+- The rat should when it has 1 hit remaining flee from the attacker
+
+- The rat should not be aggro, but is not passive (always flees) either, the rat should only begin attacking after it has itself been attacked
 
 ---
 
@@ -86,38 +99,43 @@ If unsure, refactor toward reuse.
 -   After **every code change**, run:
 
 ``` sh
+make checkparens
+
 make ci
+
+make smoke
+
+make checkdocs
 ```
 
--   Do **not** present changes as complete unless this exits with code
-    `0`.
+#### `make checkparens`
 
-### What `make ci` does
+Checks all `.lisp` files in `data/` and `src/` for balanced parentheses and general sexp structure.
 
--   Runs: `sbcl --script scripts/ci.lisp`
--   This:
-    -   loads Quicklisp
-    -   runs `(ql:register-local-projects)`
-    -   `(ql:quickload :mmorpg)`
-    -   compiles the system
+- Reports results **per file**.
+- Fails immediately on the first unmatched bracket/quote.
+- Very fast and cheap to run.
 
-### Rules
+This is the agent’s most useful quick check alongside `make ci`.
 
--   Do not rely on SLIME/REPL state --- code must work from a cold SBCL.
--   If `make ci` fails:
-    -   read the first error
-    -   fix the root cause
-    -   rerun until it passes
+**Run it often** — before, during, and after making changes.
 
-### Rendering restrictions
+#### make ci
 
--   `make ci` must not:
-    -   open windows
-    -   require GPU/display
-    -   depend on interactive input
+- cold SBCL start
+- loads Quicklisp
+- (ql:register-local-projects)
+- (ql:quickload :mmorpg)
+- compiles system
+- no window, no GPU
 
-### Output requirement
+#### make smoke
 
--   End your response with one line:
-    -   `CI: make ci ✅`
-    -   or `CI: not run (reason: …)`
+- loads system
+- runs (mmorpg:run :max-seconds … :max-frames …)
+- opens a real window briefly
+- exits automatically
+
+#### make checkdocs
+
+- Checks that every `src/foo.lisp` has a matching `docs/foo.md`, errors if any are missing, otherwise prints a friendly reminder when all pass.

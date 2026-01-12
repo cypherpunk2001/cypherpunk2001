@@ -40,7 +40,12 @@
     (setf (player-hp combatant) (max 0 hp))))
 
 (defmethod combatant-apply-hit ((combatant npc) &optional amount)
-  (let ((damage (if amount amount 1)))
+  (let* ((damage (if amount amount 1))
+         (max-hits (if (npc-archetype combatant)
+                       (npc-archetype-max-hits (npc-archetype combatant))
+                       *npc-max-hits*)))
+    (when (and max-hits (> (npc-hits-left combatant) max-hits))
+      (setf (npc-hits-left combatant) max-hits))
     (decf (npc-hits-left combatant) damage)
     (setf (npc-provoked combatant) t)
     (when (<= (npc-hits-left combatant) 0)
@@ -93,8 +98,8 @@
 
 (defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
   ;; Return true when two axis-aligned boxes overlap (center + half sizes).
-  (and (< (abs (- ax bx)) (+ ahw bhw))
-       (< (abs (- ay by)) (+ ahh bhh))))
+  (and (<= (abs (- ax bx)) (+ ahw bhw))
+       (<= (abs (- ay by)) (+ ahh bhh))))
 
 (defun attack-hitbox (player world)
   ;; Return attack hitbox center and half sizes for the current facing.
@@ -133,9 +138,33 @@
         (npc-archetype-attack-damage archetype)
         *npc-attack-damage*)))
 
-(defun start-player-attack (player)
+(defun intent-attack-direction (player intent)
+  ;; Choose an attack direction from intent input or target.
+  (let ((dx (intent-move-dx intent))
+        (dy (intent-move-dy intent)))
+    (cond
+      ((or (not (zerop dx)) (not (zerop dy)))
+       (values (player-direction dx dy) dx))
+      ((intent-target-active intent)
+       (let* ((tx (intent-target-x intent))
+              (ty (intent-target-y intent))
+              (tdx (- tx (player-x player)))
+              (tdy (- ty (player-y player))))
+         (if (or (not (zerop tdx)) (not (zerop tdy)))
+             (values (player-direction tdx tdy) tdx)
+             (values nil 0.0))))
+      (t (values nil 0.0)))))
+
+(defun start-player-attack (player intent)
   ;; Start an attack animation if one is not already active.
   (unless (player-attacking player)
+    (multiple-value-bind (direction side-dx)
+        (intent-attack-direction player intent)
+      (when direction
+        (setf (player-facing player) direction)
+        (when (eq direction :side)
+          (setf (player-facing-sign player)
+                (if (> side-dx 0.0) 1.0 -1.0)))))
     (setf (player-attacking player) t
           (player-attack-timer player) 0.0
           (player-attack-hit player) nil)))

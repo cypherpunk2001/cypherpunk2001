@@ -86,6 +86,12 @@
   ;; Aggregate of game subsystems for update/draw.
   world player npcs entities audio ui render assets camera)
 
+(defun world-spawn-center (world)
+  ;; Return a spawn center inside the collision bounds.
+  (let ((x (/ (+ (world-wall-min-x world) (world-wall-max-x world)) 2.0))
+        (y (/ (+ (world-wall-min-y world) (world-wall-max-y world)) 2.0)))
+    (values x y)))
+
 (defun make-player (start-x start-y &optional (class *wizard-class*))
   ;; Construct a player state struct at the given start position.
   (let ((intent (make-intent :target-x start-x :target-y start-y)))
@@ -156,7 +162,9 @@
   (let* ((npc-count (max 0 count))
          (npcs (make-array npc-count))
          (tile-size (world-tile-dest-size world))
-         (gap (* *npc-spawn-gap-tiles* tile-size))
+         (npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
+         (gap (max (* *npc-spawn-gap-tiles* tile-size)
+                   (+ (world-collision-half-width world) npc-half)))
          (cols (max 1 *npc-spawn-columns*))
          (spawn-ids *npc-spawn-ids*)
          (spawn-count (if spawn-ids (length spawn-ids) 0)))

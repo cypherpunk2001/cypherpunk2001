@@ -17,7 +17,8 @@ Key structs
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
-- `make-npcs`: spawn a pool with data-driven archetypes.
+- `make-npcs`: spawn a pool with data-driven archetypes and safe spacing.
+- `world-spawn-center`: returns a center point inside world collision bounds.
 - `make-entities`: pack NPCs + player into a stable array.
 
 Key generics
@@ -33,3 +34,4 @@ Walkthrough: entity lifecycle
 
 Design note
 - Arrays are used for entity collections to keep iteration fast and predictable.
+- Spawn spacing accounts for collider sizes so entities don't overlap at start.

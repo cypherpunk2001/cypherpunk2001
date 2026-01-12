@@ -5,8 +5,11 @@
   ;; Assemble game state and log setup if verbose is enabled.
   (load-game-data)
   (let* ((world (make-world))
-         (player (make-player (/ *window-width* 2.0)
-                              (/ *window-height* 2.0)))
+         (spawn-x nil)
+         (spawn-y nil))
+    (multiple-value-setq (spawn-x spawn-y)
+      (world-spawn-center world))
+    (let* ((player (make-player spawn-x spawn-y))
          (npcs (make-npcs player world))
          (entities (make-entities player npcs))
          (audio (make-audio))
@@ -14,25 +17,25 @@
          (render (make-render))
          (assets (load-assets world))
          (camera (make-camera)))
-    (when *verbose-logs*
-      (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
-              (world-tile-dest-size world)
-              (world-collision-half-width world)
-              (world-collision-half-height world)
-              (world-wall-min-x world)
-              (world-wall-max-x world)
-              (world-wall-min-y world)
-              (world-wall-max-y world))
-      (finish-output))
-    (%make-game :world world
-                :player player
-                :npcs npcs
-                :entities entities
-                :audio audio
-                :ui ui
-                :render render
-                :assets assets
-                :camera camera)))
+      (when *verbose-logs*
+        (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
+                (world-tile-dest-size world)
+                (world-collision-half-width world)
+                (world-collision-half-height world)
+                (world-wall-min-x world)
+                (world-wall-max-x world)
+                (world-wall-min-y world)
+                (world-wall-max-y world))
+        (finish-output))
+      (%make-game :world world
+                  :player player
+                  :npcs npcs
+                  :entities entities
+                  :audio audio
+                  :ui ui
+                  :render render
+                  :assets assets
+                  :camera camera))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
@@ -70,7 +73,7 @@
       (update-player-position player player-intent world speed-mult dt))
     (when (and (not (ui-menu-open ui))
                (intent-attack player-intent))
-      (start-player-attack player))
+      (start-player-attack player player-intent))
     (when *verbose-logs*
       (log-player-position player world))
     (loop :for entity :across entities

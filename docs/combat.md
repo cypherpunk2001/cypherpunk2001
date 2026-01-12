@@ -24,6 +24,12 @@ Walkthrough: player melee hit
 3) `apply-melee-hit` checks hitbox overlap once per attack.
 4) Target health is reduced and a hit effect starts.
 
+Hit detection note
+- The AABB overlap treats touching edges as a hit so adjacent contact lands.
+- Attack facing is taken from intent input (or target) when the attack starts,
+  so attacking while blocked still swings in the expected direction.
+- NPC hits are clamped to their archetype max on hit to avoid stale/inflated values.
+
 Example: applying a melee hit
 ```lisp
 (when (and (player-attacking player)
