@@ -1,22 +1,22 @@
 # Docs Index
 
 Engine files
-- `docs/package.md`
-- `docs/config.md`
-- `docs/data.md`
-- `docs/intent.md`
-- `docs/types.md`
-- `docs/utils.md`
-- `docs/map.md`
-- `docs/input.md`
-- `docs/movement.md`
-- `docs/combat.md`
-- `docs/ai.md`
-- `docs/audio.md`
-- `docs/ui.md`
-- `docs/rendering.md`
-- `docs/main.md`
+- [package.md](package.md)
+- [config.md](config.md)
+- [data.md](data.md)
+- [intent.md](intent.md)
+- [types.md](types.md)
+- [utils.md](utils.md)
+- [map.md](map.md)
+- [input.md](input.md)
+- [movement.md](movement.md)
+- [combat.md](combat.md)
+- [ai.md](ai.md)
+- [audio.md](audio.md)
+- [ui.md](ui.md)
+- [rendering.md](rendering.md)
+- [main.md](main.md)
 
 Reference docs
-- `docs/raylib_cheatsheet.md`
-- `docs/claw-raylib-readme.org`
+- [raylib_cheatsheet.md](raylib_cheatsheet.md)
+- [claw-raylib-readme.org](claw-raylib-readme.org)
