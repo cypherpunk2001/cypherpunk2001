@@ -14,6 +14,7 @@ What lives here
 - Sprite, tileset, map, and audio defaults.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
+- Collision edge epsilon for fine-tuning tile contact behavior.
 
 How it connects
 - Values can be overridden by `data/game-data.lisp` via `load-game-data`.

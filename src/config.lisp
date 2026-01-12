@@ -63,6 +63,7 @@
 (defparameter *player-collision-scale* 2.0) ;; Collision box size relative to one tile.
 (defparameter *target-epsilon* 6.0) ;; Stop distance for click-to-move.
 (defparameter *npc-collision-scale* 2.0) ;; Collision box size relative to one tile.
+(defparameter *collision-edge-epsilon* 0.01) ;; Avoid counting exact edge contact as a blocked tile.
 (defparameter *npc-max-hits* 3) ;; Hits required to defeat the NPC.
 (defparameter *npc-walk-speed* 120.0) ;; Base NPC movement speed in pixels per second.
 (defparameter *npc-flee-speed-mult* 1.4) ;; Speed multiplier while fleeing.

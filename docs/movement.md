@@ -14,6 +14,7 @@ Key concepts
 - `make-world` derives bounds and collision sizes from map data.
 - `world-open-position` finds the nearest open tile that fits the player collider.
 - `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
+- `*collision-edge-epsilon*` avoids treating exact tile-edge contact as blocked.
 
 Walkthrough: from intent to position
 1) Read movement intent (dx/dy) and optional target.

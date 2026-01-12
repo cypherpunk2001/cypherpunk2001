@@ -124,10 +124,12 @@
          (right (+ x half-w))
          (top (- y half-h))
          (bottom (+ y half-h))
+         (right-edge (- right *collision-edge-epsilon*))
+         (bottom-edge (- bottom *collision-edge-epsilon*))
          (tx1 (floor left tile-size))
-         (tx2 (floor right tile-size))
+         (tx2 (floor right-edge tile-size))
          (ty1 (floor top tile-size))
-         (ty2 (floor bottom tile-size)))
+         (ty2 (floor bottom-edge tile-size)))
     (loop :for ty :from ty1 :to ty2
           :thereis (loop :for tx :from tx1 :to tx2
                          :thereis (world-blocked-tile-p world tx ty)))))

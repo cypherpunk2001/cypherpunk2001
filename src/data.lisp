@@ -50,6 +50,8 @@
     (:wall-seed . *wall-seed*)
     (:player-collision-scale . *player-collision-scale*)
     (:target-epsilon . *target-epsilon*)
+    (:collision-edge-epsilon . *collision-edge-epsilon*)
+    (:npc-collision-scale . *npc-collision-scale*)
     (:npc-max-hits . *npc-max-hits*)
     (:npc-walk-speed . *npc-walk-speed*)
     (:npc-flee-speed-mult . *npc-flee-speed-mult*)

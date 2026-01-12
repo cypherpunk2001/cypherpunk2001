@@ -35,8 +35,8 @@ mmorpg/
 
 ## Current Task
 
+Currently the world map generates such that if there are two unblocked squares to the human eye it looks like i should be able to walk through them. but they're the same size as my character (green square in debug) so i'm unable to walk through an area that looks like I should be able to walk through. See screenshot attached.
 
-- Rats are not fleeing when they have only 1 hit remaining, they continue to attack and following my character within their region, instead of running away.
 
 ---
 

@@ -26,6 +26,10 @@ Walkthrough: startup data load
 3) Animation sets and archetypes are registered in hash tables.
 4) Defaults are ensured so the game always has a baseline.
 
+Common tunables
+- `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
+- `:collision-edge-epsilon` to control edge contact tolerance.
+
 Example: new animation set
 ```lisp
 ;; In data/game-data.lisp (section header style)
