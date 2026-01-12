@@ -5,8 +5,8 @@
   (let* ((world (make-world))
          (player (make-player (/ *window-width* 2.0)
                               (/ *window-height* 2.0)))
-         (npc (make-npc (+ (player-x player) (world-tile-dest-size world))
-                        (player-y player)))
+         (npcs (make-npcs player world))
+         (entities (make-entities player npcs))
          (audio (make-audio))
          (ui (make-ui))
          (render (make-render))
@@ -24,7 +24,8 @@
       (finish-output))
     (%make-game :world world
                 :player player
-                :npc npc
+                :npcs npcs
+                :entities entities
                 :audio audio
                 :ui ui
                 :render render
@@ -39,7 +40,8 @@
 (defun update-game (game dt)
   ;; Run one frame of input, audio, movement, and animation updates.
   (let* ((player (game-player game))
-         (npc (game-npc game))
+         (npcs (game-npcs game))
+         (entities (game-entities game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -63,14 +65,16 @@
       (start-player-attack player))
     (when *verbose-logs*
       (log-player-position player world))
-    (update-player-animation player dt)
-    (apply-melee-hit player npc world)
-    (update-npc-behavior npc player world)
-    (update-npc-movement npc player world dt)
-    (update-npc-attack npc player world dt)
-    (update-npc-animation npc dt)
-    (combatant-update-hit-effect player dt)
-    (combatant-update-hit-effect npc dt)))
+    (loop :for entity :across entities
+          :do (update-entity-animation entity dt))
+    (loop :for npc :across npcs
+          :do (apply-melee-hit player npc world))
+    (loop :for npc :across npcs
+          :do (update-npc-behavior npc player world)
+              (update-npc-movement npc player world dt)
+              (update-npc-attack npc player world dt))
+    (loop :for entity :across entities
+          :do (combatant-update-hit-effect entity dt))))
 
 (defun run ()
   ;; Entry point that initializes game state and drives the main loop.

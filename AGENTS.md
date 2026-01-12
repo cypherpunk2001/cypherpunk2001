@@ -32,13 +32,11 @@ mmorpg/
 
 ## Current Task
 
-- Main loop stays an orchestrator; implement behavior inside the system files (input, movement/collision, combat, AI, rendering, audio, UI).
+- Generalize entity handling: move from single npc to an array/pool of entities and treat the player as just another entity with shared combat/animation systems.
 
 ---
 
 ## Future Tasks / Roadmap (Do not perform these at this time)
-
-- Generalize entity handling: move from single npc to an array/pool of entities and treat the player as just another entity with shared combat/animation systems.
 
 - Make NPC archetypes, animation sets, and tunables data-driven (S-expr/JSON), so new NPCs/classes don’t require code edits and can be reused across worlds.
 

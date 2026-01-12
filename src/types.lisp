@@ -78,7 +78,7 @@
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player npc audio ui render assets camera)
+  world player npcs entities audio ui render assets camera)
 
 (defun make-player (start-x start-y &optional (class *wizard-class*))
   ;; Construct a player state struct at the given start position.
@@ -143,6 +143,30 @@
                :hit-facing :down
                :hit-facing-sign 1.0)))
 
+(defun make-npcs (player world &optional (count *npc-count*))
+  ;; Construct a fixed NPC pool placed in a simple grid near the player.
+  (let* ((npc-count (max 0 count))
+         (npcs (make-array npc-count))
+         (tile-size (world-tile-dest-size world))
+         (gap (* *npc-spawn-gap-tiles* tile-size))
+         (cols (max 1 *npc-spawn-columns*)))
+    (loop :for i :from 0 :below npc-count
+          :for col = (mod i cols)
+          :for row = (floor i cols)
+          :for x = (+ (player-x player) (* (1+ col) gap))
+          :for y = (+ (player-y player) (* row gap))
+          :do (setf (aref npcs i) (make-npc x y)))
+    npcs))
+
+(defun make-entities (player npcs)
+  ;; Build a stable entity array containing NPCs followed by the player.
+  (let* ((npc-count (length npcs))
+         (entities (make-array (1+ npc-count))))
+    (loop :for i :from 0 :below npc-count
+          :do (setf (aref entities i) (aref npcs i)))
+    (setf (aref entities npc-count) player)
+    entities))
+
 (defgeneric combatant-position (combatant)
   (:documentation "Return combatant center position as two values."))
 
@@ -163,3 +187,9 @@
 
 (defgeneric combatant-update-hit-effect (combatant dt)
   (:documentation "Advance hit effect timing for the combatant."))
+
+(defgeneric update-entity-animation (entity dt)
+  (:documentation "Advance animation state for ENTITY."))
+
+(defgeneric draw-entity (entity assets render)
+  (:documentation "Render ENTITY using ASSETS and RENDER helpers."))

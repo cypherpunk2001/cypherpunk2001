@@ -244,3 +244,9 @@
                       (mod (1+ frame-index) frame-count)))
       (setf (npc-frame-index npc) frame-index
             (npc-frame-timer npc) frame-timer))))
+
+(defmethod update-entity-animation ((entity player) dt)
+  (update-player-animation entity dt))
+
+(defmethod update-entity-animation ((entity npc) dt)
+  (update-npc-animation entity dt))

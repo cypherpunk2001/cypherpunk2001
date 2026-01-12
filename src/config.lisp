@@ -66,6 +66,9 @@
 (defparameter *npc-home-radius-tiles* 2.0) ;; Roam radius around spawn in tiles.
 (defparameter *npc-wander-interval* 1.1) ;; Seconds between wander target changes.
 (defparameter *npc-wander-arrive-distance* 6.0) ;; Pixels to consider wander target reached.
+(defparameter *npc-count* 3) ;; Default number of NPCs spawned in the world.
+(defparameter *npc-spawn-columns* 3) ;; Column count when placing NPCs in a grid.
+(defparameter *npc-spawn-gap-tiles* 2.0) ;; Spacing between NPC spawns in tiles.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
 (defparameter *blood-frame-count* 4) ;; Frames in each blood animation row.

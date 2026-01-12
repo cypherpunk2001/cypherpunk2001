@@ -124,7 +124,7 @@
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
 
-(defun draw-world (world render assets camera player npc ui)
+(defun draw-world (world render assets camera player npcs ui)
   ;; Render floor, landmarks, walls, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
          (tile-size-f (world-tile-size-f world))
@@ -203,16 +203,18 @@
             (iw (round (* 2.0 (world-collision-half-width world))))
             (ih (round (* 2.0 (world-collision-half-height world)))))
         (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui)))
-      (when (combatant-alive-p npc)
-        (multiple-value-bind (half-w half-h)
-            (combatant-collision-half npc world)
-          (multiple-value-bind (nx ny)
-              (combatant-position npc)
-            (let ((ix (round (- nx half-w)))
-                  (iy (round (- ny half-h)))
-                  (iw (round (* 2.0 half-w)))
-                  (ih (round (* 2.0 half-h))))
-              (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui))))))
+      (loop :for npc :across npcs
+            :when (combatant-alive-p npc)
+            :do (multiple-value-bind (half-w half-h)
+                    (combatant-collision-half npc world)
+                  (multiple-value-bind (nx ny)
+                      (combatant-position npc)
+                    (let ((ix (round (- nx half-w)))
+                          (iy (round (- ny half-h)))
+                          (iw (round (* 2.0 half-w)))
+                          (ih (round (* 2.0 half-h))))
+                      (raylib:draw-rectangle-lines ix iy iw ih
+                                                   (ui-debug-collider-color ui)))))))
       (when (player-attacking player)
         (multiple-value-bind (ax ay ahw ahh)
             (attack-hitbox player world)
@@ -220,7 +222,7 @@
                 (iy (round (- ay ahh)))
                 (iw (round (* 2.0 ahw)))
                 (ih (round (* 2.0 ahh))))
-            (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collision-color ui))))))))
+            (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collision-color ui)))))))
 
 (defun npc-texture-for (assets direction)
   ;; Select the NPC idle sprite sheet for DIRECTION.
@@ -379,6 +381,12 @@
                        (render-player-source render)
                        (render-player-dest render)
                        (render-origin render)))))
+
+(defmethod draw-entity ((entity npc) assets render)
+  (draw-npc entity assets render))
+
+(defmethod draw-entity ((entity player) assets render)
+  (draw-player entity assets render))
 
 (defun draw-hud (player ui)
   ;; Draw stamina HUD using precomputed labels.
@@ -575,9 +583,10 @@
                       (ui-menu-text-color ui))))
 
 (defun draw-game (game)
-  ;; Render a full frame: world, player, HUD, and menu.
+  ;; Render a full frame: world, entities, HUD, and menu.
   (let* ((player (game-player game))
-         (npc (game-npc game))
+         (npcs (game-npcs game))
+         (entities (game-entities game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -593,9 +602,9 @@
                         :rotation 0.0
                         :zoom (camera-zoom camera))))
         (raylib:with-mode-2d camera-2d
-          (draw-world world render assets camera player npc ui)
-          (draw-npc npc assets render)
-          (draw-player player assets render)))
+          (draw-world world render assets camera player npcs ui)
+          (loop :for entity :across entities
+                :do (draw-entity entity assets render))))
       (draw-hud player ui)
       (when (ui-menu-open ui)
         (draw-menu ui audio)))))
