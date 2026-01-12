@@ -1,15 +1,25 @@
 # audio.lisp
 
-Purpose: soundtrack loading, playback, and volume control.
+Purpose
+- Music playback and volume control.
 
-Key responsibilities:
-- Load music streams and display labels.
-- Handle track switching and volume updates.
-- Update playback and auto-advance at end of track.
+Why we do it this way
+- Audio is a system like any other: it owns its state and exposes simple
+  commands from UI. This keeps the main loop small.
 
-Key functions:
+What it does
+- Loads music streams on startup.
+- Keeps display labels for the menu.
+- Updates the current track and auto-advances when a track ends.
+
+Key functions
 - `make-audio`, `shutdown-audio`.
 - `update-audio`, `audio-advance-track`, `audio-adjust-volume`.
 
-Notes:
-- Uses raylib music streams and simple volume steps.
+Walkthrough: track switching
+1) UI requests previous/next track.
+2) `audio-advance-track` swaps the active stream.
+3) Volume is reapplied to the new stream.
+
+Design note
+- Precomputing label strings avoids per-frame allocations in the menu.

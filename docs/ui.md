@@ -1,15 +1,26 @@
 # ui.lisp
 
-Purpose: menu and HUD layout plus menu interaction.
+Purpose
+- Menu and HUD layout plus menu interaction.
 
-Key responsibilities:
-- Precompute menu layout constants and colors.
-- Render menu and HUD labels (used by rendering).
-- Handle menu clicks for quit/music/volume/debug/fullscreen.
+Why we do it this way
+- UI state is precomputed to avoid per-frame layout work.
+- UI should toggle systems, not implement them.
 
-Key functions:
+What it does
+- Builds layout constants (panel sizes, button positions, labels).
+- Handles menu click actions (quit, music, volume, debug, fullscreen).
+- Provides precomputed stamina labels to avoid consing.
+
+Key functions
 - `make-ui`, `make-stamina-labels`.
 - `update-ui-input`, `handle-menu-click`.
 
-Notes:
-- UI toggles `*debug-collision-overlay*` and fullscreen.
+Walkthrough: debug toggle
+1) Player opens the menu with Escape.
+2) Click on the debug checkbox.
+3) UI flips `*debug-collision-overlay*`.
+4) Rendering reads the flag and draws the overlay.
+
+Design note
+- UI toggles debug overlays without touching the rendering logic directly.

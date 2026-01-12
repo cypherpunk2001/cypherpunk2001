@@ -1,9 +1,19 @@
 # package.lisp
 
-Purpose: define the mmorpg package and its public API surface.
+Purpose
+- Provide a clean namespace and a small public API.
 
-Public API:
-- `run` is the main entry point used by callers.
+Why we do it this way
+- A small export surface keeps the engine modular. You can load the system
+  in a REPL and still keep most symbols internal, which prevents accidental
+  coupling between modules.
 
-Notes:
-- Add exports here when new top-level entry points appear.
+Key idea
+- Only `run` is exported as the entry point. Everything else stays internal
+  until it becomes a deliberate API.
+
+Example
+```lisp
+(ql:quickload :mmorpg)
+(mmorpg:run)
+```
