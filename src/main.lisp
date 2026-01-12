@@ -58,8 +58,10 @@
 
 (defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
+(defparameter *attack-frame-count* 4) ; Frames in each attack animation row.
 (defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
 (defparameter *walk-frame-time* 0.12) ; Seconds per walk frame.
+(defparameter *attack-frame-time* 0.1) ; Seconds per attack frame.
 
 (defparameter +key-right+ (cffi:foreign-enum-value 'raylib:keyboard-key :right))
 (defparameter +key-left+ (cffi:foreign-enum-value 'raylib:keyboard-key :left))
@@ -71,6 +73,7 @@
 (defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
 (defparameter +key-tab+ (cffi:foreign-enum-value 'raylib:keyboard-key :tab))
+(defparameter +key-space+ (cffi:foreign-enum-value 'raylib:keyboard-key :space))
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
@@ -136,6 +139,12 @@
 
 (defun player-state (dx dy)
   (if (and (zerop dx) (zerop dy)) :idle :walk))
+
+(defun player-animation-params (state)
+  (ecase state
+    (:idle (values *idle-frame-count* *idle-frame-time*))
+    (:walk (values *walk-frame-count* *walk-frame-time*))
+    (:attack (values *attack-frame-count* *attack-frame-time*))))
 
 (defun u32-hash (x y &optional (seed 1337))
   (logand #xffffffff
@@ -265,6 +274,7 @@
   x y dx dy
   anim-state facing
   frame-index frame-timer
+  attacking attack-timer
   target-x target-y target-active
   running run-stamina
   auto-right auto-left auto-down auto-up
@@ -304,7 +314,10 @@
   origin tile-source tile-dest player-source player-dest)
 
 (defstruct (assets (:constructor %make-assets))
-  tileset down-idle down-walk up-idle up-walk side-idle side-walk
+  tileset
+  down-idle down-walk down-attack
+  up-idle up-walk up-attack
+  side-idle side-walk side-attack
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
 (defstruct (camera (:constructor %make-camera))
@@ -329,6 +342,8 @@
                 :facing :down
                 :frame-index 0
                 :frame-timer 0.0
+                :attacking nil
+                :attack-timer 0.0
                 :target-x start-x
                 :target-y start-y
                 :target-active nil
@@ -387,17 +402,23 @@
          (tileset (raylib:load-texture *tileset-path*))
          (down-idle (raylib:load-texture (sprite-path "D_Idle.png")))
          (down-walk (raylib:load-texture (sprite-path "D_Walk.png")))
+         (down-attack (raylib:load-texture (sprite-path "D_Attack.png")))
          (up-idle (raylib:load-texture (sprite-path "U_Idle.png")))
          (up-walk (raylib:load-texture (sprite-path "U_Walk.png")))
+         (up-attack (raylib:load-texture (sprite-path "U_Attack.png")))
          (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
-         (side-walk (raylib:load-texture (sprite-path "S_Walk.png"))))
+         (side-walk (raylib:load-texture (sprite-path "S_Walk.png")))
+         (side-attack (raylib:load-texture (sprite-path "S_Attack.png"))))
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk
+                  :down-attack down-attack
                   :up-idle up-idle
                   :up-walk up-walk
+                  :up-attack up-attack
                   :side-idle side-idle
                   :side-walk side-walk
+                  :side-attack side-attack
                   :scaled-width scaled-width
                   :scaled-height scaled-height
                   :half-sprite-width half-sprite-width
@@ -407,10 +428,13 @@
   (raylib:unload-texture (assets-tileset assets))
   (raylib:unload-texture (assets-down-idle assets))
   (raylib:unload-texture (assets-down-walk assets))
+  (raylib:unload-texture (assets-down-attack assets))
   (raylib:unload-texture (assets-up-idle assets))
   (raylib:unload-texture (assets-up-walk assets))
+  (raylib:unload-texture (assets-up-attack assets))
   (raylib:unload-texture (assets-side-idle assets))
-  (raylib:unload-texture (assets-side-walk assets)))
+  (raylib:unload-texture (assets-side-walk assets))
+  (raylib:unload-texture (assets-side-attack assets)))
 
 (defun build-volume-bars (volume-steps)
   (let ((bars (make-array (1+ volume-steps))))
@@ -698,6 +722,11 @@
         (player-target-active player) t
         (player-mouse-hold-timer player) 0.0))
 
+(defun start-player-attack (player)
+  (unless (player-attacking player)
+    (setf (player-attacking player) t
+          (player-attack-timer player) 0.0)))
+
 (defun update-target-from-mouse (player camera dt mouse-clicked mouse-down)
   (when mouse-clicked
     (clear-player-auto-walk player)
@@ -866,35 +895,54 @@
 (defun update-player-animation (player dt)
   (let* ((dx (player-dx player))
          (dy (player-dy player))
-         (state (player-state dx dy))
-         (direction (player-direction dx dy))
-         (frame-count (if (eq state :walk)
-                          *walk-frame-count*
-                          *idle-frame-count*))
-         (base-frame-time (if (eq state :walk)
-                              *walk-frame-time*
-                              *idle-frame-time*))
-         (run-anim-mult (if (and (player-running player)
-                                 (eq state :walk)
-                                 (> (player-run-stamina player) 0.0))
-                            *run-speed-mult*
-                            1.0))
-         (frame-time (/ base-frame-time run-anim-mult))
-         (frame-index (player-frame-index player))
-         (frame-timer (player-frame-timer player)))
-    (unless (and (eq state (player-anim-state player))
-                 (eq direction (player-facing player)))
-      (setf (player-anim-state player) state
-            (player-facing player) direction
-            frame-index 0
-            frame-timer 0.0))
-    (incf frame-timer dt)
-    (loop :while (>= frame-timer frame-time)
-          :do (decf frame-timer frame-time)
-              (setf frame-index
-                    (mod (1+ frame-index) frame-count)))
-    (setf (player-frame-index player) frame-index
-          (player-frame-timer player) frame-timer)))
+         (moving (or (not (zerop dx)) (not (zerop dy))))
+         (attacking (player-attacking player))
+         (state (if attacking
+                    :attack
+                    (player-state dx dy)))
+         (direction (if attacking
+                        (if moving
+                            (player-direction dx dy)
+                            (player-facing player))
+                        (player-direction dx dy))))
+    (multiple-value-bind (frame-count base-frame-time)
+        (player-animation-params state)
+      (let* ((run-anim-mult (if (and (eq state :walk)
+                                     (player-running player)
+                                     (> (player-run-stamina player) 0.0))
+                                *run-speed-mult*
+                                1.0))
+             (frame-time (/ base-frame-time run-anim-mult))
+             (frame-index (player-frame-index player))
+             (frame-timer (player-frame-timer player)))
+        (unless (and (eq state (player-anim-state player))
+                     (eq direction (player-facing player)))
+          (setf (player-anim-state player) state
+                (player-facing player) direction
+                frame-index 0
+                frame-timer 0.0)
+          (when attacking
+            (setf (player-attack-timer player) 0.0)))
+        (if (eq state :attack)
+            (let* ((attack-timer (+ (player-attack-timer player) dt))
+                   (duration (* frame-time frame-count))
+                   (clamped (min attack-timer duration))
+                   (attack-frame (min (truncate (/ clamped frame-time))
+                                      (1- frame-count))))
+              (setf (player-attack-timer player) clamped
+                    frame-index attack-frame
+                    frame-timer (- clamped (* attack-frame frame-time)))
+              (when (>= attack-timer duration)
+                (setf (player-attacking player) nil
+                      (player-attack-timer player) 0.0)))
+            (progn
+              (incf frame-timer dt)
+              (loop :while (>= frame-timer frame-time)
+                    :do (decf frame-timer frame-time)
+                        (setf frame-index
+                              (mod (1+ frame-index) frame-count)))))
+        (setf (player-frame-index player) frame-index
+              (player-frame-timer player) frame-timer)))))
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
   (cond
@@ -959,6 +1007,9 @@
                          (player-target-active player)))
              (speed-mult (update-running-state player dt moving (not mouse-clicked))))
         (update-player-position player world input-dx input-dy speed-mult dt)))
+    (when (and (not (ui-menu-open ui))
+               (raylib:is-key-pressed +key-space+))
+      (start-player-attack player))
     (when *verbose-logs*
       (log-player-position player world))
     (update-player-animation player dt)))
@@ -1042,21 +1093,27 @@
             (ih (round (* 2.0 (world-collision-half-height world)))))
         (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui))))))
 
+(defun player-texture-for (assets direction state)
+  (ecase direction
+    (:down (ecase state
+             (:walk (assets-down-walk assets))
+             (:idle (assets-down-idle assets))
+             (:attack (assets-down-attack assets))))
+    (:up (ecase state
+           (:walk (assets-up-walk assets))
+           (:idle (assets-up-idle assets))
+           (:attack (assets-up-attack assets))))
+    (:side (ecase state
+            (:walk (assets-side-walk assets))
+            (:idle (assets-side-idle assets))
+            (:attack (assets-side-attack assets))))))
+
 (defun draw-player (player assets render)
   (let* ((direction (player-facing player))
          (state (player-anim-state player))
          (dx (player-dx player))
          (flip (and (eq direction :side) (> dx 0.0)))
-         (texture (ecase direction
-                    (:down (if (eq state :walk)
-                               (assets-down-walk assets)
-                               (assets-down-idle assets)))
-                    (:up (if (eq state :walk)
-                             (assets-up-walk assets)
-                             (assets-up-idle assets)))
-                    (:side (if (eq state :walk)
-                               (assets-side-walk assets)
-                               (assets-side-idle assets)))))
+         (texture (player-texture-for assets direction state))
          (src-x (* (player-frame-index player) *sprite-frame-width*))
          (src-x (if flip
                     (+ src-x *sprite-frame-width*)
