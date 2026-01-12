@@ -35,15 +35,8 @@ mmorpg/
 
 ## Current Task
 
-Fix bugs (debug collision is enabled in the following bug description:)
 
-- The game spawns with the character and 3 rats currently. The 3 rats roam about in their range, they take damage normally and die in 3 hits. This part all works GREAT. The problem is, once the rat is attacked, it is not fighting me back currently, it is not attacking me and so i am not taking damage. Also the rat should flee when it has 1 hit remaining, but because it doesnt stand ground and fight back, we are not sure if this part is working yet or not.
-
-In a nutshell:
-
-- The rats should not be aggro,
-but is not passive (always flees) either,
-the rats should only begin attacking after it has itself been attacked
+- Rats are not fleeing when they have only 1 hit remaining, they continue to attack and following my character within their region, instead of running away.
 
 ---
 

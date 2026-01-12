@@ -170,7 +170,9 @@
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-debug-x ui) (ui-menu-debug-y ui)
                       (ui-menu-debug-size ui) (ui-menu-debug-size ui))
-     (setf *debug-collision-overlay* (not *debug-collision-overlay*)))
+     (let ((enabled (not *debug-collision-overlay*)))
+       (setf *debug-collision-overlay* enabled
+             *debug-npc-logs* enabled)))
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)

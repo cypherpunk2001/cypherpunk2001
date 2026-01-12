@@ -12,6 +12,8 @@ Key concepts
 - `world-blocked-tile-p` decides if a tile is blocked (TMX collisions or fallback wall map).
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
+- `world-open-position` finds the nearest open tile that fits the player collider.
+- `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
 
 Walkthrough: from intent to position
 1) Read movement intent (dx/dy) and optional target.
@@ -33,3 +35,5 @@ Example: applying intent
 Design note
 - World bounds are enforced to keep navigation stable even when collision
   layers are sparse or missing.
+- Spawning on open tiles prevents actors from getting stuck inside blocked
+  collision layers.

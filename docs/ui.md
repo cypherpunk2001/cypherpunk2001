@@ -19,7 +19,7 @@ Key functions
 Walkthrough: debug toggle
 1) Player opens the menu with Escape.
 2) Click on the debug checkbox.
-3) UI flips `*debug-collision-overlay*`.
+3) UI flips `*debug-collision-overlay*` and `*debug-npc-logs*`.
 4) Rendering reads the flag and draws the overlay.
 
 Design note

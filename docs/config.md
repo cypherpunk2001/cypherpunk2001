@@ -10,9 +10,10 @@ Why we do it this way
   intent (like combat style and perception) in a structured way.
 
 What lives here
-- Window, camera, input, and debug flags.
+- Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Sprite, tileset, map, and audio defaults.
 - Movement, combat, NPC behavior, and animation timings.
+- Debug overlay sizing/color for NPC AI text when logs are enabled.
 
 How it connects
 - Values can be overridden by `data/game-data.lisp` via `load-game-data`.

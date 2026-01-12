@@ -81,39 +81,56 @@
     (and (> range-sq 0.0)
          (<= dist-sq range-sq))))
 
+(defun npc-should-flee-p (npc)
+  ;; Return true when the NPC is low enough to flee.
+  (let* ((archetype (npc-archetype npc))
+         (flee-at (when archetype
+                    (npc-archetype-flee-at-hits archetype))))
+    (and flee-at
+         (> flee-at 0)
+         (<= (npc-hits-left npc) flee-at))))
+
 (defun update-npc-behavior (npc player world)
   ;; Update NPC behavior state based on archetype rules and player range.
-  (let ((archetype (npc-archetype npc)))
+  (let* ((archetype (npc-archetype npc))
+         (old-state (npc-behavior-state npc))
+         (new-state nil)
+         (provoked nil)
+         (in-range nil))
     (cond
       ((not (npc-alive npc))
-       (setf (npc-behavior-state npc) :dead))
+       (setf new-state :dead))
       ((not archetype)
-       (setf (npc-behavior-state npc) :idle))
+       (setf new-state :idle))
       (t
-       (let* ((provoked (npc-provoked npc))
-              (aggro-mode (npc-archetype-aggro-mode archetype))
-              (retaliate (npc-archetype-retaliate archetype))
-              (flee-at (npc-archetype-flee-at-hits archetype))
-              (in-range (or provoked
-                            (npc-in-perception-range-p npc player world))))
-         (cond
-           ((and (> flee-at 0)
-                 (<= (npc-hits-left npc) flee-at))
-            (setf (npc-behavior-state npc) :flee))
-           ((and provoked in-range)
-            (setf (npc-behavior-state npc) :retaliate))
-           ((and in-range (eq aggro-mode :always))
-            (setf (npc-behavior-state npc) :aggressive))
-           ((and in-range (eq aggro-mode :provoked) provoked)
-            (setf (npc-behavior-state npc) :aggressive))
-           (t
-            (setf (npc-behavior-state npc) :idle))))))))
+       (let ((aggro-mode (npc-archetype-aggro-mode archetype)))
+         (setf provoked (npc-provoked npc)
+               in-range (or provoked
+                            (npc-in-perception-range-p npc player world)))
+         (setf new-state
+               (cond
+                 ((npc-should-flee-p npc) :flee)
+                 ((and provoked in-range) :retaliate)
+                 ((and in-range (eq aggro-mode :always)) :aggressive)
+                 ((and in-range (eq aggro-mode :provoked) provoked) :aggressive)
+                 (t :idle))))))
+    (setf (npc-behavior-state npc) new-state)
+    (when (and *debug-npc-logs* (not (eq old-state new-state)))
+      (let* ((flee-at (if archetype
+                          (npc-archetype-flee-at-hits archetype)
+                          0))
+             (name (if archetype (npc-archetype-name archetype) "NPC")))
+        (format t "~&NPC-STATE ~a ~a->~a hits-left=~d flee-at=~d provoked=~a in-range=~a~%"
+                name old-state new-state (npc-hits-left npc) flee-at provoked in-range)
+        (finish-output)))))
 
 (defun update-npc-intent (npc player world dt)
   ;; Populate the NPC intent based on behavior and proximity.
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
-           (state (npc-behavior-state npc))
+           (state (if (npc-should-flee-p npc)
+                      :flee
+                      (npc-behavior-state npc)))
            (attack-range (npc-attack-range npc world))
            (attack-range-sq (* attack-range attack-range))
            (dx 0.0)
@@ -126,7 +143,8 @@
              (home-dy (- (npc-home-y npc) (npc-y npc)))
              (home-dist-sq (+ (* home-dx home-dx) (* home-dy home-dy)))
              (home-radius-sq (* home-radius home-radius)))
-        (if (and (> home-radius 0.0)
+        (if (and (not (eq state :flee))
+                 (> home-radius 0.0)
                  (> home-dist-sq home-radius-sq))
             (progn
               (setf face-dx home-dx

@@ -7,8 +7,10 @@
   (let* ((world (make-world))
          (spawn-x nil)
          (spawn-y nil))
-    (multiple-value-setq (spawn-x spawn-y)
-      (world-spawn-center world))
+    (multiple-value-bind (center-x center-y)
+        (world-spawn-center world)
+      (multiple-value-setq (spawn-x spawn-y)
+        (world-open-position world center-x center-y)))
     (let* ((player (make-player spawn-x spawn-y))
          (npcs (make-npcs player world))
          (entities (make-entities player npcs))
@@ -17,6 +19,7 @@
          (render (make-render))
          (assets (load-assets world))
          (camera (make-camera)))
+      (ensure-npcs-open-spawn npcs world)
       (when *verbose-logs*
         (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
                 (world-tile-dest-size world)

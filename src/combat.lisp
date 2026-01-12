@@ -41,16 +41,31 @@
 
 (defmethod combatant-apply-hit ((combatant npc) &optional amount)
   (let* ((damage (if amount amount 1))
-         (max-hits (if (npc-archetype combatant)
-                       (npc-archetype-max-hits (npc-archetype combatant))
-                       *npc-max-hits*)))
+         (archetype (npc-archetype combatant))
+         (max-hits (if archetype
+                       (npc-archetype-max-hits archetype)
+                       *npc-max-hits*))
+         (before (npc-hits-left combatant)))
     (when (and max-hits (> (npc-hits-left combatant) max-hits))
       (setf (npc-hits-left combatant) max-hits))
     (decf (npc-hits-left combatant) damage)
     (setf (npc-provoked combatant) t)
     (when (<= (npc-hits-left combatant) 0)
       (setf (npc-hits-left combatant) 0
-            (npc-alive combatant) nil))))
+            (npc-alive combatant) nil))
+    (when *debug-npc-logs*
+      (let* ((name (if archetype (npc-archetype-name archetype) "NPC"))
+             (flee-at (if archetype
+                          (npc-archetype-flee-at-hits archetype)
+                          0)))
+        (format t "~&NPC-HIT ~a hits-left=~d->~d flee-at=~d alive=~a state=~a~%"
+                name
+                before
+                (npc-hits-left combatant)
+                flee-at
+                (npc-alive combatant)
+                (npc-behavior-state combatant))
+        (finish-output)))))
 
 (defmethod combatant-trigger-hit-effect ((combatant player))
   (setf (player-hit-active combatant) t

@@ -85,13 +85,52 @@
            :collect (list key value)))
     (t data)))
 
+(defun plist-form-p (form)
+  ;; Return true when FORM looks like a keyword plist.
+  (and (listp form)
+       (loop :for (key _value) :on form :by #'cddr
+             :always (keywordp key))))
+
+(defun data-section-header-p (form)
+  ;; Return true when FORM is a keyword section header.
+  (and (symbolp form) (keywordp form)))
+
+(defun parse-game-data-forms (forms)
+  ;; Merge a list of FORMS into a single plist of data sections.
+  (let ((data nil)
+        (section nil)
+        (section-items nil))
+    (labels ((flush-section ()
+               (when section
+                 (setf (getf data section) (nreverse section-items))
+                 (setf section-items nil))))
+      (dolist (form forms)
+        (cond
+          ((data-section-header-p form)
+           (flush-section)
+           (setf section form))
+          ((and section (listp form))
+           (push form section-items))
+          ((plist-form-p form)
+           (dolist (pair (normalize-pairs form))
+             (setf (getf data (first pair)) (second pair))))
+          ((and (listp form) (keywordp (first form)))
+           (setf (getf data (first form)) (rest form)))
+          (t nil)))
+      (flush-section)
+      data)))
+
 (defun read-game-data (path)
-  ;; Read a single form from PATH without evaluation.
+  ;; Read one or more forms from PATH without evaluation.
   (when (and path (probe-file path))
     (with-open-file (in path :direction :input)
       (with-standard-io-syntax
-        (let ((*read-eval* nil))
-          (read in nil nil))))))
+        (let ((*read-eval* nil)
+              (forms nil))
+          (loop :for form = (read in nil :eof)
+                :until (eq form :eof)
+                :do (push form forms))
+          (parse-game-data-forms (nreverse forms)))))))
 
 (defun apply-tunables (tunables)
   ;; Apply tunable overrides from data to known config variables.

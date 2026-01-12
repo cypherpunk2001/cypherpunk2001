@@ -440,7 +440,28 @@
                                  raylib:+white+)
         (multiple-value-bind (hp max-hp)
             (combatant-health npc)
-          (draw-health-bar (npc-x npc) (npc-y npc) hp max-hp assets))))
+          (draw-health-bar (npc-x npc) (npc-y npc) hp max-hp assets)
+          (when *debug-npc-logs*
+            (let* ((archetype (npc-archetype npc))
+                   (flee-at (if archetype
+                                (npc-archetype-flee-at-hits archetype)
+                                0))
+                   (text (format nil "~a hp=~d/~d flee<=~d prov=~a flee?~a"
+                                 (npc-behavior-state npc)
+                                 hp
+                                 max-hp
+                                 flee-at
+                                 (if (npc-provoked npc) "Y" "N")
+                                 (if (npc-should-flee-p npc) "Y" "N")))
+                   (text-x (round (- (npc-x npc)
+                                     (assets-half-sprite-width assets))))
+                   (text-y (round (- (npc-y npc)
+                                     (assets-half-sprite-height assets)
+                                     *health-bar-offset*
+                                     *health-bar-height*
+                                     *debug-npc-text-offset*))))
+              (raylib:draw-text text text-x text-y *debug-npc-text-size*
+                                *debug-npc-text-color*))))))
     (when (npc-hit-active npc)
       (draw-hit-effect (npc-x npc)
                        (npc-y npc)

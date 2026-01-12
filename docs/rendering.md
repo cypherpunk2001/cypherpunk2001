@@ -12,7 +12,8 @@ Pipeline overview
 1) Load textures in `load-assets`.
 2) Draw world layers and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
-4) Draw HUD and menu overlays.
+4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
+5) Draw HUD and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -38,3 +39,5 @@ Example: draw flow
 Design note
 - The debug overlay draws both collision tiles and map bounds, which helps
   validate that collision and visuals are aligned.
+- NPC AI debug text is only drawn when explicitly enabled, keeping the
+  default render path clean and fast.

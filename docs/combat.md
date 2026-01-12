@@ -12,6 +12,7 @@ What it does
 - Creates a directional attack hitbox for the player.
 - Applies hits once per attack window.
 - Runs attack cooldowns and hit effect animations.
+- Emits NPC hit logs when `*debug-npc-logs*` is enabled.
 
 Key functions
 - `attack-hitbox`, `start-player-attack`, `apply-melee-hit`.

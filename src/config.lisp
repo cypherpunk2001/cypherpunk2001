@@ -3,6 +3,7 @@
 
 (defparameter *verbose-logs* nil) ;; When true, logs player position and collider info per frame.
 (defparameter *debug-collision-overlay* nil) ;; Draws debug grid and collision overlays.
+(defparameter *debug-npc-logs* nil) ;; Logs NPC AI/combat events and enables AI debug text overlay.
 
 (defparameter *window-width* 1280) ;; Window width in pixels.
 (defparameter *window-height* 720) ;; Window height in pixels.
@@ -85,6 +86,9 @@
 (defparameter *health-bar-back-color* (raylib:make-color :r 8 :g 8 :b 8 :a 200)) ;; Health bar background color.
 (defparameter *health-bar-fill-color* (raylib:make-color :r 70 :g 200 :b 80 :a 220)) ;; Health bar fill color.
 (defparameter *health-bar-border-color* (raylib:make-color :r 220 :g 220 :b 220 :a 220)) ;; Health bar outline color.
+(defparameter *debug-npc-text-size* 12) ;; Debug text size for NPC AI overlay.
+(defparameter *debug-npc-text-offset* 18) ;; Extra vertical offset for NPC debug text.
+(defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).

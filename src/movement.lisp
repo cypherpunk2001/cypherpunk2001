@@ -54,6 +54,70 @@
             (collision-tile-p world tx ty))
         (wall-blocked-p (world-wall-map world) tx ty))))
 
+(defun world-search-radius (world)
+  ;; Return a max search radius in tiles for open spawn placement.
+  (let ((map (world-map world)))
+    (if map
+        (max (- (map-data-max-x map) (map-data-min-x map))
+             (- (map-data-max-y map) (map-data-min-y map)))
+        (max (world-wall-map-width world) (world-wall-map-height world)))))
+
+(defun tile-center-position (tile-size tx ty)
+  ;; Return the world position for the center of tile TX/TY.
+  (values (+ (* (+ tx 0.5) tile-size))
+          (+ (* (+ ty 0.5) tile-size))))
+
+(defun position-blocked-p (world x y half-w half-h)
+  ;; Return true when a collider centered at X/Y is blocked.
+  (blocked-at-p world x y half-w half-h (world-tile-dest-size world)))
+
+(defun find-open-tile (world start-tx start-ty half-w half-h &optional max-radius)
+  ;; Return the nearest open tile around START-TX/START-TY.
+  (let ((max-radius (max 0 (or max-radius 0)))
+        (tile-size (world-tile-dest-size world)))
+    (loop :for radius :from 0 :to max-radius
+          :do (loop :for dy :from (- radius) :to radius
+                    :do (loop :for dx :from (- radius) :to radius
+                              :for tx = (+ start-tx dx)
+                              :for ty = (+ start-ty dy)
+                              :do (multiple-value-bind (cx cy)
+                                      (tile-center-position tile-size tx ty)
+                                    (when (not (position-blocked-p world cx cy half-w half-h))
+                                      (return-from find-open-tile
+                                        (values tx ty)))))))
+  (values start-tx start-ty)))
+
+(defun world-open-position-for (world x y half-w half-h)
+  ;; Return the nearest open tile center for a collider near X/Y.
+  (let* ((tile-size (world-tile-dest-size world))
+         (tx (floor x tile-size))
+         (ty (floor y tile-size))
+         (radius (world-search-radius world)))
+    (multiple-value-bind (open-tx open-ty)
+        (find-open-tile world tx ty half-w half-h radius)
+      (tile-center-position tile-size open-tx open-ty))))
+
+(defun world-open-position (world x y)
+  ;; Return the nearest open tile center for the player collider.
+  (world-open-position-for world x y
+                           (world-collision-half-width world)
+                           (world-collision-half-height world)))
+
+(defun ensure-npcs-open-spawn (npcs world)
+  ;; Move NPCs to open tiles and reset their home positions.
+  (loop :for npc :across npcs
+        :do (multiple-value-bind (half-w half-h)
+                (npc-collision-half world)
+              (multiple-value-bind (nx ny)
+                  (world-open-position-for world (npc-x npc) (npc-y npc)
+                                           half-w half-h)
+                (setf (npc-x npc) nx
+                      (npc-y npc) ny
+                      (npc-home-x npc) nx
+                      (npc-home-y npc) ny
+                      (npc-wander-x npc) nx
+                      (npc-wander-y npc) ny)))))
+
 (defun blocked-at-p (world x y half-w half-h tile-size)
   ;; Test collider bounds against blocked tiles in the world map.
   (let* ((left (- x half-w))
