@@ -10,6 +10,8 @@ mmorpg/
   mmorpg.asd
   assets/*
     ...
+  data/
+    game-data.lisp
   src/
     package.lisp
     config.lisp
@@ -32,16 +34,11 @@ mmorpg/
 
 ## Current Task
 
-- Generalize entity handling: move from single npc to an array/pool of entities and treat the player as just another entity with shared combat/animation systems.
+- Build a real map pipeline (TMX load, collision layers, chunked render/cull) instead of the test wall map; keep the tile variation as a reusable decoration system.
 
 ---
 
 ## Future Tasks / Roadmap (Do not perform these at this time)
-
-- Make NPC archetypes, animation sets, and tunables data-driven (S-expr/JSON), so new NPCs/classes don’t require code edits and can be reused across worlds.
-
-- Build a real map pipeline (TMX load, collision layers, chunked render/cull) instead of the test wall map; keep the tile variation as a reusable decoration system.
-
 - Add an action/event layer so input, AI, and future networking feed the same “intent” API; keeps behavior decoupled from rendering and makes AI/NPCs first-class.
 
 ---

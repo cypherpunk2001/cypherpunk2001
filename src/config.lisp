@@ -20,6 +20,7 @@
 (defparameter *sprite-frame-width* 32.0) ;; Width of a single sprite frame in pixels.
 (defparameter *sprite-frame-height* 32.0) ;; Height of a single sprite frame in pixels.
 (defparameter *sprite-scale* 4.0) ;; Scale factor applied when drawing sprites.
+(defparameter *player-animation-set-id* :player) ;; Animation set ID used for the player sprite set.
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
@@ -69,6 +70,8 @@
 (defparameter *npc-count* 3) ;; Default number of NPCs spawned in the world.
 (defparameter *npc-spawn-columns* 3) ;; Column count when placing NPCs in a grid.
 (defparameter *npc-spawn-gap-tiles* 2.0) ;; Spacing between NPC spawns in tiles.
+(defparameter *npc-default-archetype-id* :rat) ;; Default NPC archetype ID to spawn.
+(defparameter *npc-spawn-ids* nil) ;; Optional list of archetype IDs to cycle when spawning.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
 (defparameter *blood-frame-count* 4) ;; Frames in each blood animation row.
@@ -104,6 +107,8 @@
                     :reader npc-archetype-wander-interval)
    (flee-speed-mult :initarg :flee-speed-mult :initform *npc-flee-speed-mult*
                     :reader npc-archetype-flee-speed-mult)
+   (animation-set-id :initarg :animation-set-id :initform :npc
+                     :reader npc-archetype-animation-set-id)
    (aggro-mode :initarg :aggro-mode :initform :never :reader npc-archetype-aggro-mode)
    (retaliate :initarg :retaliate :initform nil :reader npc-archetype-retaliate)
    (flee-at-hits :initarg :flee-at-hits :initform 0 :reader npc-archetype-flee-at-hits)
@@ -143,70 +148,7 @@
 ;;                  :flee-at-hits 1
 ;;                  :perception-tiles 4.0)) ;; Passive even when hit.
 
-;; agro on sight
-(defparameter *rat-archetype*
-  (make-instance 'npc-archetype
-                 :name "Dungeon Rat"
-                 :max-hits *npc-max-hits*
-                 :move-speed 120.0
-                 :attack-range-tiles 0.85
-                 :attack-cooldown 0.9
-                 :attack-damage 1
-                 :home-radius-tiles 2.0
-                 :wander-interval 1.1
-                 :flee-speed-mult 1.4
-                 :aggro-mode :always
-                 :retaliate t
-                 :flee-at-hits 1
-                 :perception-tiles 4.0)) ;; Aggro on sight.
-
-(defparameter *goblin-archetype*
-  (make-instance 'npc-archetype
-                 :name "Goblin"
-                 :max-hits 4
-                 :move-speed 140.0
-                 :attack-range-tiles 0.9
-                 :attack-cooldown 0.8
-                 :attack-damage 1
-                 :home-radius-tiles 3.0
-                 :wander-interval 1.0
-                 :flee-speed-mult 1.2
-                 :aggro-mode :always
-                 :retaliate t
-                 :flee-at-hits 1
-                 :perception-tiles 6.0)) ;; Aggressive but skittish at low health.
-
-(defparameter *orc-archetype*
-  (make-instance 'npc-archetype
-                 :name "Orc"
-                 :max-hits 6
-                 :move-speed 120.0
-                 :attack-range-tiles 0.95
-                 :attack-cooldown 1.1
-                 :attack-damage 2
-                 :home-radius-tiles 3.0
-                 :wander-interval 1.3
-                 :flee-speed-mult 1.0
-                 :aggro-mode :always
-                 :retaliate t
-                 :flee-at-hits 0
-                 :perception-tiles 7.0)) ;; Aggressive and unflinching.
-
-(defparameter *witch-doctor-archetype*
-  (make-instance 'npc-archetype
-                 :name "Witch Doctor"
-                 :max-hits 5
-                 :move-speed 110.0
-                 :attack-range-tiles 1.1
-                 :attack-cooldown 1.0
-                 :attack-damage 1
-                 :home-radius-tiles 3.5
-                 :wander-interval 1.4
-                 :flee-speed-mult 1.3
-                 :aggro-mode :provoked
-                 :retaliate t
-                 :flee-at-hits 2
-                 :perception-tiles 8.0)) ;; Provoked aggression with a higher flee threshold.
+;; NPC archetypes are now data-driven. See data/game-data.lisp.
 
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.

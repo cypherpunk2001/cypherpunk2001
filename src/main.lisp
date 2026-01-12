@@ -2,6 +2,7 @@
 
 (defun make-game ()
   ;; Assemble game state and log setup if verbose is enabled.
+  (load-game-data)
   (let* ((world (make-world))
          (player (make-player (/ *window-width* 2.0)
                               (/ *window-height* 2.0)))

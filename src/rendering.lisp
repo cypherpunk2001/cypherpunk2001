@@ -64,26 +64,35 @@
 
 (defun load-assets ()
   ;; Load textures and compute sprite sizing for rendering.
+  (ensure-game-data)
   (let* ((scaled-width (* *sprite-frame-width* *sprite-scale*))
          (scaled-height (* *sprite-frame-height* *sprite-scale*))
          (half-sprite-width (/ scaled-width 2.0))
          (half-sprite-height (/ scaled-height 2.0))
+         (player-set (get-animation-set *player-animation-set-id* :player))
+         (blood-set (get-animation-set :blood))
+         (npc-ids (npc-animation-set-ids))
+         (npc-animations (make-hash-table :test 'eq))
          (tileset (raylib:load-texture *tileset-path*))
-         (down-idle (raylib:load-texture (sprite-path "D_Idle.png")))
-         (down-walk (raylib:load-texture (sprite-path "D_Walk.png")))
-         (down-attack (raylib:load-texture (sprite-path "D_Attack.png")))
-         (up-idle (raylib:load-texture (sprite-path "U_Idle.png")))
-         (up-walk (raylib:load-texture (sprite-path "U_Walk.png")))
-         (up-attack (raylib:load-texture (sprite-path "U_Attack.png")))
-         (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
-         (side-walk (raylib:load-texture (sprite-path "S_Walk.png")))
-         (side-attack (raylib:load-texture (sprite-path "S_Attack.png")))
-         (npc-down-idle (raylib:load-texture (npc-sprite-path "D_Idle.png")))
-         (npc-up-idle (raylib:load-texture (npc-sprite-path "U_Idle.png")))
-         (npc-side-idle (raylib:load-texture (npc-sprite-path "S_Idle.png")))
-         (blood-down (raylib:load-texture (blood-sprite-path "D_Blood.png")))
-         (blood-up (raylib:load-texture (blood-sprite-path "U_Blood.png")))
-         (blood-side (raylib:load-texture (blood-sprite-path "S_Blood.png"))))
+         (down-idle (raylib:load-texture (animation-path player-set :down-idle)))
+         (down-walk (raylib:load-texture (animation-path player-set :down-walk)))
+         (down-attack (raylib:load-texture (animation-path player-set :down-attack)))
+         (up-idle (raylib:load-texture (animation-path player-set :up-idle)))
+         (up-walk (raylib:load-texture (animation-path player-set :up-walk)))
+         (up-attack (raylib:load-texture (animation-path player-set :up-attack)))
+         (side-idle (raylib:load-texture (animation-path player-set :side-idle)))
+         (side-walk (raylib:load-texture (animation-path player-set :side-walk)))
+         (side-attack (raylib:load-texture (animation-path player-set :side-attack)))
+         (blood-down (raylib:load-texture (animation-path blood-set :down)))
+         (blood-up (raylib:load-texture (animation-path blood-set :up)))
+         (blood-side (raylib:load-texture (animation-path blood-set :side))))
+    (dolist (id npc-ids)
+      (let ((set (get-animation-set id :npc)))
+        (setf (gethash id npc-animations)
+              (%make-npc-textures
+               :down-idle (raylib:load-texture (animation-path set :down-idle))
+               :up-idle (raylib:load-texture (animation-path set :up-idle))
+               :side-idle (raylib:load-texture (animation-path set :side-idle))))))
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk
@@ -94,9 +103,7 @@
                   :side-idle side-idle
                   :side-walk side-walk
                   :side-attack side-attack
-                  :npc-down-idle npc-down-idle
-                  :npc-up-idle npc-up-idle
-                  :npc-side-idle npc-side-idle
+                  :npc-animations npc-animations
                   :blood-down blood-down
                   :blood-up blood-up
                   :blood-side blood-side
@@ -117,9 +124,14 @@
   (raylib:unload-texture (assets-side-idle assets))
   (raylib:unload-texture (assets-side-walk assets))
   (raylib:unload-texture (assets-side-attack assets))
-  (raylib:unload-texture (assets-npc-down-idle assets))
-  (raylib:unload-texture (assets-npc-up-idle assets))
-  (raylib:unload-texture (assets-npc-side-idle assets))
+  (let ((npc-animations (assets-npc-animations assets)))
+    (when npc-animations
+      (maphash (lambda (_id textures)
+                 (declare (ignore _id))
+                 (raylib:unload-texture (npc-textures-down-idle textures))
+                 (raylib:unload-texture (npc-textures-up-idle textures))
+                 (raylib:unload-texture (npc-textures-side-idle textures)))
+               npc-animations)))
   (raylib:unload-texture (assets-blood-down assets))
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
@@ -224,12 +236,23 @@
                 (ih (round (* 2.0 ahh))))
             (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collision-color ui)))))))
 
-(defun npc-texture-for (assets direction)
+(defun npc-textures-for (npc assets)
+  ;; Select the NPC texture set based on archetype.
+  (let* ((archetype (npc-archetype npc))
+         (set-id (if archetype
+                     (npc-archetype-animation-set-id archetype)
+                     :npc))
+         (npc-animations (assets-npc-animations assets)))
+    (or (gethash set-id npc-animations)
+        (gethash :npc npc-animations))))
+
+(defun npc-texture-for (npc assets direction)
   ;; Select the NPC idle sprite sheet for DIRECTION.
-  (ecase direction
-    (:down (assets-npc-down-idle assets))
-    (:up (assets-npc-up-idle assets))
-    (:side (assets-npc-side-idle assets))))
+  (let ((textures (npc-textures-for npc assets)))
+    (ecase direction
+      (:down (npc-textures-down-idle textures))
+      (:up (npc-textures-up-idle textures))
+      (:side (npc-textures-side-idle textures)))))
 
 (defun blood-texture-for (assets direction)
   ;; Select the blood effect sprite sheet for DIRECTION.
@@ -290,7 +313,7 @@
   (let ((alive (combatant-alive-p npc)))
     (when alive
       (let* ((direction (npc-facing npc))
-             (texture (npc-texture-for assets direction))
+             (texture (npc-texture-for npc assets direction))
              (src-x (* (npc-frame-index npc) *sprite-frame-width*))
              (half-width (assets-half-sprite-width assets))
              (half-height (assets-half-sprite-height assets)))

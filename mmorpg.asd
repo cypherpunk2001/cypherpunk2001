@@ -4,6 +4,7 @@
   :serial t
   :components ((:file "src/package")
                (:file "src/config")
+               (:file "src/data")
                (:file "src/types")
                (:file "src/utils")
                (:file "src/movement")

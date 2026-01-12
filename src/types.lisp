@@ -62,13 +62,17 @@
   ;; Reusable render rectangles and vectors to avoid consing.
   origin tile-source tile-dest player-source player-dest npc-source npc-dest)
 
+(defstruct (npc-textures (:constructor %make-npc-textures))
+  ;; Loaded NPC textures for idle directions.
+  down-idle up-idle side-idle)
+
 (defstruct (assets (:constructor %make-assets))
   ;; Loaded textures and sprite sizing data.
   tileset
   down-idle down-walk down-attack
   up-idle up-walk up-attack
   side-idle side-walk side-attack
-  npc-down-idle npc-up-idle npc-side-idle
+  npc-animations
   blood-down blood-up blood-side
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
@@ -114,10 +118,11 @@
                 :auto-up nil
                 :mouse-hold-timer 0.0))
 
-(defun make-npc (start-x start-y &optional (archetype *rat-archetype*))
+(defun make-npc (start-x start-y &optional archetype)
   ;; Construct an NPC state struct at the given start position.
   (let ((sx (float start-x 1.0f0))
-        (sy (float start-y 1.0f0)))
+        (sy (float start-y 1.0f0))
+        (archetype (or archetype (default-npc-archetype))))
     (%make-npc :x sx
                :y sy
                :anim-state :idle
@@ -149,13 +154,18 @@
          (npcs (make-array npc-count))
          (tile-size (world-tile-dest-size world))
          (gap (* *npc-spawn-gap-tiles* tile-size))
-         (cols (max 1 *npc-spawn-columns*)))
+         (cols (max 1 *npc-spawn-columns*))
+         (spawn-ids *npc-spawn-ids*)
+         (spawn-count (if spawn-ids (length spawn-ids) 0)))
     (loop :for i :from 0 :below npc-count
           :for col = (mod i cols)
           :for row = (floor i cols)
           :for x = (+ (player-x player) (* (1+ col) gap))
           :for y = (+ (player-y player) (* row gap))
-          :do (setf (aref npcs i) (make-npc x y)))
+          :for archetype = (if (> spawn-count 0)
+                               (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
+                               nil)
+          :do (setf (aref npcs i) (make-npc x y archetype)))
     npcs))
 
 (defun make-entities (player npcs)
