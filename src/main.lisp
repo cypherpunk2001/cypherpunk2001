@@ -1,94 +1,97 @@
 (in-package #:mmorpg)
 
-(defparameter *verbose-logs* nil) ; When true, logs player position and collider info per frame.
-(defparameter *debug-collision-overlay* nil) ; Draws debug grid and collision overlays.
+(defparameter *verbose-logs* nil) ;; When true, logs player position and collider info per frame.
+(defparameter *debug-collision-overlay* nil) ;; Draws debug grid and collision overlays.
 
-(defparameter *window-width* 1280)
-(defparameter *window-height* 720)
-(defparameter *player-speed* 222.0)
-(defparameter *auto-walk-enabled* t) ; When true, WASD toggles auto-walk direction.
-(defparameter *camera-zoom-default* 1.0) ; Default camera zoom level.
-(defparameter *camera-zoom-min* 0.5) ; Minimum zoom level.
-(defparameter *camera-zoom-max* 3.0) ; Maximum zoom level.
-(defparameter *camera-zoom-step* 0.1) ; Zoom step per mouse wheel tick.
-(defparameter *run-speed-mult* 2.0) ; Movement speed multiplier while running.
-(defparameter *run-stamina-max* 10.0) ; Seconds of run stamina when full.
-(defparameter *mouse-hold-repeat-seconds* 0.25) ; Repeat rate for mouse-held updates.
+(defparameter *window-width* 1280) ;; Window width in pixels.
+(defparameter *window-height* 720) ;; Window height in pixels.
+(defparameter *player-speed* 222.0) ;; Base movement speed in pixels per second.
+(defparameter *auto-walk-enabled* t) ;; When true, WASD toggles auto-walk direction.
+(defparameter *camera-zoom-default* 1.0) ;; Default camera zoom level.
+(defparameter *camera-zoom-min* 0.5) ;; Minimum zoom level.
+(defparameter *camera-zoom-max* 3.0) ;; Maximum zoom level.
+(defparameter *camera-zoom-step* 0.1) ;; Zoom step per mouse wheel tick.
+(defparameter *run-speed-mult* 2.0) ;; Movement speed multiplier while running.
+(defparameter *run-stamina-max* 10.0) ;; Seconds of run stamina when full.
+(defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 
-(defparameter *player-sprite-dir* "../assets/1 Characters/3")
-(defparameter *sprite-frame-width* 32.0)
-(defparameter *sprite-frame-height* 32.0)
-(defparameter *sprite-scale* 4.0)
+(defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
+(defparameter *sprite-frame-width* 32.0) ;; Width of a single sprite frame in pixels.
+(defparameter *sprite-frame-height* 32.0) ;; Height of a single sprite frame in pixels.
+(defparameter *sprite-scale* 4.0) ;; Scale factor applied when drawing sprites.
 
-(defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ; Atlas image used for floor tiles.
-(defparameter *soundtrack-dir* "../assets/6 Soundtrack")
-(defparameter *soundtrack-tracks*
+(defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
+(defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
+(defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Title Screen.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 1.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 2.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Level 3.wav" *soundtrack-dir*)
    (format nil "~a/Juhani Junkala [Retro Game Music Pack] Ending.wav" *soundtrack-dir*)))
-(defparameter *soundtrack-display-names*
+(defparameter *soundtrack-display-names* ;; Vector of display names for the soundtrack.
   (vector
    "Title Screen"
    "Level 1"
    "Level 2"
    "Level 3"
    "Ending"))
-(defparameter *tile-size* 16) ; Source tile size in the atlas, in pixels.
-(defparameter *tile-scale* 4.0) ; Scale factor for drawing tiles to the screen.
-(defparameter *tileset-columns* 19) ; Number of columns in the atlas grid.
-(defparameter *floor-tile-index* 40) ; Which atlas tile index to use for the floor fill.
-(defparameter *floor-variant-indices* #(41 42)) ; Occasional variants (0 can be used for empty).
-(defparameter *floor-variant-mod* 10) ; 1 in N chance to use a variant instead of main.
-(defparameter *floor-cluster-size* 3) ; Size of clustered variant blocks, in tiles.
-(defparameter *floor-seed* 1337) ; Seed for deterministic floor variation.
-(defparameter *landmark-indices* #(41 42)) ; Sparse decorative overlays.
-(defparameter *landmark-mod* 80) ; 1 in N tiles become a landmark.
-(defparameter *landmark-seed* 7331) ; Seed for deterministic landmark placement.
-(defparameter *wall-map-width* 40) ; Width of the test wall map in tiles.
-(defparameter *wall-map-height* 24) ; Height of the test wall map in tiles.
-(defparameter *wall-origin-x* 0) ; World tile X where the wall map starts.
-(defparameter *wall-origin-y* 0) ; World tile Y where the wall map starts.
-(defparameter *wall-tile-indices* #(107)) ; Wall tile variants.
-(defparameter *wall-seed* 2468) ; Seed for wall tile variation.
-(defparameter *player-collision-scale* 2.0) ; Collision box size relative to one tile.
-(defparameter *target-epsilon* 6.0) ; Stop distance for click-to-move.
+(defparameter *tile-size* 16) ;; Source tile size in the atlas, in pixels.
+(defparameter *tile-scale* 4.0) ;; Scale factor for drawing tiles to the screen.
+(defparameter *tileset-columns* 19) ;; Number of columns in the atlas grid.
+(defparameter *floor-tile-index* 40) ;; Which atlas tile index to use for the floor fill.
+(defparameter *floor-variant-indices* #(41 42)) ;; Occasional variants (0 can be used for empty).
+(defparameter *floor-variant-mod* 10) ;; 1 in N chance to use a variant instead of main.
+(defparameter *floor-cluster-size* 3) ;; Size of clustered variant blocks, in tiles.
+(defparameter *floor-seed* 1337) ;; Seed for deterministic floor variation.
+(defparameter *landmark-indices* #(41 42)) ;; Sparse decorative overlays.
+(defparameter *landmark-mod* 80) ;; 1 in N tiles become a landmark.
+(defparameter *landmark-seed* 7331) ;; Seed for deterministic landmark placement.
+(defparameter *wall-map-width* 40) ;; Width of the test wall map in tiles.
+(defparameter *wall-map-height* 24) ;; Height of the test wall map in tiles.
+(defparameter *wall-origin-x* 0) ;; World tile X where the wall map starts.
+(defparameter *wall-origin-y* 0) ;; World tile Y where the wall map starts.
+(defparameter *wall-tile-indices* #(107)) ;; Wall tile variants.
+(defparameter *wall-seed* 2468) ;; Seed for wall tile variation.
+(defparameter *player-collision-scale* 2.0) ;; Collision box size relative to one tile.
+(defparameter *target-epsilon* 6.0) ;; Stop distance for click-to-move.
 
-(defparameter *idle-frame-count* 4) ; Frames in each idle animation row.
-(defparameter *walk-frame-count* 6) ; Frames in each walk animation row.
-(defparameter *attack-frame-count* 4) ; Frames in each attack animation row.
-(defparameter *idle-frame-time* 0.25) ; Seconds per idle frame.
-(defparameter *walk-frame-time* 0.12) ; Seconds per walk frame.
-(defparameter *attack-frame-time* 0.1) ; Seconds per attack frame.
+(defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
+(defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.
+(defparameter *attack-frame-count* 4) ;; Frames in each attack animation row.
+(defparameter *idle-frame-time* 0.25) ;; Seconds per idle frame.
+(defparameter *walk-frame-time* 0.12) ;; Seconds per walk frame.
+(defparameter *attack-frame-time* 0.1) ;; Seconds per attack frame.
 
-(defparameter +key-right+ (cffi:foreign-enum-value 'raylib:keyboard-key :right))
-(defparameter +key-left+ (cffi:foreign-enum-value 'raylib:keyboard-key :left))
-(defparameter +key-down+ (cffi:foreign-enum-value 'raylib:keyboard-key :down))
-(defparameter +key-up+ (cffi:foreign-enum-value 'raylib:keyboard-key :up))
-(defparameter +key-escape+ (cffi:foreign-enum-value 'raylib:keyboard-key :escape))
-(defparameter +key-d+ (cffi:foreign-enum-value 'raylib:keyboard-key :d))
-(defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a))
-(defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s))
-(defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w))
-(defparameter +key-tab+ (cffi:foreign-enum-value 'raylib:keyboard-key :tab))
-(defparameter +key-space+ (cffi:foreign-enum-value 'raylib:keyboard-key :space))
-(defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift))
-(defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift))
-(defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left))
-(defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle))
+(defparameter +key-right+ (cffi:foreign-enum-value 'raylib:keyboard-key :right)) ;; Raylib keycode for the Right Arrow key.
+(defparameter +key-left+ (cffi:foreign-enum-value 'raylib:keyboard-key :left)) ;; Raylib keycode for the Left Arrow key.
+(defparameter +key-down+ (cffi:foreign-enum-value 'raylib:keyboard-key :down)) ;; Raylib keycode for the Down Arrow key.
+(defparameter +key-up+ (cffi:foreign-enum-value 'raylib:keyboard-key :up)) ;; Raylib keycode for the Up Arrow key.
+(defparameter +key-escape+ (cffi:foreign-enum-value 'raylib:keyboard-key :escape)) ;; Raylib keycode for the Escape key.
+(defparameter +key-d+ (cffi:foreign-enum-value 'raylib:keyboard-key :d)) ;; Raylib keycode for the D key.
+(defparameter +key-a+ (cffi:foreign-enum-value 'raylib:keyboard-key :a)) ;; Raylib keycode for the A key.
+(defparameter +key-s+ (cffi:foreign-enum-value 'raylib:keyboard-key :s)) ;; Raylib keycode for the S key.
+(defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w)) ;; Raylib keycode for the W key.
+(defparameter +key-tab+ (cffi:foreign-enum-value 'raylib:keyboard-key :tab)) ;; Raylib keycode for the Tab key.
+(defparameter +key-space+ (cffi:foreign-enum-value 'raylib:keyboard-key :space)) ;; Raylib keycode for the Space key.
+(defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift)) ;; Raylib keycode for the Left Shift key.
+(defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift)) ;; Raylib keycode for the Right Shift key.
+(defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left)) ;; Raylib mouse button code for left click.
+(defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle)) ;; Raylib mouse button code for middle click.
 
 (defun clamp (value min-value max-value)
+  ;; Clamp VALUE between MIN-VALUE and MAX-VALUE for bounds checks.
   (max min-value (min value max-value)))
 
 (defun normalize-direction (dx dy)
+  ;; Normalize diagonal movement to unit length; keep axis-aligned values as-is.
   (if (and (not (zerop dx)) (not (zerop dy)))
       (let ((len (sqrt (+ (* dx dx) (* dy dy)))))
         (values (/ dx len) (/ dy len)))
       (values dx dy)))
 
 (defun read-input-direction ()
+  ;; Read WASD/arrow keys and return a normalized movement vector.
   (let ((dx 0.0)
         (dy 0.0))
     (when (or (raylib:is-key-down +key-right+)
@@ -106,6 +109,7 @@
     (normalize-direction dx dy)))
 
 (defun screen-to-world (screen-x screen-y target-x target-y camera-offset camera-zoom)
+  ;; Convert screen coordinates into world space using camera offset and zoom.
   (let* ((zoom (if (zerop camera-zoom) 1.0 camera-zoom))
          (sx (float screen-x 1.0))
          (sy (float screen-y 1.0)))
@@ -115,12 +119,14 @@
                target-y))))
 
 (defun point-in-rect-p (x y rx ry rw rh)
+  ;; Return true when point (x,y) lies inside the given rectangle bounds.
   (and (>= x rx)
        (< x (+ rx rw))
        (>= y ry)
        (< y (+ ry rh))))
 
 (defun basename (path)
+  ;; Return the filename portion of PATH for display labels.
   (let* ((path-str (string path))
          (slash (position #\/ path-str :from-end t))
          (backslash (position #\\ path-str :from-end t))
@@ -130,29 +136,35 @@
         path-str)))
 
 (defun sprite-path (filename)
+  ;; Build a sprite sheet path under *player-sprite-dir*.
   (format nil "~a/~a" *player-sprite-dir* filename))
 
 (defun player-direction (dx dy)
+  ;; Pick a facing direction keyword from movement delta.
   (cond ((> (abs dx) (abs dy)) :side)
         ((< dy 0.0) :up)
         (t :down)))
 
 (defun player-state (dx dy)
+  ;; Return :idle or :walk based on movement delta.
   (if (and (zerop dx) (zerop dy)) :idle :walk))
 
 (defun player-animation-params (state)
+  ;; Return frame count and base frame time for STATE.
   (ecase state
     (:idle (values *idle-frame-count* *idle-frame-time*))
     (:walk (values *walk-frame-count* *walk-frame-time*))
     (:attack (values *attack-frame-count* *attack-frame-time*))))
 
 (defun u32-hash (x y &optional (seed 1337))
+  ;; Generate a deterministic 32-bit hash for tile variation.
   (logand #xffffffff
           (+ (* x 73856093)
              (* y 19349663)
              (* seed 83492791))))
 
 (defun floor-tile-at (x y main-index variant-indices)
+  ;; Choose a floor tile index with clustered variant noise.
   (let* ((cluster-size (max 1 *floor-cluster-size*))
          (variant-count (length variant-indices))
          (variant-mod (max 1 *floor-variant-mod*))
@@ -166,6 +178,7 @@
         main-index)))
 
 (defun landmark-tile-at (x y)
+  ;; Choose an optional landmark tile index with sparse hashing.
   (let* ((variant-count (length *landmark-indices*))
          (variant-mod (max 1 *landmark-mod*))
          (h (u32-hash x y *landmark-seed*))
@@ -176,6 +189,7 @@
         0)))
 
 (defun build-wall-map ()
+  ;; Create a test wall map array with a solid border.
   (let* ((width *wall-map-width*)
          (height *wall-map-height*)
          (map (make-array (list height width) :initial-element 0)))
@@ -192,6 +206,7 @@
     map))
 
 (defun wall-occupied-p (wall-map tx ty)
+  ;; Check whether a tile inside the wall map is nonzero.
   (let* ((local-x (- tx *wall-origin-x*))
          (local-y (- ty *wall-origin-y*))
          (width (array-dimension wall-map 1))
@@ -203,6 +218,7 @@
          (not (zerop (aref wall-map local-y local-x))))))
 
 (defun wall-blocked-p (wall-map tx ty)
+  ;; Treat walls and out-of-bounds tiles as blocked for collision.
   (let* ((local-x (- tx *wall-origin-x*))
          (local-y (- ty *wall-origin-y*))
          (width (array-dimension wall-map 1))
@@ -215,6 +231,7 @@
         (not (zerop (aref wall-map local-y local-x))))))
 
 (defun wall-tile-at (wall-map tx ty)
+  ;; Return the wall tile index for rendering or 0 if empty.
   (let ((variant-count (length *wall-tile-indices*)))
     (if (and (wall-occupied-p wall-map tx ty)
              (> variant-count 0))
@@ -223,6 +240,7 @@
         0)))
 
 (defun blocked-at-p (wall-map x y half-w half-h tile-size)
+  ;; Test collider bounds against blocked tiles in the wall map.
   (let* ((left (- x half-w))
          (right (+ x half-w))
          (top (- y half-h))
@@ -236,6 +254,7 @@
                          :thereis (wall-blocked-p wall-map tx ty)))))
 
 (defun attempt-move (wall-map x y dx dy step half-w half-h tile-size)
+  ;; Resolve movement per axis and cancel movement when blocked.
   (let ((nx x)
         (ny y)
         (out-dx 0.0)
@@ -255,6 +274,7 @@
     (values nx ny out-dx out-dy)))
 
 (defun set-rectangle (rect x y width height)
+  ;; Mutate a Raylib rectangle with new bounds and return it.
   (setf (raylib:rectangle-x rect) x
         (raylib:rectangle-y rect) y
         (raylib:rectangle-width rect) width
@@ -262,6 +282,7 @@
   rect)
 
 (defun set-tile-source-rect (rect tile-index tile-size-f)
+  ;; Set the atlas source rectangle for a given tile index.
   (let* ((col (mod tile-index *tileset-columns*))
          (row (floor tile-index *tileset-columns*)))
     (set-rectangle rect
@@ -271,6 +292,7 @@
                    tile-size-f)))
 
 (defstruct (player (:constructor %make-player))
+  ;; Player state used by update/draw loops.
   x y dx dy
   anim-state facing
   frame-index frame-timer
@@ -281,17 +303,20 @@
   mouse-hold-timer)
 
 (defstruct (world (:constructor %make-world))
+  ;; World state including tiles, collision, and derived bounds.
   tile-size-f tile-dest-size floor-index
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
   wall-min-x wall-max-x wall-min-y wall-max-y)
 
 (defstruct (audio (:constructor %make-audio))
+  ;; Audio state for music playback and UI labels.
   soundtrack-count soundtrack-music soundtrack-names soundtrack-labels
   soundtrack-index current-music current-track-label
   volume-steps volume-level volume-bars music-volume)
 
 (defstruct (ui (:constructor %make-ui))
+  ;; UI state for menu layout, colors, and HUD labels.
   menu-open exit-requested
   menu-padding menu-panel-width menu-panel-height menu-panel-x menu-panel-y
   menu-title menu-hint menu-track-title menu-button-label menu-prev-label menu-next-label
@@ -311,9 +336,11 @@
   stamina-labels)
 
 (defstruct (render (:constructor %make-render))
+  ;; Reusable render rectangles and vectors to avoid consing.
   origin tile-source tile-dest player-source player-dest)
 
 (defstruct (assets (:constructor %make-assets))
+  ;; Loaded textures and sprite sizing data.
   tileset
   down-idle down-walk down-attack
   up-idle up-walk up-attack
@@ -321,12 +348,15 @@
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
 (defstruct (camera (:constructor %make-camera))
+  ;; Camera state used by 2D mode.
   offset zoom)
 
 (defstruct (game (:constructor %make-game))
+  ;; Aggregate of game subsystems for update/draw.
   world player audio ui render assets camera)
 
 (defun make-stamina-labels ()
+  ;; Precompute stamina HUD strings to avoid per-frame consing.
   (let* ((max (truncate *run-stamina-max*))
          (labels (make-array (1+ max))))
     (loop :for i :from 0 :to max
@@ -334,6 +364,7 @@
     labels))
 
 (defun make-player (start-x start-y)
+  ;; Construct a player state struct at the given start position.
   (%make-player :x start-x
                 :y start-y
                 :dx 0.0
@@ -356,6 +387,7 @@
                 :mouse-hold-timer 0.0))
 
 (defun make-world ()
+  ;; Build world state and derived collision/render constants.
   (let* ((tile-size-f (float *tile-size* 1.0))
          (tile-dest-size (* tile-size-f *tile-scale*))
          (floor-index *floor-tile-index*)
@@ -388,6 +420,7 @@
                  :wall-max-y wall-max-y)))
 
 (defun make-render ()
+  ;; Allocate reusable rectangles and origin vector for rendering.
   (%make-render :origin (raylib:make-vector2 :x 0.0 :y 0.0)
                 :tile-source (raylib:make-rectangle)
                 :tile-dest (raylib:make-rectangle)
@@ -395,6 +428,7 @@
                 :player-dest (raylib:make-rectangle)))
 
 (defun load-assets ()
+  ;; Load textures and compute sprite sizing for rendering.
   (let* ((scaled-width (* *sprite-frame-width* *sprite-scale*))
          (scaled-height (* *sprite-frame-height* *sprite-scale*))
          (half-sprite-width (/ scaled-width 2.0))
@@ -425,6 +459,7 @@
                   :half-sprite-height half-sprite-height)))
 
 (defun unload-assets (assets)
+  ;; Unload textures stored in the assets struct.
   (raylib:unload-texture (assets-tileset assets))
   (raylib:unload-texture (assets-down-idle assets))
   (raylib:unload-texture (assets-down-walk assets))
@@ -437,6 +472,7 @@
   (raylib:unload-texture (assets-side-attack assets)))
 
 (defun build-volume-bars (volume-steps)
+  ;; Create prebuilt volume bar strings for the menu UI.
   (let ((bars (make-array (1+ volume-steps))))
     (loop :for i :from 0 :to volume-steps
           :do (let ((s (make-string (+ volume-steps 2)
@@ -449,6 +485,7 @@
     bars))
 
 (defun make-audio ()
+  ;; Load music streams and initialize audio state.
   (let* ((soundtrack-count (length *soundtrack-tracks*))
          (soundtrack-music (make-array soundtrack-count))
          (soundtrack-names (make-array soundtrack-count))
@@ -490,12 +527,14 @@
                  :music-volume music-volume)))
 
 (defun shutdown-audio (audio)
+  ;; Unload music streams stored in audio state.
   (let ((count (audio-soundtrack-count audio))
         (music (audio-soundtrack-music audio)))
     (loop :for index :from 0 :below count
           :do (raylib:unload-music-stream (aref music index)))))
 
 (defun audio-advance-track (audio step)
+  ;; Switch to the next or previous track and restart playback.
   (let ((count (audio-soundtrack-count audio)))
     (when (> count 0)
       (let ((old-music (audio-current-music audio)))
@@ -515,6 +554,7 @@
   audio)
 
 (defun audio-adjust-volume (audio delta)
+  ;; Adjust volume level and apply it to current music.
   (let* ((steps (audio-volume-steps audio))
          (new-level (clamp (+ (audio-volume-level audio) delta) 0 steps))
          (music-volume (/ new-level (float steps 1.0))))
@@ -526,6 +566,7 @@
   audio)
 
 (defun update-audio (audio)
+  ;; Update streaming music and auto-advance near track end.
   (let ((current (audio-current-music audio)))
     (when current
       (raylib:update-music-stream current)
@@ -537,6 +578,7 @@
   audio)
 
 (defun make-ui ()
+  ;; Build UI layout constants and colors for the menu and HUD.
   (let* ((menu-open nil)
          (exit-requested nil)
          (menu-padding 32)
@@ -665,11 +707,13 @@
               :stamina-labels stamina-labels)))
 
 (defun make-camera ()
+  ;; Initialize camera offset and zoom settings.
   (%make-camera :offset (raylib:make-vector2 :x (/ *window-width* 2.0)
                                              :y (/ *window-height* 2.0))
                 :zoom *camera-zoom-default*))
 
 (defun make-game ()
+  ;; Assemble game state and log setup if verbose is enabled.
   (let* ((world (make-world))
          (player (make-player (/ *window-width* 2.0)
                               (/ *window-height* 2.0)))
@@ -697,10 +741,12 @@
                 :camera camera)))
 
 (defun shutdown-game (game)
+  ;; Release game resources before exiting.
   (shutdown-audio (game-audio game))
   (unload-assets (game-assets game)))
 
 (defun update-camera-zoom (camera)
+  ;; Adjust zoom with the mouse wheel and reset on middle click.
   (let ((wheel (raylib:get-mouse-wheel-move)))
     (when (not (zerop wheel))
       (setf (camera-zoom camera)
@@ -711,23 +757,27 @@
     (setf (camera-zoom camera) *camera-zoom-default*)))
 
 (defun clear-player-auto-walk (player)
+  ;; Clear auto-walk toggles on the player.
   (setf (player-auto-right player) nil
         (player-auto-left player) nil
         (player-auto-down player) nil
         (player-auto-up player) nil))
 
 (defun set-player-target (player target-x target-y)
+  ;; Set click-to-move target and activate it.
   (setf (player-target-x player) target-x
         (player-target-y player) target-y
         (player-target-active player) t
         (player-mouse-hold-timer player) 0.0))
 
 (defun start-player-attack (player)
+  ;; Start an attack animation if one is not already active.
   (unless (player-attacking player)
     (setf (player-attacking player) t
           (player-attack-timer player) 0.0)))
 
 (defun update-target-from-mouse (player camera dt mouse-clicked mouse-down)
+  ;; Handle click/hold to update the player target position.
   (when mouse-clicked
     (clear-player-auto-walk player)
     (multiple-value-bind (target-x target-y)
@@ -755,6 +805,7 @@
     (setf (player-mouse-hold-timer player) 0.0)))
 
 (defun update-input-direction (player mouse-clicked)
+  ;; Compute input dx/dy and handle auto-walk toggles.
   (let ((input-dx 0.0)
         (input-dy 0.0))
     (unless mouse-clicked
@@ -809,6 +860,7 @@
     (values input-dx input-dy)))
 
 (defun update-running-state (player dt moving allow-toggle)
+  ;; Update stamina and return the current speed multiplier.
   (when allow-toggle
     (when (raylib:is-key-pressed +key-tab+)
       (if (> (player-run-stamina player) 0.0)
@@ -829,6 +881,7 @@
       1.0))
 
 (defun update-player-position (player world input-dx input-dy speed-mult dt)
+  ;; Move the player with collision and target logic.
   (let ((x (player-x player))
         (y (player-y player))
         (dx 0.0)
@@ -875,6 +928,7 @@
           (player-dy player) dy)))
 
 (defun log-player-position (player world)
+  ;; Emit verbose position and tile diagnostics for debugging.
   (let* ((x (player-x player))
          (y (player-y player))
          (tile-dest-size (world-tile-dest-size world))
@@ -893,6 +947,7 @@
     (finish-output)))
 
 (defun update-player-animation (player dt)
+  ;; Advance animation timers and set facing/state.
   (let* ((dx (player-dx player))
          (dy (player-dy player))
          (moving (or (not (zerop dx)) (not (zerop dy))))
@@ -945,6 +1000,7 @@
               (player-frame-timer player) frame-timer)))))
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
+  ;; Process menu clicks for quit, music, volume, and toggles.
   (cond
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-button-x ui) (ui-menu-button-y ui)
@@ -983,6 +1039,7 @@
      (raylib:toggle-fullscreen))))
 
 (defun update-game (game dt)
+  ;; Run one frame of input, audio, movement, and animation updates.
   (let* ((player (game-player game))
          (world (game-world game))
          (audio (game-audio game))
@@ -1015,6 +1072,7 @@
     (update-player-animation player dt)))
 
 (defun draw-world (world render assets camera player ui)
+  ;; Render floor, landmarks, walls, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
          (tile-size-f (world-tile-size-f world))
          (floor-index (world-floor-index world))
@@ -1094,6 +1152,7 @@
         (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui))))))
 
 (defun player-texture-for (assets direction state)
+  ;; Select the sprite sheet texture for DIRECTION and STATE.
   (ecase direction
     (:down (ecase state
              (:walk (assets-down-walk assets))
@@ -1109,6 +1168,7 @@
             (:attack (assets-side-attack assets))))))
 
 (defun draw-player (player assets render)
+  ;; Render the player sprite at its world position.
   (let* ((direction (player-facing player))
          (state (player-anim-state player))
          (dx (player-dx player))
@@ -1139,6 +1199,7 @@
                              raylib:+white+)))
 
 (defun draw-hud (player ui)
+  ;; Draw stamina HUD using precomputed labels.
   (let* ((labels (ui-stamina-labels ui))
          (max-index (1- (length labels)))
          (run-seconds (max 0 (min (truncate (player-run-stamina player))
@@ -1148,6 +1209,7 @@
     (raylib:draw-text run-text 10 10 20 raylib:+white+)))
 
 (defun draw-menu (ui audio)
+  ;; Render the pause menu and hover states.
   (let* ((mouse-x (raylib:get-mouse-x))
          (mouse-y (raylib:get-mouse-y))
          (hover-quit (point-in-rect-p mouse-x mouse-y
@@ -1331,6 +1393,7 @@
                       (ui-menu-text-color ui))))
 
 (defun draw-game (game)
+  ;; Render a full frame: world, player, HUD, and menu.
   (let* ((player (game-player game))
          (world (game-world game))
          (audio (game-audio game))
@@ -1354,6 +1417,7 @@
         (draw-menu ui audio)))))
 
 (defun run ()
+  ;; Entry point that initializes game state and drives the main loop.
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
     (raylib:set-exit-key 0)
