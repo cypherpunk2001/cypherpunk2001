@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/map.md :)
 (in-package #:mmorpg)
 
 (defparameter +tmx-flip-horizontal+ #x80000000)

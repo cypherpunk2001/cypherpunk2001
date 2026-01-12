@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/types.md :)
 (in-package #:mmorpg)
 
 (defstruct (player (:constructor %make-player))

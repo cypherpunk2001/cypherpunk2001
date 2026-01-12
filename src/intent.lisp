@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/intent.md :)
 (in-package #:mmorpg)
 
 (defstruct (intent (:constructor %make-intent))

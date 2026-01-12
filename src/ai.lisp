@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/ai.md :)
 (in-package #:mmorpg)
 
 (defun npc-home-radius (npc world)

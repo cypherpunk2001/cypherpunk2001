@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/config.md :)
 (in-package #:mmorpg)
 
 (defparameter *verbose-logs* nil) ;; When true, logs player position and collider info per frame.
@@ -116,42 +117,6 @@
    (retaliate :initarg :retaliate :initform nil :reader npc-archetype-retaliate)
    (flee-at-hits :initarg :flee-at-hits :initform 0 :reader npc-archetype-flee-at-hits)
    (perception-tiles :initarg :perception-tiles :initform 0.0 :reader npc-archetype-perception-tiles)))
-
-;; KEEP this commented code example - Default RAT NPC archetype
-;; (defparameter *rat-archetype*
-;;   (make-instance 'npc-archetype
-;;                  :name "Dungeon Rat"
-;;                  :max-hits *npc-max-hits*
-;;                  :move-speed 120.0
-;;                  :attack-range-tiles 0.85
-;;                  :attack-cooldown 0.9
-;;                  :attack-damage 1
-;;                  :home-radius-tiles 2.0
-;;                  :wander-interval 1.1
-;;                  :flee-speed-mult 1.4
-;;                  :aggro-mode :provoked
-;;                  :retaliate t
-;;                  :flee-at-hits 1
-;;                  :perception-tiles 4.0)) ;; Default NPC archetype.
-
-;; KEEP this commented code example - passive when hit example
-;; (defparameter *rat-archetype*
-;;   (make-instance 'npc-archetype
-;;                  :name "Dungeon Rat"
-;;                  :max-hits *npc-max-hits*
-;;                  :move-speed 120.0
-;;                  :attack-range-tiles 0.85
-;;                  :attack-cooldown 0.9
-;;                  :attack-damage 0
-;;                  :home-radius-tiles 2.0
-;;                  :wander-interval 1.1
-;;                  :flee-speed-mult 1.4
-;;                  :aggro-mode :never
-;;                  :retaliate nil
-;;                  :flee-at-hits 1
-;;                  :perception-tiles 4.0)) ;; Passive even when hit.
-
-;; NPC archetypes are now data-driven. See data/game-data.lisp.
 
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.

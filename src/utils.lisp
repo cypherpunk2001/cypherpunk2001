@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/utils.md :)
 (in-package #:mmorpg)
 
 (defun clamp (value min-value max-value)

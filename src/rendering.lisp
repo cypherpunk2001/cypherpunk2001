@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/rendering.md :)
 (in-package #:mmorpg)
 
 (defun floor-tile-at (x y main-index variant-indices)

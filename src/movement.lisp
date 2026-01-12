@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/movement.md :)
 (in-package #:mmorpg)
 
 (defun build-wall-map ()

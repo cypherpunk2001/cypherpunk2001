@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/input.md :)
 (in-package #:mmorpg)
 
 (defun read-input-direction ()

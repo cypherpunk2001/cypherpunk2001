@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/audio.md :)
 (in-package #:mmorpg)
 
 (defun build-volume-bars (volume-steps)

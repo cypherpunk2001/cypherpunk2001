@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/data.md :)
 (in-package #:mmorpg)
 
 (defstruct (animation-set (:constructor %make-animation-set))

@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/combat.md :)
 (in-package #:mmorpg)
 
 (defmethod combatant-position ((combatant player))

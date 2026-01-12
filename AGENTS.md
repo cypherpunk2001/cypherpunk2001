@@ -72,3 +72,9 @@ If unsure, refactor toward reuse.
 - Chunk the map (e.g., 32×32 tiles) and cache static chunks in a render texture.
 - Keep entity data in arrays/structs, not lists; use object pools.
 - Separate update/draw; keep animation state lightweight.
+
+---
+
+## Documentation Requirements
+
+- When behavior changes in `src/*.lisp`, update the corresponding doc in `docs/*.md` (e.g., `src/movement.lisp` -> `docs/movement.md`).

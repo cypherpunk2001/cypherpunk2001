@@ -1,3 +1,4 @@
+;; NOTE: If you change behavior here, update docs/main.md :)
 (in-package #:mmorpg)
 
 (defun make-game ()
