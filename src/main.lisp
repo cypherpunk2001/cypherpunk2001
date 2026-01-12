@@ -16,6 +16,7 @@
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
+(defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
 (defparameter *sprite-frame-width* 32.0) ;; Width of a single sprite frame in pixels.
 (defparameter *sprite-frame-height* 32.0) ;; Height of a single sprite frame in pixels.
 (defparameter *sprite-scale* 4.0) ;; Scale factor applied when drawing sprites.
@@ -55,6 +56,9 @@
 (defparameter *wall-seed* 2468) ;; Seed for wall tile variation.
 (defparameter *player-collision-scale* 2.0) ;; Collision box size relative to one tile.
 (defparameter *target-epsilon* 6.0) ;; Stop distance for click-to-move.
+(defparameter *npc-collision-scale* 2.0) ;; Collision box size relative to one tile.
+(defparameter *npc-max-hits* 3) ;; Hits required to defeat the NPC.
+(defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.
@@ -138,6 +142,10 @@
 (defun sprite-path (filename)
   ;; Build a sprite sheet path under *player-sprite-dir*.
   (format nil "~a/~a" *player-sprite-dir* filename))
+
+(defun npc-sprite-path (filename)
+  ;; Build a sprite sheet path under *npc-sprite-dir*.
+  (format nil "~a/~a" *npc-sprite-dir* filename))
 
 (defun player-direction (dx dy)
   ;; Pick a facing direction keyword from movement delta.
@@ -273,6 +281,31 @@
                   out-dy dy))))
     (values nx ny out-dx out-dy)))
 
+(defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
+  ;; Return true when two axis-aligned boxes overlap (center + half sizes).
+  (and (< (abs (- ax bx)) (+ ahw bhw))
+       (< (abs (- ay by)) (+ ahh bhh))))
+
+(defun npc-collision-half (world)
+  ;; Return NPC collider half sizes in world pixels.
+  (let ((half (* (/ (world-tile-dest-size world) 2.0) *npc-collision-scale*)))
+    (values half half)))
+
+(defun attack-hitbox (player world)
+  ;; Return attack hitbox center and half sizes for the current facing.
+  (let* ((tile-size (world-tile-dest-size world))
+         (half (* (/ tile-size 2.0) *attack-hitbox-scale*))
+         (offset (+ (world-collision-half-width world) half))
+         (x (player-x player))
+         (y (player-y player))
+         (direction (player-facing player))
+         (side-sign (player-facing-sign player)))
+    (case direction
+      (:up (values x (- y offset) half half))
+      (:down (values x (+ y offset) half half))
+      (:side (values (+ x (* side-sign offset)) y half half))
+      (t (values x y half half)))))
+
 (defun set-rectangle (rect x y width height)
   ;; Mutate a Raylib rectangle with new bounds and return it.
   (setf (raylib:rectangle-x rect) x
@@ -295,12 +328,20 @@
   ;; Player state used by update/draw loops.
   x y dx dy
   anim-state facing
+  facing-sign
   frame-index frame-timer
-  attacking attack-timer
+  attacking attack-timer attack-hit
   target-x target-y target-active
   running run-stamina
   auto-right auto-left auto-down auto-up
   mouse-hold-timer)
+
+(defstruct (npc (:constructor %make-npc))
+  ;; NPC state used by update/draw loops.
+  x y
+  anim-state facing
+  frame-index frame-timer
+  hits-left alive)
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
@@ -337,7 +378,7 @@
 
 (defstruct (render (:constructor %make-render))
   ;; Reusable render rectangles and vectors to avoid consing.
-  origin tile-source tile-dest player-source player-dest)
+  origin tile-source tile-dest player-source player-dest npc-source npc-dest)
 
 (defstruct (assets (:constructor %make-assets))
   ;; Loaded textures and sprite sizing data.
@@ -345,6 +386,7 @@
   down-idle down-walk down-attack
   up-idle up-walk up-attack
   side-idle side-walk side-attack
+  npc-down-idle npc-up-idle npc-side-idle
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
 (defstruct (camera (:constructor %make-camera))
@@ -353,7 +395,7 @@
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player audio ui render assets camera)
+  world player npc audio ui render assets camera)
 
 (defun make-stamina-labels ()
   ;; Precompute stamina HUD strings to avoid per-frame consing.
@@ -371,10 +413,12 @@
                 :dy 0.0
                 :anim-state :idle
                 :facing :down
+                :facing-sign 1.0
                 :frame-index 0
                 :frame-timer 0.0
                 :attacking nil
                 :attack-timer 0.0
+                :attack-hit nil
                 :target-x start-x
                 :target-y start-y
                 :target-active nil
@@ -385,6 +429,17 @@
                 :auto-down nil
                 :auto-up nil
                 :mouse-hold-timer 0.0))
+
+(defun make-npc (start-x start-y)
+  ;; Construct an NPC state struct at the given start position.
+  (%make-npc :x start-x
+             :y start-y
+             :anim-state :idle
+             :facing :down
+             :frame-index 0
+             :frame-timer 0.0
+             :hits-left *npc-max-hits*
+             :alive t))
 
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
@@ -425,7 +480,9 @@
                 :tile-source (raylib:make-rectangle)
                 :tile-dest (raylib:make-rectangle)
                 :player-source (raylib:make-rectangle)
-                :player-dest (raylib:make-rectangle)))
+                :player-dest (raylib:make-rectangle)
+                :npc-source (raylib:make-rectangle)
+                :npc-dest (raylib:make-rectangle)))
 
 (defun load-assets ()
   ;; Load textures and compute sprite sizing for rendering.
@@ -442,7 +499,10 @@
          (up-attack (raylib:load-texture (sprite-path "U_Attack.png")))
          (side-idle (raylib:load-texture (sprite-path "S_Idle.png")))
          (side-walk (raylib:load-texture (sprite-path "S_Walk.png")))
-         (side-attack (raylib:load-texture (sprite-path "S_Attack.png"))))
+         (side-attack (raylib:load-texture (sprite-path "S_Attack.png")))
+         (npc-down-idle (raylib:load-texture (npc-sprite-path "D_Idle.png")))
+         (npc-up-idle (raylib:load-texture (npc-sprite-path "U_Idle.png")))
+         (npc-side-idle (raylib:load-texture (npc-sprite-path "S_Idle.png"))))
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk
@@ -453,6 +513,9 @@
                   :side-idle side-idle
                   :side-walk side-walk
                   :side-attack side-attack
+                  :npc-down-idle npc-down-idle
+                  :npc-up-idle npc-up-idle
+                  :npc-side-idle npc-side-idle
                   :scaled-width scaled-width
                   :scaled-height scaled-height
                   :half-sprite-width half-sprite-width
@@ -469,7 +532,10 @@
   (raylib:unload-texture (assets-up-attack assets))
   (raylib:unload-texture (assets-side-idle assets))
   (raylib:unload-texture (assets-side-walk assets))
-  (raylib:unload-texture (assets-side-attack assets)))
+  (raylib:unload-texture (assets-side-attack assets))
+  (raylib:unload-texture (assets-npc-down-idle assets))
+  (raylib:unload-texture (assets-npc-up-idle assets))
+  (raylib:unload-texture (assets-npc-side-idle assets)))
 
 (defun build-volume-bars (volume-steps)
   ;; Create prebuilt volume bar strings for the menu UI.
@@ -717,6 +783,8 @@
   (let* ((world (make-world))
          (player (make-player (/ *window-width* 2.0)
                               (/ *window-height* 2.0)))
+         (npc (make-npc (+ (player-x player) (world-tile-dest-size world))
+                        (player-y player)))
          (audio (make-audio))
          (ui (make-ui))
          (render (make-render))
@@ -734,6 +802,7 @@
       (finish-output))
     (%make-game :world world
                 :player player
+                :npc npc
                 :audio audio
                 :ui ui
                 :render render
@@ -774,7 +843,8 @@
   ;; Start an attack animation if one is not already active.
   (unless (player-attacking player)
     (setf (player-attacking player) t
-          (player-attack-timer player) 0.0)))
+          (player-attack-timer player) 0.0
+          (player-attack-hit player) nil)))
 
 (defun update-target-from-mouse (player camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
@@ -946,6 +1016,38 @@
             feet-tile-x feet-tile-y)
     (finish-output)))
 
+(defun update-npc-animation (npc dt)
+  ;; Advance idle animation frames for the NPC.
+  (when (npc-alive npc)
+    (let* ((frame-count *idle-frame-count*)
+           (frame-time *idle-frame-time*)
+           (frame-index (npc-frame-index npc))
+           (frame-timer (npc-frame-timer npc)))
+      (incf frame-timer dt)
+      (loop :while (>= frame-timer frame-time)
+            :do (decf frame-timer frame-time)
+                (setf frame-index
+                      (mod (1+ frame-index) frame-count)))
+      (setf (npc-frame-index npc) frame-index
+            (npc-frame-timer npc) frame-timer))))
+
+(defun apply-attack-to-npc (player npc world)
+  ;; Apply melee damage once per attack if the hitbox overlaps the NPC.
+  (when (and (player-attacking player)
+             (not (player-attack-hit player))
+             (npc-alive npc))
+    (multiple-value-bind (ax ay ahw ahh)
+        (attack-hitbox player world)
+      (multiple-value-bind (nhw nhh)
+          (npc-collision-half world)
+        (when (aabb-overlap-p ax ay ahw ahh
+                              (npc-x npc) (npc-y npc) nhw nhh)
+          (decf (npc-hits-left npc))
+          (setf (player-attack-hit player) t)
+          (when (<= (npc-hits-left npc) 0)
+            (setf (npc-hits-left npc) 0
+                  (npc-alive npc) nil)))))))
+
 (defun update-player-animation (player dt)
   ;; Advance animation timers and set facing/state.
   (let* ((dx (player-dx player))
@@ -960,6 +1062,8 @@
                             (player-direction dx dy)
                             (player-facing player))
                         (player-direction dx dy))))
+    (when (and (eq direction :side) (not (zerop dx)))
+      (setf (player-facing-sign player) (if (> dx 0.0) 1.0 -1.0)))
     (multiple-value-bind (frame-count base-frame-time)
         (player-animation-params state)
       (let* ((run-anim-mult (if (and (eq state :walk)
@@ -1041,6 +1145,7 @@
 (defun update-game (game dt)
   ;; Run one frame of input, audio, movement, and animation updates.
   (let* ((player (game-player game))
+         (npc (game-npc game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -1069,9 +1174,11 @@
       (start-player-attack player))
     (when *verbose-logs*
       (log-player-position player world))
-    (update-player-animation player dt)))
+    (update-player-animation player dt)
+    (apply-attack-to-npc player npc world)
+    (update-npc-animation npc dt)))
 
-(defun draw-world (world render assets camera player ui)
+(defun draw-world (world render assets camera player npc ui)
   ;; Render floor, landmarks, walls, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
          (tile-size-f (world-tile-size-f world))
@@ -1149,7 +1256,53 @@
             (iy (round (- y (world-collision-half-height world))))
             (iw (round (* 2.0 (world-collision-half-width world))))
             (ih (round (* 2.0 (world-collision-half-height world)))))
-        (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui))))))
+        (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui)))
+      (when (npc-alive npc)
+        (multiple-value-bind (half-w half-h)
+            (npc-collision-half world)
+          (let ((ix (round (- (npc-x npc) half-w)))
+                (iy (round (- (npc-y npc) half-h)))
+                (iw (round (* 2.0 half-w)))
+                (ih (round (* 2.0 half-h))))
+            (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui)))))
+      (when (player-attacking player)
+        (multiple-value-bind (ax ay ahw ahh)
+            (attack-hitbox player world)
+          (let ((ix (round (- ax ahw)))
+                (iy (round (- ay ahh)))
+                (iw (round (* 2.0 ahw)))
+                (ih (round (* 2.0 ahh))))
+            (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collision-color ui))))))))
+
+(defun npc-texture-for (assets direction)
+  ;; Select the NPC idle sprite sheet for DIRECTION.
+  (ecase direction
+    (:down (assets-npc-down-idle assets))
+    (:up (assets-npc-up-idle assets))
+    (:side (assets-npc-side-idle assets))))
+
+(defun draw-npc (npc assets render)
+  ;; Render the NPC sprite at its world position.
+  (when (npc-alive npc)
+    (let* ((direction (npc-facing npc))
+           (texture (npc-texture-for assets direction))
+           (src-x (* (npc-frame-index npc) *sprite-frame-width*))
+           (half-width (assets-half-sprite-width assets))
+           (half-height (assets-half-sprite-height assets)))
+      (set-rectangle (render-npc-source render)
+                     src-x 0.0
+                     *sprite-frame-width* *sprite-frame-height*)
+      (set-rectangle (render-npc-dest render)
+                     (- (npc-x npc) half-width)
+                     (- (npc-y npc) half-height)
+                     (assets-scaled-width assets)
+                     (assets-scaled-height assets))
+      (raylib:draw-texture-pro texture
+                               (render-npc-source render)
+                               (render-npc-dest render)
+                               (render-origin render)
+                               0.0
+                               raylib:+white+))))
 
 (defun player-texture-for (assets direction state)
   ;; Select the sprite sheet texture for DIRECTION and STATE.
@@ -1395,6 +1548,7 @@
 (defun draw-game (game)
   ;; Render a full frame: world, player, HUD, and menu.
   (let* ((player (game-player game))
+         (npc (game-npc game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -1410,7 +1564,8 @@
                         :rotation 0.0
                         :zoom (camera-zoom camera))))
         (raylib:with-mode-2d camera-2d
-          (draw-world world render assets camera player ui)
+          (draw-world world render assets camera player npc ui)
+          (draw-npc npc assets render)
           (draw-player player assets render)))
       (draw-hud player ui)
       (when (ui-menu-open ui)
