@@ -78,3 +78,46 @@ If unsure, refactor toward reuse.
 ## Documentation Requirements
 
 - When behavior changes in `src/*.lisp`, update the corresponding doc in `docs/*.md` (e.g., `src/movement.lisp` -> `docs/movement.md`).
+
+## Testing Requirements
+
+### Mandatory self-check
+
+-   After **every code change**, run:
+
+``` sh
+make ci
+```
+
+-   Do **not** present changes as complete unless this exits with code
+    `0`.
+
+### What `make ci` does
+
+-   Runs: `sbcl --script scripts/ci.lisp`
+-   This:
+    -   loads Quicklisp
+    -   runs `(ql:register-local-projects)`
+    -   `(ql:quickload :mmorpg)`
+    -   compiles the system
+
+### Rules
+
+-   Do not rely on SLIME/REPL state --- code must work from a cold SBCL.
+-   If `make ci` fails:
+    -   read the first error
+    -   fix the root cause
+    -   rerun until it passes
+
+### Rendering restrictions
+
+-   `make ci` must not:
+    -   open windows
+    -   require GPU/display
+    -   depend on interactive input
+
+### Output requirement
+
+-   End your response with one line:
+    -   `CI: make ci ✅`
+    -   or `CI: not run (reason: …)`
