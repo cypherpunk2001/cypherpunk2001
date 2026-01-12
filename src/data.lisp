@@ -97,6 +97,12 @@
   ;; Return true when FORM is a keyword section header.
   (and (symbolp form) (keywordp form)))
 
+(defun data-section-entry-p (form)
+  ;; Return true when FORM looks like (id plist).
+  (and (listp form)
+       (keywordp (first form))
+       (listp (second form))))
+
 (defun parse-game-data-forms (forms)
   ;; Merge a list of FORMS into a single plist of data sections.
   (let ((data nil)
@@ -112,7 +118,9 @@
            (flush-section)
            (setf section form))
           ((and section (listp form))
-           (push form section-items))
+           (if (data-section-entry-p form)
+               (push form section-items)
+               (error "Invalid entry under ~a: ~s" section form)))
           ((plist-form-p form)
            (dolist (pair (normalize-pairs form))
              (setf (getf data (first pair)) (second pair))))

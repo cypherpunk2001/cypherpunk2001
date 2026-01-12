@@ -13,6 +13,7 @@ Key responsibilities
   headers (e.g., `:animation-sets`) and single-plist variants.
 - Apply tunables to config variables.
 - Register animation sets and NPC archetypes into hash tables.
+- Validate section entries so malformed data fails fast.
 
 Key functions
 - `load-game-data`: entry point; clears registries, loads data, registers defaults.
