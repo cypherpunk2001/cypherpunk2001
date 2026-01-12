@@ -12,8 +12,17 @@ mmorpg/
     ...
   src/
     package.lisp
+    config.lisp
+    types.lisp
+    utils.lisp
+    input.lisp
+    movement.lisp
+    combat.lisp
+    ai.lisp
+    audio.lisp
+    ui.lisp
+    rendering.lisp
     main.lisp
-    ...
   docs/
     raylib_cheatsheet.md
     claw-raylib-readme.org
@@ -23,9 +32,19 @@ mmorpg/
 
 ## Current Task
 
-At this point in development it's a good time to pause and ask, are we writing modular and reuseable code?
+- Main loop stays an orchestrator; implement behavior inside the system files (input, movement/collision, combat, AI, rendering, audio, UI).
 
-We need to ensure that we're making reuseable functions and objects that we can repurpose as we develop further the game worlds.
+---
+
+## Future Tasks / Roadmap (Do not perform these at this time)
+
+- Generalize entity handling: move from single npc to an array/pool of entities and treat the player as just another entity with shared combat/animation systems.
+
+- Make NPC archetypes, animation sets, and tunables data-driven (S-expr/JSON), so new NPCs/classes don’t require code edits and can be reused across worlds.
+
+- Build a real map pipeline (TMX load, collision layers, chunked render/cull) instead of the test wall map; keep the tile variation as a reusable decoration system.
+
+- Add an action/event layer so input, AI, and future networking feed the same “intent” API; keeps behavior decoupled from rendering and makes AI/NPCs first-class.
 
 ---
 
