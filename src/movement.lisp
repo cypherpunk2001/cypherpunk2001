@@ -19,31 +19,42 @@
 
 (defun wall-occupied-p (wall-map tx ty)
   ;; Check whether a tile inside the wall map is nonzero.
-  (let* ((local-x (- tx *wall-origin-x*))
-         (local-y (- ty *wall-origin-y*))
-         (width (array-dimension wall-map 1))
-         (height (array-dimension wall-map 0)))
-    (and (<= 0 local-x)
-         (< local-x width)
-         (<= 0 local-y)
-         (< local-y height)
-         (not (zerop (aref wall-map local-y local-x))))))
+  (when wall-map
+    (let* ((local-x (- tx *wall-origin-x*))
+           (local-y (- ty *wall-origin-y*))
+           (width (array-dimension wall-map 1))
+           (height (array-dimension wall-map 0)))
+      (and (<= 0 local-x)
+           (< local-x width)
+           (<= 0 local-y)
+           (< local-y height)
+           (not (zerop (aref wall-map local-y local-x)))))))
 
 (defun wall-blocked-p (wall-map tx ty)
   ;; Treat walls and out-of-bounds tiles as blocked for collision.
-  (let* ((local-x (- tx *wall-origin-x*))
-         (local-y (- ty *wall-origin-y*))
-         (width (array-dimension wall-map 1))
-         (height (array-dimension wall-map 0)))
-    (if (or (< local-x 0)
-            (>= local-x width)
-            (< local-y 0)
-            (>= local-y height))
-        t
-        (not (zerop (aref wall-map local-y local-x))))))
+  (if (not wall-map)
+      nil
+      (let* ((local-x (- tx *wall-origin-x*))
+             (local-y (- ty *wall-origin-y*))
+             (width (array-dimension wall-map 1))
+             (height (array-dimension wall-map 0)))
+        (if (or (< local-x 0)
+                (>= local-x width)
+                (< local-y 0)
+                (>= local-y height))
+            t
+            (not (zerop (aref wall-map local-y local-x)))))))
 
-(defun blocked-at-p (wall-map x y half-w half-h tile-size)
-  ;; Test collider bounds against blocked tiles in the wall map.
+(defun world-blocked-tile-p (world tx ty)
+  ;; Return true when a tile coordinate blocks movement.
+  (let ((map (world-map world)))
+    (if map
+        (or (map-tile-outside-bounds-p map tx ty)
+            (collision-tile-p world tx ty))
+        (wall-blocked-p (world-wall-map world) tx ty))))
+
+(defun blocked-at-p (world x y half-w half-h tile-size)
+  ;; Test collider bounds against blocked tiles in the world map.
   (let* ((left (- x half-w))
          (right (+ x half-w))
          (top (- y half-h))
@@ -54,9 +65,9 @@
          (ty2 (floor bottom tile-size)))
     (loop :for ty :from ty1 :to ty2
           :thereis (loop :for tx :from tx1 :to tx2
-                         :thereis (wall-blocked-p wall-map tx ty)))))
+                         :thereis (world-blocked-tile-p world tx ty)))))
 
-(defun attempt-move (wall-map x y dx dy step half-w half-h tile-size)
+(defun attempt-move (world x y dx dy step half-w half-h tile-size)
   ;; Resolve movement per axis and cancel movement when blocked.
   (let ((nx x)
         (ny y)
@@ -64,13 +75,13 @@
         (out-dy 0.0))
     (when (not (zerop dx))
       (let ((try-x (+ x (* dx step))))
-        (if (blocked-at-p wall-map try-x y half-w half-h tile-size)
+        (if (blocked-at-p world try-x y half-w half-h tile-size)
             (setf out-dx 0.0)
             (setf nx try-x
                   out-dx dx))))
     (when (not (zerop dy))
       (let ((try-y (+ ny (* dy step))))
-        (if (blocked-at-p wall-map nx try-y half-w half-h tile-size)
+        (if (blocked-at-p world nx try-y half-w half-h tile-size)
             (setf out-dy 0.0)
             (setf ny try-y
                   out-dy dy))))
@@ -113,7 +124,7 @@
            (not (zerop input-dy)))
        (setf (player-target-active player) nil)
        (multiple-value-setq (x y dx dy)
-         (attempt-move (world-wall-map world) x y input-dx input-dy
+         (attempt-move world x y input-dx input-dy
                        (* *player-speed* speed-mult dt)
                        (world-collision-half-width world)
                        (world-collision-half-height world)
@@ -132,7 +143,7 @@
                     (dir-y (/ to-y dist))
                     (step (min (* *player-speed* speed-mult dt) dist)))
                (multiple-value-setq (x y dx dy)
-                 (attempt-move (world-wall-map world) x y dir-x dir-y step
+                 (attempt-move world x y dir-x dir-y step
                                (world-collision-half-width world)
                                (world-collision-half-height world)
                                (world-tile-dest-size world)))
@@ -170,27 +181,44 @@
 
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
-  (let* ((tile-size-f (float *tile-size* 1.0))
+  (let* ((map (load-tmx-map *map-path* *map-collision-layers*))
+         (tile-size-f (float (if map
+                                 (map-data-tilewidth map)
+                                 *tile-size*) 1.0))
          (tile-dest-size (* tile-size-f *tile-scale*))
          (floor-index *floor-tile-index*)
-         (wall-map (build-wall-map))
-         (wall-map-width (array-dimension wall-map 1))
-         (wall-map-height (array-dimension wall-map 0))
+         (wall-map (unless map (build-wall-map)))
+         (wall-map-width (if wall-map (array-dimension wall-map 1) 0))
+         (wall-map-height (if wall-map (array-dimension wall-map 0) 0))
          (collision-half-width (* (/ tile-dest-size 2.0) *player-collision-scale*))
          (collision-half-height (* (/ tile-dest-size 2.0) *player-collision-scale*))
-         (wall-min-x (+ (* (+ *wall-origin-x* 1) tile-dest-size)
-                        collision-half-width))
-         (wall-max-x (- (* (+ *wall-origin-x* (1- wall-map-width))
-                           tile-dest-size)
-                        collision-half-width))
-         (wall-min-y (+ (* (+ *wall-origin-y* 1) tile-dest-size)
-                        collision-half-height))
-         (wall-max-y (- (* (+ *wall-origin-y* (1- wall-map-height))
-                           tile-dest-size)
-                        collision-half-height)))
+         (wall-min-x (if map
+                         (+ (* (map-data-min-x map) tile-dest-size)
+                            collision-half-width)
+                         (+ (* (+ *wall-origin-x* 1) tile-dest-size)
+                            collision-half-width)))
+         (wall-max-x (if map
+                         (- (* (1+ (map-data-max-x map)) tile-dest-size)
+                            collision-half-width)
+                         (- (* (+ *wall-origin-x* (1- wall-map-width))
+                               tile-dest-size)
+                            collision-half-width)))
+         (wall-min-y (if map
+                         (+ (* (map-data-min-y map) tile-dest-size)
+                            collision-half-height)
+                         (+ (* (+ *wall-origin-y* 1) tile-dest-size)
+                            collision-half-height)))
+         (wall-max-y (if map
+                         (- (* (1+ (map-data-max-y map)) tile-dest-size)
+                            collision-half-height)
+                         (- (* (+ *wall-origin-y* (1- wall-map-height))
+                               tile-dest-size)
+                            collision-half-height))))
     (%make-world :tile-size-f tile-size-f
                  :tile-dest-size tile-dest-size
                  :floor-index floor-index
+                 :map map
+                 :collision-tiles (when map (map-data-collision-tiles map))
                  :wall-map wall-map
                  :wall-map-width wall-map-width
                  :wall-map-height wall-map-height

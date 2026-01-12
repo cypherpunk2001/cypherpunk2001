@@ -1,4 +1,7 @@
 (:tunables
+ (:map-path "assets/5Tiled_files/Dungeon Tileset.tmx")
+ (:collision-layers ("Objects1" "Objects2" "Objects3"
+                      "Small_objects1" "Small_objects2" "Small_objects3" "Small_objects4"))
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
  (:npc-spawn-ids (:rat :goblin :orc))

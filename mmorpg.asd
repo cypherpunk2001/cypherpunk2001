@@ -7,6 +7,7 @@
                (:file "src/data")
                (:file "src/types")
                (:file "src/utils")
+               (:file "src/map")
                (:file "src/movement")
                (:file "src/input")
                (:file "src/combat")

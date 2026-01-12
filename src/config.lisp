@@ -23,6 +23,9 @@
 (defparameter *player-animation-set-id* :player) ;; Animation set ID used for the player sprite set.
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
+(defparameter *map-path* "assets/5Tiled_files/Dungeon Tileset.tmx") ;; TMX map path relative to repo.
+(defparameter *map-collision-layers* nil) ;; Layer names treated as blocked tiles.
+(defparameter *map-decoration-enabled* nil) ;; When true, draws procedural floor variations under the map.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector

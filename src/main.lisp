@@ -11,7 +11,7 @@
          (audio (make-audio))
          (ui (make-ui))
          (render (make-render))
-         (assets (load-assets))
+         (assets (load-assets world))
          (camera (make-camera)))
     (when *verbose-logs*
       (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"

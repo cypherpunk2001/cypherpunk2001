@@ -167,7 +167,7 @@
         (multiple-value-bind (half-w half-h)
             (npc-collision-half world)
           (multiple-value-bind (nx ny out-dx out-dy)
-              (attempt-move (world-wall-map world)
+              (attempt-move world
                             (npc-x npc)
                             (npc-y npc)
                             dx dy (* speed dt)
