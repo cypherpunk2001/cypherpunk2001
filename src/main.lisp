@@ -60,6 +60,22 @@
 (defparameter *npc-max-hits* 3) ;; Hits required to defeat the NPC.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 
+(defclass character-class ()
+  ;; Static player class data (CLOS keeps class metadata extensible).
+  ((name :initarg :name :reader character-class-name)
+   (max-hp :initarg :max-hp :reader character-class-max-hp)))
+
+(defparameter *wizard-class*
+  (make-instance 'character-class :name "Wizard" :max-hp 10)) ;; Default player class.
+
+(defclass npc-archetype ()
+  ;; Static NPC archetype data (name, base durability, etc).
+  ((name :initarg :name :reader npc-archetype-name)
+   (max-hits :initarg :max-hits :reader npc-archetype-max-hits)))
+
+(defparameter *rat-archetype*
+  (make-instance 'npc-archetype :name "Dungeon Rat" :max-hits *npc-max-hits*)) ;; Default NPC archetype.
+
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.
 (defparameter *attack-frame-count* 4) ;; Frames in each attack animation row.
@@ -328,7 +344,7 @@
   ;; Player state used by update/draw loops.
   x y dx dy
   anim-state facing
-  facing-sign
+  facing-sign class
   frame-index frame-timer
   attacking attack-timer attack-hit
   target-x target-y target-active
@@ -340,6 +356,7 @@
   ;; NPC state used by update/draw loops.
   x y
   anim-state facing
+  archetype
   frame-index frame-timer
   hits-left alive)
 
@@ -397,6 +414,44 @@
   ;; Aggregate of game subsystems for update/draw.
   world player npc audio ui render assets camera)
 
+(defgeneric combatant-position (combatant)
+  (:documentation "Return combatant center position as two values."))
+
+(defgeneric combatant-alive-p (combatant)
+  (:documentation "Return true when the combatant is alive/active."))
+
+(defgeneric combatant-collision-half (combatant world)
+  (:documentation "Return combatant collider half sizes in world pixels."))
+
+(defgeneric combatant-apply-hit (combatant)
+  (:documentation "Apply a single hit to the combatant."))
+
+(defmethod combatant-position ((combatant player))
+  (values (player-x combatant) (player-y combatant)))
+
+(defmethod combatant-position ((combatant npc))
+  (values (npc-x combatant) (npc-y combatant)))
+
+(defmethod combatant-alive-p ((combatant player))
+  t)
+
+(defmethod combatant-alive-p ((combatant npc))
+  (npc-alive combatant))
+
+(defmethod combatant-collision-half ((combatant player) world)
+  (values (world-collision-half-width world)
+          (world-collision-half-height world)))
+
+(defmethod combatant-collision-half ((combatant npc) world)
+  (declare (ignore combatant))
+  (npc-collision-half world))
+
+(defmethod combatant-apply-hit ((combatant npc))
+  (decf (npc-hits-left combatant))
+  (when (<= (npc-hits-left combatant) 0)
+    (setf (npc-hits-left combatant) 0
+          (npc-alive combatant) nil)))
+
 (defun make-stamina-labels ()
   ;; Precompute stamina HUD strings to avoid per-frame consing.
   (let* ((max (truncate *run-stamina-max*))
@@ -405,7 +460,7 @@
           :do (setf (aref labels i) (format nil "Stamina: ~2d" i)))
     labels))
 
-(defun make-player (start-x start-y)
+(defun make-player (start-x start-y &optional (class *wizard-class*))
   ;; Construct a player state struct at the given start position.
   (%make-player :x start-x
                 :y start-y
@@ -414,6 +469,7 @@
                 :anim-state :idle
                 :facing :down
                 :facing-sign 1.0
+                :class class
                 :frame-index 0
                 :frame-timer 0.0
                 :attacking nil
@@ -430,15 +486,18 @@
                 :auto-up nil
                 :mouse-hold-timer 0.0))
 
-(defun make-npc (start-x start-y)
+(defun make-npc (start-x start-y &optional (archetype *rat-archetype*))
   ;; Construct an NPC state struct at the given start position.
   (%make-npc :x start-x
              :y start-y
              :anim-state :idle
              :facing :down
+             :archetype archetype
              :frame-index 0
              :frame-timer 0.0
-             :hits-left *npc-max-hits*
+             :hits-left (if archetype
+                            (npc-archetype-max-hits archetype)
+                            *npc-max-hits*)
              :alive t))
 
 (defun make-world ()
@@ -1031,22 +1090,21 @@
       (setf (npc-frame-index npc) frame-index
             (npc-frame-timer npc) frame-timer))))
 
-(defun apply-attack-to-npc (player npc world)
-  ;; Apply melee damage once per attack if the hitbox overlaps the NPC.
+(defun apply-melee-hit (player target world)
+  ;; Apply melee damage once per attack if the hitbox overlaps the target.
   (when (and (player-attacking player)
              (not (player-attack-hit player))
-             (npc-alive npc))
+             (combatant-alive-p target))
     (multiple-value-bind (ax ay ahw ahh)
         (attack-hitbox player world)
-      (multiple-value-bind (nhw nhh)
-          (npc-collision-half world)
-        (when (aabb-overlap-p ax ay ahw ahh
-                              (npc-x npc) (npc-y npc) nhw nhh)
-          (decf (npc-hits-left npc))
-          (setf (player-attack-hit player) t)
-          (when (<= (npc-hits-left npc) 0)
-            (setf (npc-hits-left npc) 0
-                  (npc-alive npc) nil)))))))
+      (multiple-value-bind (thw thh)
+          (combatant-collision-half target world)
+        (multiple-value-bind (tx ty)
+            (combatant-position target)
+          (when (aabb-overlap-p ax ay ahw ahh
+                                tx ty thw thh)
+            (combatant-apply-hit target)
+            (setf (player-attack-hit player) t)))))))
 
 (defun update-player-animation (player dt)
   ;; Advance animation timers and set facing/state.
@@ -1175,7 +1233,7 @@
     (when *verbose-logs*
       (log-player-position player world))
     (update-player-animation player dt)
-    (apply-attack-to-npc player npc world)
+    (apply-melee-hit player npc world)
     (update-npc-animation npc dt)))
 
 (defun draw-world (world render assets camera player npc ui)
@@ -1257,14 +1315,16 @@
             (iw (round (* 2.0 (world-collision-half-width world))))
             (ih (round (* 2.0 (world-collision-half-height world)))))
         (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui)))
-      (when (npc-alive npc)
+      (when (combatant-alive-p npc)
         (multiple-value-bind (half-w half-h)
-            (npc-collision-half world)
-          (let ((ix (round (- (npc-x npc) half-w)))
-                (iy (round (- (npc-y npc) half-h)))
-                (iw (round (* 2.0 half-w)))
-                (ih (round (* 2.0 half-h))))
-            (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui)))))
+            (combatant-collision-half npc world)
+          (multiple-value-bind (nx ny)
+              (combatant-position npc)
+            (let ((ix (round (- nx half-w)))
+                  (iy (round (- ny half-h)))
+                  (iw (round (* 2.0 half-w)))
+                  (ih (round (* 2.0 half-h))))
+              (raylib:draw-rectangle-lines ix iy iw ih (ui-debug-collider-color ui))))))
       (when (player-attacking player)
         (multiple-value-bind (ax ay ahw ahh)
             (attack-hitbox player world)
@@ -1283,7 +1343,7 @@
 
 (defun draw-npc (npc assets render)
   ;; Render the NPC sprite at its world position.
-  (when (npc-alive npc)
+  (when (combatant-alive-p npc)
     (let* ((direction (npc-facing npc))
            (texture (npc-texture-for assets direction))
            (src-x (* (npc-frame-index npc) *sprite-frame-width*))
