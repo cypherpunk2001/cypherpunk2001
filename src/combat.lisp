@@ -117,12 +117,17 @@
       (t (values x y half half)))))
 
 (defun npc-attack-range (npc world)
-  ;; Return NPC melee range in world pixels.
+  ;; Return NPC melee range in world pixels (center-to-center).
   (let* ((archetype (npc-archetype npc))
          (tiles (if archetype
                     (npc-archetype-attack-range-tiles archetype)
-                    *npc-attack-range-tiles*)))
-    (* tiles (world-tile-dest-size world))))
+                    *npc-attack-range-tiles*))
+         (base (* tiles (world-tile-dest-size world)))
+         (player-half (max (world-collision-half-width world)
+                           (world-collision-half-height world))))
+    (multiple-value-bind (npc-half-w npc-half-h)
+        (npc-collision-half world)
+      (+ base player-half (max npc-half-w npc-half-h)))))
 
 (defun npc-attack-cooldown (npc)
   ;; Return NPC melee cooldown in seconds.

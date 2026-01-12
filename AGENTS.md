@@ -37,20 +37,19 @@ mmorpg/
 
 Fix bugs (debug collision is enabled in the following bug description:)
 
-- Currently a character and a rat npc spawn on top of each other, alongside the right collision world edge.
-- They should spawn near each other, but not on top of each other, and not alongside the right-colission-edge of the world, somewhere in the middle would be wise.
+- The game spawns with the character and 3 rats currently. The 3 rats roam about in their range, they take damage normally and die in 3 hits. This part all works GREAT. The problem is, once the rat is attacked, it is not fighting me back currently, it is not attacking me and so i am not taking damage. Also the rat should flee when it has 1 hit remaining, but because it doesnt stand ground and fight back, we are not sure if this part is working yet or not.
+
+In a nutshell:
+
+- The rats should not be aggro,
+but is not passive (always flees) either,
+the rats should only begin attacking after it has itself been attacked
 
 ---
 
 ## Future Tasks / Roadmap
 
-- The rat npc animation when hit with mele attack draws blood correctly, but does not always take damage. It seems it usually takes about 6-10 hits to kill the rat. In debug mode, clearly the red mele attack box of the attacker is visually hitting within the green square of the rat, but the rat is not always taking damage.
 
-- The rat is not moving around on spawn, is standing still
-
-- The rat should when it has 1 hit remaining flee from the attacker
-
-- The rat should not be aggro, but is not passive (always flees) either, the rat should only begin attacking after it has itself been attacked
 
 ---
 

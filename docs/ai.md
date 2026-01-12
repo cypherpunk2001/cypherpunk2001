@@ -11,6 +11,8 @@ Why we do it this way
 Behavior model
 - Simple state machine: `idle`, `aggressive`, `retaliate`, `flee`, `dead`.
 - Behavior is driven by archetype tuning (aggro, flee thresholds, perception).
+- Being provoked overrides perception checks so hit NPCs respond immediately.
+- Any provoked NPC enters `:retaliate` so they fight back after taking a hit.
 
 Key functions
 - `update-npc-behavior`: choose the behavior state.

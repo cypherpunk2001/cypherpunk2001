@@ -94,12 +94,13 @@
               (aggro-mode (npc-archetype-aggro-mode archetype))
               (retaliate (npc-archetype-retaliate archetype))
               (flee-at (npc-archetype-flee-at-hits archetype))
-              (in-range (npc-in-perception-range-p npc player world)))
+              (in-range (or provoked
+                            (npc-in-perception-range-p npc player world))))
          (cond
            ((and (> flee-at 0)
                  (<= (npc-hits-left npc) flee-at))
             (setf (npc-behavior-state npc) :flee))
-           ((and provoked retaliate in-range)
+           ((and provoked in-range)
             (setf (npc-behavior-state npc) :retaliate))
            ((and in-range (eq aggro-mode :always))
             (setf (npc-behavior-state npc) :aggressive))

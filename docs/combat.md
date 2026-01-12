@@ -29,6 +29,7 @@ Hit detection note
 - Attack facing is taken from intent input (or target) when the attack starts,
   so attacking while blocked still swings in the expected direction.
 - NPC hits are clamped to their archetype max on hit to avoid stale/inflated values.
+- NPC melee range includes collider sizes so enemies can actually reach you.
 
 Example: applying a melee hit
 ```lisp

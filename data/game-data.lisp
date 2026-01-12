@@ -92,7 +92,7 @@
    :home-radius-tiles 2.0
    :wander-interval 1.1
    :flee-speed-mult 1.4
-   :aggro-mode :always
+   :aggro-mode :provoked
    :retaliate t
    :flee-at-hits 1
    :perception-tiles 4.0))
