@@ -2,20 +2,19 @@
 
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
-  x y dx dy
+  x y dx dy intent
   anim-state facing
   facing-sign class hp
   frame-index frame-timer
   attacking attack-timer attack-hit
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
-  target-x target-y target-active
   running run-stamina
   auto-right auto-left auto-down auto-up
   mouse-hold-timer)
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
-  x y
+  x y intent
   anim-state facing
   archetype behavior-state provoked
   home-x home-y
@@ -88,45 +87,46 @@
 
 (defun make-player (start-x start-y &optional (class *wizard-class*))
   ;; Construct a player state struct at the given start position.
-  (%make-player :x start-x
-                :y start-y
-                :dx 0.0
-                :dy 0.0
-                :anim-state :idle
-                :facing :down
-                :facing-sign 1.0
-                :class class
-                :hp (if class
-                        (character-class-max-hp class)
-                        1)
-                :frame-index 0
-                :frame-timer 0.0
-                :attacking nil
-                :attack-timer 0.0
-                :attack-hit nil
-                :hit-active nil
-                :hit-timer 0.0
-                :hit-frame 0
-                :hit-facing :down
-                :hit-facing-sign 1.0
-                :target-x start-x
-                :target-y start-y
-                :target-active nil
-                :running nil
-                :run-stamina *run-stamina-max*
-                :auto-right nil
-                :auto-left nil
-                :auto-down nil
-                :auto-up nil
-                :mouse-hold-timer 0.0))
+  (let ((intent (make-intent :target-x start-x :target-y start-y)))
+    (%make-player :x start-x
+                  :y start-y
+                  :dx 0.0
+                  :dy 0.0
+                  :intent intent
+                  :anim-state :idle
+                  :facing :down
+                  :facing-sign 1.0
+                  :class class
+                  :hp (if class
+                          (character-class-max-hp class)
+                          1)
+                  :frame-index 0
+                  :frame-timer 0.0
+                  :attacking nil
+                  :attack-timer 0.0
+                  :attack-hit nil
+                  :hit-active nil
+                  :hit-timer 0.0
+                  :hit-frame 0
+                  :hit-facing :down
+                  :hit-facing-sign 1.0
+                  :running nil
+                  :run-stamina *run-stamina-max*
+                  :auto-right nil
+                  :auto-left nil
+                  :auto-down nil
+                  :auto-up nil
+                  :mouse-hold-timer 0.0)))
 
 (defun make-npc (start-x start-y &optional archetype)
   ;; Construct an NPC state struct at the given start position.
   (let ((sx (float start-x 1.0f0))
         (sy (float start-y 1.0f0))
-        (archetype (or archetype (default-npc-archetype))))
+        (archetype (or archetype (default-npc-archetype)))
+        (intent (make-intent)))
     (%make-npc :x sx
                :y sy
+               :intent intent
                :anim-state :idle
                :facing :down
                :archetype archetype

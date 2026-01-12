@@ -92,13 +92,12 @@
   (let ((half (* (/ (world-tile-dest-size world) 2.0) *npc-collision-scale*)))
     (values half half)))
 
-(defun update-running-state (player dt moving allow-toggle)
+(defun update-running-state (player dt moving toggle-run)
   ;; Update stamina and return the current speed multiplier.
-  (when allow-toggle
-    (when (raylib:is-key-pressed +key-tab+)
-      (if (> (player-run-stamina player) 0.0)
-          (setf (player-running player) (not (player-running player)))
-          (setf (player-running player) nil))))
+  (when toggle-run
+    (if (> (player-run-stamina player) 0.0)
+        (setf (player-running player) (not (player-running player)))
+        (setf (player-running player) nil)))
   (if (and (player-running player) moving (> (player-run-stamina player) 0.0))
       (progn
         (decf (player-run-stamina player) dt)
@@ -113,30 +112,32 @@
       *run-speed-mult*
       1.0))
 
-(defun update-player-position (player world input-dx input-dy speed-mult dt)
+(defun update-player-position (player intent world speed-mult dt)
   ;; Move the player with collision and target logic.
   (let ((x (player-x player))
         (y (player-y player))
+        (input-dx (intent-move-dx intent))
+        (input-dy (intent-move-dy intent))
         (dx 0.0)
         (dy 0.0))
     (cond
       ((or (not (zerop input-dx))
            (not (zerop input-dy)))
-       (setf (player-target-active player) nil)
+       (clear-intent-target intent)
        (multiple-value-setq (x y dx dy)
          (attempt-move world x y input-dx input-dy
                        (* *player-speed* speed-mult dt)
                        (world-collision-half-width world)
                        (world-collision-half-height world)
                        (world-tile-dest-size world))))
-      ((player-target-active player)
-       (let* ((target-x (player-target-x player))
-              (target-y (player-target-y player))
+      ((intent-target-active intent)
+       (let* ((target-x (intent-target-x intent))
+              (target-y (intent-target-y intent))
               (to-x (- target-x x))
               (to-y (- target-y y))
               (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
          (if (<= dist *target-epsilon*)
-             (setf (player-target-active player) nil
+             (setf (intent-target-active intent) nil
                    dx 0.0
                    dy 0.0)
              (let* ((dir-x (/ to-x dist))
@@ -149,7 +150,7 @@
                                (world-tile-dest-size world)))
                (when (or (<= dist step)
                          (and (zerop dx) (zerop dy)))
-                 (setf (player-target-active player) nil))))))
+                 (setf (intent-target-active intent) nil))))))
       (t
        (setf dx 0.0
              dy 0.0)))

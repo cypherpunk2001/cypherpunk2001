@@ -107,18 +107,18 @@
            (t
             (setf (npc-behavior-state npc) :idle))))))))
 
-(defun update-npc-movement (npc player world dt)
-  ;; Move NPC based on behavior state and keep it near its home radius.
+(defun update-npc-intent (npc player world dt)
+  ;; Populate the NPC intent based on behavior and proximity.
   (when (npc-alive npc)
-    (let* ((state (npc-behavior-state npc))
-           (speed (npc-move-speed npc))
-           (flee-mult (npc-flee-speed-mult npc))
+    (let* ((intent (npc-intent npc))
+           (state (npc-behavior-state npc))
            (attack-range (npc-attack-range npc world))
            (attack-range-sq (* attack-range attack-range))
            (dx 0.0)
            (dy 0.0)
            (face-dx 0.0)
-           (face-dy 0.0))
+           (face-dy 0.0)
+           (attack-request nil))
       (let* ((home-radius (npc-home-radius npc world))
              (home-dx (- (npc-home-x npc) (npc-x npc)))
              (home-dy (- (npc-home-y npc) (npc-y npc)))
@@ -141,8 +141,7 @@
                      (setf dx 1.0
                            dy 0.0)
                      (multiple-value-setq (dx dy)
-                       (normalize-vector vx vy)))
-                 (setf speed (* speed (max 1.0 flee-mult)))))
+                       (normalize-vector vx vy)))))
               ((:aggressive :retaliate)
                (let* ((vx (- (player-x player) (npc-x npc)))
                       (vy (- (player-y player) (npc-y npc)))
@@ -151,7 +150,8 @@
                        face-dy vy)
                  (if (<= dist-sq attack-range-sq)
                      (setf dx 0.0
-                           dy 0.0)
+                           dy 0.0
+                           attack-request t)
                      (multiple-value-setq (dx dy)
                        (normalize-vector vx vy)))))
               (t
@@ -159,6 +159,24 @@
                  (npc-wander-direction npc world dt))
                (setf face-dx dx
                      face-dy dy)))))
+      (set-intent-move intent dx dy)
+      (set-intent-face intent face-dx face-dy)
+      (when attack-request
+        (setf (intent-attack intent) t)))))
+
+(defun update-npc-movement (npc world dt)
+  ;; Move NPC based on intent and keep it near its home radius.
+  (when (npc-alive npc)
+    (let* ((intent (npc-intent npc))
+           (state (npc-behavior-state npc))
+           (speed (npc-move-speed npc))
+           (flee-mult (npc-flee-speed-mult npc))
+           (dx (intent-move-dx intent))
+           (dy (intent-move-dy intent))
+           (face-dx (intent-face-dx intent))
+           (face-dy (intent-face-dy intent)))
+      (when (eq state :flee)
+        (setf speed (* speed (max 1.0 flee-mult))))
       (when (or (not (zerop face-dx))
                 (not (zerop face-dy)))
         (setf (npc-facing npc) (player-direction face-dx face-dy)))

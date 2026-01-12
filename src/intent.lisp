@@ -1,0 +1,60 @@
+(in-package #:mmorpg)
+
+(defstruct (intent (:constructor %make-intent))
+  ;; Desired actions for an entity, filled by input/AI.
+  move-dx move-dy
+  face-dx face-dy
+  target-x target-y target-active
+  attack
+  run-toggle)
+
+(defun make-intent (&key (target-x 0.0) (target-y 0.0))
+  ;; Create a reusable intent with optional target coordinates.
+  (%make-intent :move-dx 0.0
+                :move-dy 0.0
+                :face-dx 0.0
+                :face-dy 0.0
+                :target-x target-x
+                :target-y target-y
+                :target-active nil
+                :attack nil
+                :run-toggle nil))
+
+(defun reset-frame-intent (intent)
+  ;; Clear per-frame intent signals without touching persistent targets.
+  (setf (intent-move-dx intent) 0.0
+        (intent-move-dy intent) 0.0
+        (intent-face-dx intent) 0.0
+        (intent-face-dy intent) 0.0
+        (intent-attack intent) nil
+        (intent-run-toggle intent) nil))
+
+(defun set-intent-face (intent dx dy)
+  ;; Update facing intent when input supplies a non-zero direction.
+  (when (or (not (zerop dx)) (not (zerop dy)))
+    (setf (intent-face-dx intent) dx
+          (intent-face-dy intent) dy)))
+
+(defun set-intent-move (intent dx dy)
+  ;; Set movement direction and update facing as needed.
+  (setf (intent-move-dx intent) dx
+        (intent-move-dy intent) dy)
+  (set-intent-face intent dx dy))
+
+(defun set-intent-target (intent target-x target-y)
+  ;; Set a target and mark it active.
+  (setf (intent-target-x intent) target-x
+        (intent-target-y intent) target-y
+        (intent-target-active intent) t))
+
+(defun clear-intent-target (intent)
+  ;; Cancel any active target.
+  (setf (intent-target-active intent) nil))
+
+(defun request-intent-attack (intent)
+  ;; Request an attack this frame.
+  (setf (intent-attack intent) t))
+
+(defun request-intent-run-toggle (intent)
+  ;; Request a run toggle this frame.
+  (setf (intent-run-toggle intent) t))

@@ -36,14 +36,7 @@
         (player-auto-down player) nil
         (player-auto-up player) nil))
 
-(defun set-player-target (player target-x target-y)
-  ;; Set click-to-move target and activate it.
-  (setf (player-target-x player) target-x
-        (player-target-y player) target-y
-        (player-target-active player) t
-        (player-mouse-hold-timer player) 0.0))
-
-(defun update-target-from-mouse (player camera dt mouse-clicked mouse-down)
+(defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
   (when mouse-clicked
     (clear-player-auto-walk player)
@@ -54,7 +47,8 @@
                          (player-y player)
                          (camera-offset camera)
                          (camera-zoom camera))
-      (set-player-target player target-x target-y)))
+      (set-intent-target intent target-x target-y)
+      (setf (player-mouse-hold-timer player) 0.0)))
   (when (and mouse-down (not mouse-clicked))
     (incf (player-mouse-hold-timer player) dt)
     (when (>= (player-mouse-hold-timer player) *mouse-hold-repeat-seconds*)
@@ -67,11 +61,11 @@
                            (player-y player)
                            (camera-offset camera)
                            (camera-zoom camera))
-        (set-player-target player target-x target-y))))
+        (set-intent-target intent target-x target-y))))
   (unless mouse-down
     (setf (player-mouse-hold-timer player) 0.0)))
 
-(defun update-input-direction (player mouse-clicked)
+(defun update-input-direction (player intent mouse-clicked)
   ;; Compute input dx/dy and handle auto-walk toggles.
   (let ((input-dx 0.0)
         (input-dy 0.0))
@@ -115,7 +109,7 @@
                 (when (player-auto-up player)
                   (setf (player-auto-down player) nil)))
               (when key-pressed
-                (setf (player-target-active player) nil))
+                (clear-intent-target intent))
               (setf input-dx (+ (if (player-auto-right player) 1.0 0.0)
                                 (if (player-auto-left player) -1.0 0.0))
                     input-dy (+ (if (player-auto-down player) 1.0 0.0)
@@ -124,7 +118,16 @@
                 (normalize-direction input-dx input-dy)))
             (multiple-value-setq (input-dx input-dy)
               (read-input-direction)))))
+    (set-intent-move intent input-dx input-dy)
     (values input-dx input-dy)))
+
+(defun update-input-actions (intent allow-run-toggle)
+  ;; Translate direct input into intent actions.
+  (when (and allow-run-toggle
+             (raylib:is-key-pressed +key-tab+))
+    (request-intent-run-toggle intent))
+  (when (raylib:is-key-pressed +key-space+)
+    (request-intent-attack intent)))
 
 (defun make-camera ()
   ;; Initialize camera offset and zoom settings.

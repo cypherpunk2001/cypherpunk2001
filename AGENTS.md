@@ -35,16 +35,9 @@ mmorpg/
 
 ## Current Task
 
-We are troubleshooting:
-
-Build a real map pipeline (TMX load, collision layers, chunked render/cull) instead of the test wall map; keep the tile variation as a reusable decoration system.
-
 ---
 
 ## Future Tasks / Roadmap (Do not perform these at this time)
-
-- Add an action/event layer so input, AI, and future networking feed the same “intent” API; keeps behavior decoupled from rendering and makes AI/NPCs first-class.
-
 
 ---
 
