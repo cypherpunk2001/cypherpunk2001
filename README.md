@@ -30,6 +30,20 @@ Open `src/main.lisp`, start SLIME (or your REPL), then:
 (mmorpg:run)
 ```
 
+## Tests
+- `make ci` runs a cold compile check (no window, no GPU needed).
+- `make smoke` opens the game for a short run and exits automatically.
+  It runs from `src/` so existing `../assets` paths resolve correctly.
+  The smoke target is wrapped in a Linux `timeout` to kill hung runs.
+  Defaults: 2 seconds runtime, 5 seconds timeout.
+
+Optional smoke settings:
+```
+MMORPG_SMOKE_SECONDS=5.0 make smoke
+MMORPG_SMOKE_FRAMES=300 make smoke
+SMOKE_TIMEOUT=30s make smoke
+```
+
 ## Learn The Codebase
 Start with the documentation index and follow the suggested reading order.
 

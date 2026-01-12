@@ -15,7 +15,7 @@ Update flow (high level)
 Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera.
 - `update-game`: orchestrates system updates.
-- `run`: owns the raylib window lifecycle.
+- `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 
 Walkthrough: one frame
 1) Read input and UI; write intent for player and NPCs.
@@ -30,6 +30,16 @@ Example: core loop
       :do (let ((dt (raylib:get-frame-time)))
             (update-game game dt)
             (draw-game game)))
+```
+
+Run options (smoke testing)
+- `run` accepts `:max-seconds` and `:max-frames`. Values <= 0 disable the limit.
+- This lets us open the game, collect runtime output, and exit automatically.
+
+Example: auto-exit
+```lisp
+(mmorpg:run :max-seconds 5.0)
+(mmorpg:run :max-frames 300)
 ```
 
 Design note

@@ -85,7 +85,7 @@
     (loop :for entity :across entities
           :do (combatant-update-hit-effect entity dt))))
 
-(defun run ()
+(defun run (&key (max-seconds 0.0) (max-frames 0))
   ;; Entry point that initializes game state and drives the main loop.
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
@@ -93,9 +93,17 @@
     (raylib:init-audio-device)
     (let ((game (make-game)))
       (unwind-protect
-           (loop :until (or (raylib:window-should-close)
-                            (ui-exit-requested (game-ui game)))
+           (loop :with elapsed = 0.0
+                 :with frames = 0
+                 :until (or (raylib:window-should-close)
+                            (ui-exit-requested (game-ui game))
+                            (and (> max-seconds 0.0)
+                                 (>= elapsed max-seconds))
+                            (and (> max-frames 0)
+                                 (>= frames max-frames)))
                  :do (let ((dt (raylib:get-frame-time)))
+                       (incf elapsed dt)
+                       (incf frames)
                        (update-game game dt)
                        (draw-game game)))
         (shutdown-game game)
