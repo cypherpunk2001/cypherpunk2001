@@ -59,6 +59,14 @@
 (defparameter *npc-collision-scale* 2.0) ;; Collision box size relative to one tile.
 (defparameter *npc-max-hits* 3) ;; Hits required to defeat the NPC.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
+(defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
+(defparameter *blood-frame-count* 4) ;; Frames in each blood animation row.
+(defparameter *blood-frame-time* 0.08) ;; Seconds per blood frame.
+(defparameter *health-bar-height* 6) ;; Height of the health bar in pixels.
+(defparameter *health-bar-offset* 10) ;; Vertical offset above the sprite center.
+(defparameter *health-bar-back-color* (raylib:make-color :r 8 :g 8 :b 8 :a 200)) ;; Health bar background color.
+(defparameter *health-bar-fill-color* (raylib:make-color :r 70 :g 200 :b 80 :a 220)) ;; Health bar fill color.
+(defparameter *health-bar-border-color* (raylib:make-color :r 220 :g 220 :b 220 :a 220)) ;; Health bar outline color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).
@@ -162,6 +170,10 @@
 (defun npc-sprite-path (filename)
   ;; Build a sprite sheet path under *npc-sprite-dir*.
   (format nil "~a/~a" *npc-sprite-dir* filename))
+
+(defun blood-sprite-path (filename)
+  ;; Build a sprite sheet path under *blood-sprite-dir*.
+  (format nil "~a/~a" *blood-sprite-dir* filename))
 
 (defun player-direction (dx dy)
   ;; Pick a facing direction keyword from movement delta.
@@ -344,9 +356,10 @@
   ;; Player state used by update/draw loops.
   x y dx dy
   anim-state facing
-  facing-sign class
+  facing-sign class hp
   frame-index frame-timer
   attacking attack-timer attack-hit
+  hit-active hit-timer hit-frame hit-facing hit-facing-sign
   target-x target-y target-active
   running run-stamina
   auto-right auto-left auto-down auto-up
@@ -358,7 +371,8 @@
   anim-state facing
   archetype
   frame-index frame-timer
-  hits-left alive)
+  hits-left alive
+  hit-active hit-timer hit-frame hit-facing hit-facing-sign)
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
@@ -404,6 +418,7 @@
   up-idle up-walk up-attack
   side-idle side-walk side-attack
   npc-down-idle npc-up-idle npc-side-idle
+  blood-down blood-up blood-side
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
 (defstruct (camera (:constructor %make-camera))
@@ -426,6 +441,15 @@
 (defgeneric combatant-apply-hit (combatant)
   (:documentation "Apply a single hit to the combatant."))
 
+(defgeneric combatant-health (combatant)
+  (:documentation "Return current and max health as two values."))
+
+(defgeneric combatant-trigger-hit-effect (combatant)
+  (:documentation "Start a hit effect animation on the combatant."))
+
+(defgeneric combatant-update-hit-effect (combatant dt)
+  (:documentation "Advance hit effect timing for the combatant."))
+
 (defmethod combatant-position ((combatant player))
   (values (player-x combatant) (player-y combatant)))
 
@@ -446,11 +470,68 @@
   (declare (ignore combatant))
   (npc-collision-half world))
 
+(defmethod combatant-health ((combatant player))
+  (let ((class (player-class combatant)))
+    (values (player-hp combatant)
+            (if class
+                (character-class-max-hp class)
+                (player-hp combatant)))))
+
+(defmethod combatant-health ((combatant npc))
+  (values (npc-hits-left combatant)
+          (if (npc-archetype combatant)
+              (npc-archetype-max-hits (npc-archetype combatant))
+              *npc-max-hits*)))
+
 (defmethod combatant-apply-hit ((combatant npc))
   (decf (npc-hits-left combatant))
   (when (<= (npc-hits-left combatant) 0)
     (setf (npc-hits-left combatant) 0
           (npc-alive combatant) nil)))
+
+(defmethod combatant-trigger-hit-effect ((combatant player))
+  (setf (player-hit-active combatant) t
+        (player-hit-timer combatant) 0.0
+        (player-hit-frame combatant) 0
+        (player-hit-facing combatant) (player-facing combatant)
+        (player-hit-facing-sign combatant) (player-facing-sign combatant)))
+
+(defmethod combatant-trigger-hit-effect ((combatant npc))
+  (setf (npc-hit-active combatant) t
+        (npc-hit-timer combatant) 0.0
+        (npc-hit-frame combatant) 0
+        (npc-hit-facing combatant) (npc-facing combatant)
+        (npc-hit-facing-sign combatant) 1.0))
+
+(defmethod combatant-update-hit-effect ((combatant player) dt)
+  (when (player-hit-active combatant)
+    (let* ((frame-count *blood-frame-count*)
+           (frame-time *blood-frame-time*)
+           (timer (+ (player-hit-timer combatant) dt))
+           (duration (* frame-count frame-time))
+           (frame (min (truncate (/ timer frame-time))
+                       (1- frame-count))))
+      (setf (player-hit-timer combatant) timer
+            (player-hit-frame combatant) frame)
+      (when (>= timer duration)
+        (setf (player-hit-active combatant) nil
+              (player-hit-timer combatant) 0.0
+              (player-hit-frame combatant) 0)))))
+
+(defmethod combatant-update-hit-effect ((combatant npc) dt)
+  (when (npc-hit-active combatant)
+    (let* ((frame-count *blood-frame-count*)
+           (frame-time *blood-frame-time*)
+           (timer (+ (npc-hit-timer combatant) dt))
+           (duration (* frame-count frame-time))
+           (frame (min (truncate (/ timer frame-time))
+                       (1- frame-count))))
+      (setf (npc-hit-timer combatant) timer
+            (npc-hit-frame combatant) frame)
+      (when (>= timer duration)
+        (setf (npc-hit-active combatant) nil
+              (npc-hit-timer combatant) 0.0
+              (npc-hit-frame combatant) 0)))))
 
 (defun make-stamina-labels ()
   ;; Precompute stamina HUD strings to avoid per-frame consing.
@@ -470,11 +551,19 @@
                 :facing :down
                 :facing-sign 1.0
                 :class class
+                :hp (if class
+                        (character-class-max-hp class)
+                        1)
                 :frame-index 0
                 :frame-timer 0.0
                 :attacking nil
                 :attack-timer 0.0
                 :attack-hit nil
+                :hit-active nil
+                :hit-timer 0.0
+                :hit-frame 0
+                :hit-facing :down
+                :hit-facing-sign 1.0
                 :target-x start-x
                 :target-y start-y
                 :target-active nil
@@ -498,7 +587,12 @@
              :hits-left (if archetype
                             (npc-archetype-max-hits archetype)
                             *npc-max-hits*)
-             :alive t))
+             :alive t
+             :hit-active nil
+             :hit-timer 0.0
+             :hit-frame 0
+             :hit-facing :down
+             :hit-facing-sign 1.0))
 
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
@@ -561,7 +655,10 @@
          (side-attack (raylib:load-texture (sprite-path "S_Attack.png")))
          (npc-down-idle (raylib:load-texture (npc-sprite-path "D_Idle.png")))
          (npc-up-idle (raylib:load-texture (npc-sprite-path "U_Idle.png")))
-         (npc-side-idle (raylib:load-texture (npc-sprite-path "S_Idle.png"))))
+         (npc-side-idle (raylib:load-texture (npc-sprite-path "S_Idle.png")))
+         (blood-down (raylib:load-texture (blood-sprite-path "D_Blood.png")))
+         (blood-up (raylib:load-texture (blood-sprite-path "U_Blood.png")))
+         (blood-side (raylib:load-texture (blood-sprite-path "S_Blood.png"))))
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk
@@ -575,6 +672,9 @@
                   :npc-down-idle npc-down-idle
                   :npc-up-idle npc-up-idle
                   :npc-side-idle npc-side-idle
+                  :blood-down blood-down
+                  :blood-up blood-up
+                  :blood-side blood-side
                   :scaled-width scaled-width
                   :scaled-height scaled-height
                   :half-sprite-width half-sprite-width
@@ -594,7 +694,10 @@
   (raylib:unload-texture (assets-side-attack assets))
   (raylib:unload-texture (assets-npc-down-idle assets))
   (raylib:unload-texture (assets-npc-up-idle assets))
-  (raylib:unload-texture (assets-npc-side-idle assets)))
+  (raylib:unload-texture (assets-npc-side-idle assets))
+  (raylib:unload-texture (assets-blood-down assets))
+  (raylib:unload-texture (assets-blood-up assets))
+  (raylib:unload-texture (assets-blood-side assets)))
 
 (defun build-volume-bars (volume-steps)
   ;; Create prebuilt volume bar strings for the menu UI.
@@ -1104,6 +1207,7 @@
           (when (aabb-overlap-p ax ay ahw ahh
                                 tx ty thw thh)
             (combatant-apply-hit target)
+            (combatant-trigger-hit-effect target)
             (setf (player-attack-hit player) t)))))))
 
 (defun update-player-animation (player dt)
@@ -1234,7 +1338,9 @@
       (log-player-position player world))
     (update-player-animation player dt)
     (apply-melee-hit player npc world)
-    (update-npc-animation npc dt)))
+    (update-npc-animation npc dt)
+    (combatant-update-hit-effect player dt)
+    (combatant-update-hit-effect npc dt)))
 
 (defun draw-world (world render assets camera player npc ui)
   ;; Render floor, landmarks, walls, and debug overlays.
@@ -1341,28 +1447,96 @@
     (:up (assets-npc-up-idle assets))
     (:side (assets-npc-side-idle assets))))
 
+(defun blood-texture-for (assets direction)
+  ;; Select the blood effect sprite sheet for DIRECTION.
+  (ecase direction
+    (:down (assets-blood-down assets))
+    (:up (assets-blood-up assets))
+    (:side (assets-blood-side assets))))
+
+(defun draw-hit-effect (x y facing facing-sign frame-index assets source dest origin)
+  ;; Render a blood effect frame at the given world position.
+  (let* ((texture (blood-texture-for assets facing))
+         (flip (and (eq facing :side) (> facing-sign 0.0)))
+         (src-x (* frame-index *sprite-frame-width*))
+         (src-x (if flip
+                    (+ src-x *sprite-frame-width*)
+                    src-x))
+         (src-width (if flip
+                        (- *sprite-frame-width*)
+                        *sprite-frame-width*))
+         (half-width (assets-half-sprite-width assets))
+         (half-height (assets-half-sprite-height assets)))
+    (set-rectangle source
+                   src-x 0.0
+                   src-width *sprite-frame-height*)
+    (set-rectangle dest
+                   (- x half-width)
+                   (- y half-height)
+                   (assets-scaled-width assets)
+                   (assets-scaled-height assets))
+    (raylib:draw-texture-pro texture
+                             source
+                             dest
+                             origin
+                             0.0
+                             raylib:+white+)))
+
+(defun draw-health-bar (x y current max assets)
+  ;; Draw a simple health bar above the given world position.
+  (let* ((bar-width (assets-scaled-width assets))
+         (bar-height *health-bar-height*)
+         (offset *health-bar-offset*)
+         (half-width (/ bar-width 2.0))
+         (ratio (if (> max 0)
+                    (clamp (/ current (float max 1.0)) 0.0 1.0)
+                    0.0))
+         (fill-width (round (* bar-width ratio)))
+         (bar-x (round (- x half-width)))
+         (bar-y (round (- y (assets-half-sprite-height assets) offset bar-height))))
+    (raylib:draw-rectangle bar-x bar-y (round bar-width) bar-height
+                           *health-bar-back-color*)
+    (raylib:draw-rectangle bar-x bar-y fill-width bar-height
+                           *health-bar-fill-color*)
+    (raylib:draw-rectangle-lines bar-x bar-y (round bar-width) bar-height
+                                 *health-bar-border-color*)))
+
 (defun draw-npc (npc assets render)
   ;; Render the NPC sprite at its world position.
-  (when (combatant-alive-p npc)
-    (let* ((direction (npc-facing npc))
-           (texture (npc-texture-for assets direction))
-           (src-x (* (npc-frame-index npc) *sprite-frame-width*))
-           (half-width (assets-half-sprite-width assets))
-           (half-height (assets-half-sprite-height assets)))
-      (set-rectangle (render-npc-source render)
-                     src-x 0.0
-                     *sprite-frame-width* *sprite-frame-height*)
-      (set-rectangle (render-npc-dest render)
-                     (- (npc-x npc) half-width)
-                     (- (npc-y npc) half-height)
-                     (assets-scaled-width assets)
-                     (assets-scaled-height assets))
-      (raylib:draw-texture-pro texture
-                               (render-npc-source render)
-                               (render-npc-dest render)
-                               (render-origin render)
-                               0.0
-                               raylib:+white+))))
+  (let ((alive (combatant-alive-p npc)))
+    (when alive
+      (let* ((direction (npc-facing npc))
+             (texture (npc-texture-for assets direction))
+             (src-x (* (npc-frame-index npc) *sprite-frame-width*))
+             (half-width (assets-half-sprite-width assets))
+             (half-height (assets-half-sprite-height assets)))
+        (set-rectangle (render-npc-source render)
+                       src-x 0.0
+                       *sprite-frame-width* *sprite-frame-height*)
+        (set-rectangle (render-npc-dest render)
+                       (- (npc-x npc) half-width)
+                       (- (npc-y npc) half-height)
+                       (assets-scaled-width assets)
+                       (assets-scaled-height assets))
+        (raylib:draw-texture-pro texture
+                                 (render-npc-source render)
+                                 (render-npc-dest render)
+                                 (render-origin render)
+                                 0.0
+                                 raylib:+white+)
+        (multiple-value-bind (hp max-hp)
+            (combatant-health npc)
+          (draw-health-bar (npc-x npc) (npc-y npc) hp max-hp assets))))
+    (when (npc-hit-active npc)
+      (draw-hit-effect (npc-x npc)
+                       (npc-y npc)
+                       (npc-hit-facing npc)
+                       (npc-hit-facing-sign npc)
+                       (npc-hit-frame npc)
+                       assets
+                       (render-npc-source render)
+                       (render-npc-dest render)
+                       (render-origin render)))))
 
 (defun player-texture-for (assets direction state)
   ;; Select the sprite sheet texture for DIRECTION and STATE.
@@ -1409,7 +1583,20 @@
                              (render-player-dest render)
                              (render-origin render)
                              0.0
-                             raylib:+white+)))
+                             raylib:+white+)
+    (multiple-value-bind (hp max-hp)
+        (combatant-health player)
+      (draw-health-bar (player-x player) (player-y player) hp max-hp assets))
+    (when (player-hit-active player)
+      (draw-hit-effect (player-x player)
+                       (player-y player)
+                       (player-hit-facing player)
+                       (player-hit-facing-sign player)
+                       (player-hit-frame player)
+                       assets
+                       (render-player-source render)
+                       (render-player-dest render)
+                       (render-origin render)))))
 
 (defun draw-hud (player ui)
   ;; Draw stamina HUD using precomputed labels.
