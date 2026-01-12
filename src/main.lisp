@@ -58,6 +58,14 @@
 (defparameter *target-epsilon* 6.0) ;; Stop distance for click-to-move.
 (defparameter *npc-collision-scale* 2.0) ;; Collision box size relative to one tile.
 (defparameter *npc-max-hits* 3) ;; Hits required to defeat the NPC.
+(defparameter *npc-walk-speed* 120.0) ;; Base NPC movement speed in pixels per second.
+(defparameter *npc-flee-speed-mult* 1.4) ;; Speed multiplier while fleeing.
+(defparameter *npc-attack-range-tiles* 0.9) ;; NPC melee range in tiles.
+(defparameter *npc-attack-cooldown* 0.9) ;; Seconds between NPC attacks.
+(defparameter *npc-attack-damage* 1) ;; Damage per NPC hit.
+(defparameter *npc-home-radius-tiles* 2.0) ;; Roam radius around spawn in tiles.
+(defparameter *npc-wander-interval* 1.1) ;; Seconds between wander target changes.
+(defparameter *npc-wander-arrive-distance* 6.0) ;; Pixels to consider wander target reached.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
 (defparameter *blood-frame-count* 4) ;; Frames in each blood animation row.
@@ -77,12 +85,128 @@
   (make-instance 'character-class :name "Wizard" :max-hp 10)) ;; Default player class.
 
 (defclass npc-archetype ()
-  ;; Static NPC archetype data (name, base durability, etc).
+  ;; Static NPC archetype data (durability, temperament, perception).
   ((name :initarg :name :reader npc-archetype-name)
-   (max-hits :initarg :max-hits :reader npc-archetype-max-hits)))
+   (max-hits :initarg :max-hits :reader npc-archetype-max-hits)
+   (move-speed :initarg :move-speed :initform *npc-walk-speed* :reader npc-archetype-move-speed)
+   (attack-range-tiles :initarg :attack-range-tiles :initform *npc-attack-range-tiles*
+                       :reader npc-archetype-attack-range-tiles)
+   (attack-cooldown :initarg :attack-cooldown :initform *npc-attack-cooldown*
+                    :reader npc-archetype-attack-cooldown)
+   (attack-damage :initarg :attack-damage :initform *npc-attack-damage*
+                  :reader npc-archetype-attack-damage)
+   (home-radius-tiles :initarg :home-radius-tiles :initform *npc-home-radius-tiles*
+                      :reader npc-archetype-home-radius-tiles)
+   (wander-interval :initarg :wander-interval :initform *npc-wander-interval*
+                    :reader npc-archetype-wander-interval)
+   (flee-speed-mult :initarg :flee-speed-mult :initform *npc-flee-speed-mult*
+                    :reader npc-archetype-flee-speed-mult)
+   (aggro-mode :initarg :aggro-mode :initform :never :reader npc-archetype-aggro-mode)
+   (retaliate :initarg :retaliate :initform nil :reader npc-archetype-retaliate)
+   (flee-at-hits :initarg :flee-at-hits :initform 0 :reader npc-archetype-flee-at-hits)
+   (perception-tiles :initarg :perception-tiles :initform 0.0 :reader npc-archetype-perception-tiles)))
 
+;; KEEP this commented code example - Default RAT NPC archetype
+;; (defparameter *rat-archetype*
+;;   (make-instance 'npc-archetype
+;;                  :name "Dungeon Rat"
+;;                  :max-hits *npc-max-hits*
+;;                  :move-speed 120.0
+;;                  :attack-range-tiles 0.85
+;;                  :attack-cooldown 0.9
+;;                  :attack-damage 1
+;;                  :home-radius-tiles 2.0
+;;                  :wander-interval 1.1
+;;                  :flee-speed-mult 1.4
+;;                  :aggro-mode :provoked
+;;                  :retaliate t
+;;                  :flee-at-hits 1
+;;                  :perception-tiles 4.0)) ;; Default NPC archetype.
+
+;; KEEP this commented code example - passive when hit example
+;; (defparameter *rat-archetype*
+;;   (make-instance 'npc-archetype
+;;                  :name "Dungeon Rat"
+;;                  :max-hits *npc-max-hits*
+;;                  :move-speed 120.0
+;;                  :attack-range-tiles 0.85
+;;                  :attack-cooldown 0.9
+;;                  :attack-damage 0
+;;                  :home-radius-tiles 2.0
+;;                  :wander-interval 1.1
+;;                  :flee-speed-mult 1.4
+;;                  :aggro-mode :never
+;;                  :retaliate nil
+;;                  :flee-at-hits 1
+;;                  :perception-tiles 4.0)) ;; Passive even when hit.
+
+
+;; agro on sight
 (defparameter *rat-archetype*
-  (make-instance 'npc-archetype :name "Dungeon Rat" :max-hits *npc-max-hits*)) ;; Default NPC archetype.
+  (make-instance 'npc-archetype
+                 :name "Dungeon Rat"
+                 :max-hits *npc-max-hits*
+                 :move-speed 120.0
+                 :attack-range-tiles 0.85
+                 :attack-cooldown 0.9
+                 :attack-damage 1
+                 :home-radius-tiles 2.0
+                 :wander-interval 1.1
+                 :flee-speed-mult 1.4
+                 :aggro-mode :always
+                 :retaliate t
+                 :flee-at-hits 1
+                 :perception-tiles 4.0)) ;; Aggro on sight.
+
+
+
+(defparameter *goblin-archetype*
+  (make-instance 'npc-archetype
+                 :name "Goblin"
+                 :max-hits 4
+                 :move-speed 140.0
+                 :attack-range-tiles 0.9
+                 :attack-cooldown 0.8
+                 :attack-damage 1
+                 :home-radius-tiles 3.0
+                 :wander-interval 1.0
+                 :flee-speed-mult 1.2
+                 :aggro-mode :always
+                 :retaliate t
+                 :flee-at-hits 1
+                 :perception-tiles 6.0)) ;; Aggressive but skittish at low health.
+
+(defparameter *orc-archetype*
+  (make-instance 'npc-archetype
+                 :name "Orc"
+                 :max-hits 6
+                 :move-speed 120.0
+                 :attack-range-tiles 0.95
+                 :attack-cooldown 1.1
+                 :attack-damage 2
+                 :home-radius-tiles 3.0
+                 :wander-interval 1.3
+                 :flee-speed-mult 1.0
+                 :aggro-mode :always
+                 :retaliate t
+                 :flee-at-hits 0
+                 :perception-tiles 7.0)) ;; Aggressive and unflinching.
+
+(defparameter *witch-doctor-archetype*
+  (make-instance 'npc-archetype
+                 :name "Witch Doctor"
+                 :max-hits 5
+                 :move-speed 110.0
+                 :attack-range-tiles 1.1
+                 :attack-cooldown 1.0
+                 :attack-damage 1
+                 :home-radius-tiles 3.5
+                 :wander-interval 1.4
+                 :flee-speed-mult 1.3
+                 :aggro-mode :provoked
+                 :retaliate t
+                 :flee-at-hits 2
+                 :perception-tiles 8.0)) ;; Provoked aggression with a higher flee threshold.
 
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.
@@ -117,6 +241,13 @@
       (let ((len (sqrt (+ (* dx dx) (* dy dy)))))
         (values (/ dx len) (/ dy len)))
       (values dx dy)))
+
+(defun normalize-vector (dx dy)
+  ;; Normalize an arbitrary vector to unit length (0,0 stays 0,0).
+  (let ((len (sqrt (+ (* dx dx) (* dy dy)))))
+    (if (zerop len)
+        (values 0.0 0.0)
+        (values (/ dx len) (/ dy len)))))
 
 (defun read-input-direction ()
   ;; Read WASD/arrow keys and return a normalized movement vector.
@@ -319,6 +450,108 @@
   (let ((half (* (/ (world-tile-dest-size world) 2.0) *npc-collision-scale*)))
     (values half half)))
 
+(defun npc-home-radius (npc world)
+  ;; Return NPC home radius in world pixels.
+  (let* ((archetype (npc-archetype npc))
+         (tiles (if archetype
+                    (npc-archetype-home-radius-tiles archetype)
+                    *npc-home-radius-tiles*)))
+    (* tiles (world-tile-dest-size world))))
+
+(defun npc-attack-range (npc world)
+  ;; Return NPC melee range in world pixels.
+  (let* ((archetype (npc-archetype npc))
+         (tiles (if archetype
+                    (npc-archetype-attack-range-tiles archetype)
+                    *npc-attack-range-tiles*)))
+    (* tiles (world-tile-dest-size world))))
+
+(defun npc-move-speed (npc)
+  ;; Return NPC movement speed in pixels per second.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-move-speed archetype)
+        *npc-walk-speed*)))
+
+(defun npc-flee-speed-mult (npc)
+  ;; Return NPC flee speed multiplier.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-flee-speed-mult archetype)
+        *npc-flee-speed-mult*)))
+
+(defun npc-attack-cooldown (npc)
+  ;; Return NPC melee cooldown in seconds.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-attack-cooldown archetype)
+        *npc-attack-cooldown*)))
+
+(defun npc-attack-damage (npc)
+  ;; Return NPC melee damage per hit.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-attack-damage archetype)
+        *npc-attack-damage*)))
+
+(defun npc-wander-interval (npc)
+  ;; Return NPC wander target interval in seconds.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-wander-interval archetype)
+        *npc-wander-interval*)))
+
+(defun npc-pick-wander-target (npc world)
+  ;; Pick a new wander target around the NPC home position.
+  (let* ((radius (float (npc-home-radius npc world) 1.0f0))
+         (angle (* 2.0f0 (float pi 1.0f0) (random 1.0f0)))
+         (r (* (random 1.0f0) radius)))
+    (if (<= radius 0.0f0)
+        (setf (npc-wander-x npc) (float (npc-home-x npc) 1.0f0)
+              (npc-wander-y npc) (float (npc-home-y npc) 1.0f0))
+        (setf (npc-wander-x npc)
+              (float (+ (npc-home-x npc) (* r (cos angle))) 1.0f0)
+              (npc-wander-y npc)
+              (float (+ (npc-home-y npc) (* r (sin angle))) 1.0f0)))
+    (setf (npc-wander-timer npc) (float (npc-wander-interval npc) 1.0f0))))
+
+(defun npc-wander-direction (npc world dt)
+  ;; Return a normalized wander direction and update target timer.
+  (let* ((timer (- (npc-wander-timer npc) dt))
+         (arrive-dist *npc-wander-arrive-distance*)
+         (arrive-sq (* arrive-dist arrive-dist)))
+    (setf (npc-wander-timer npc) timer)
+    (let* ((tx (npc-wander-x npc))
+           (ty (npc-wander-y npc))
+           (dx (- tx (npc-x npc)))
+           (dy (- ty (npc-y npc))))
+      (when (or (<= timer 0.0)
+                (<= (+ (* dx dx) (* dy dy)) arrive-sq))
+        (npc-pick-wander-target npc world)
+        (setf tx (npc-wander-x npc)
+              ty (npc-wander-y npc)
+              dx (- tx (npc-x npc))
+              dy (- ty (npc-y npc))))
+      (normalize-vector dx dy))))
+
+(defun npc-perception-range-sq (npc world)
+  ;; Return squared perception range in world pixels.
+  (let* ((archetype (npc-archetype npc))
+         (tiles (if archetype
+                    (npc-archetype-perception-tiles archetype)
+                    0.0))
+         (range (* tiles (world-tile-dest-size world))))
+    (* range range)))
+
+(defun npc-in-perception-range-p (npc player world)
+  ;; Return true when the player is within the NPC perception radius.
+  (let* ((dx (- (player-x player) (npc-x npc)))
+         (dy (- (player-y player) (npc-y npc)))
+         (dist-sq (+ (* dx dx) (* dy dy)))
+         (range-sq (npc-perception-range-sq npc world)))
+    (and (> range-sq 0.0)
+         (<= dist-sq range-sq))))
+
 (defun attack-hitbox (player world)
   ;; Return attack hitbox center and half sizes for the current facing.
   (let* ((tile-size (world-tile-dest-size world))
@@ -369,7 +602,10 @@
   ;; NPC state used by update/draw loops.
   x y
   anim-state facing
-  archetype
+  archetype behavior-state provoked
+  home-x home-y
+  wander-x wander-y wander-timer
+  attack-timer
   frame-index frame-timer
   hits-left alive
   hit-active hit-timer hit-frame hit-facing hit-facing-sign)
@@ -438,8 +674,8 @@
 (defgeneric combatant-collision-half (combatant world)
   (:documentation "Return combatant collider half sizes in world pixels."))
 
-(defgeneric combatant-apply-hit (combatant)
-  (:documentation "Apply a single hit to the combatant."))
+(defgeneric combatant-apply-hit (combatant &optional amount)
+  (:documentation "Apply a hit to the combatant (AMOUNT defaults to 1)."))
 
 (defgeneric combatant-health (combatant)
   (:documentation "Return current and max health as two values."))
@@ -483,11 +719,18 @@
               (npc-archetype-max-hits (npc-archetype combatant))
               *npc-max-hits*)))
 
-(defmethod combatant-apply-hit ((combatant npc))
-  (decf (npc-hits-left combatant))
-  (when (<= (npc-hits-left combatant) 0)
-    (setf (npc-hits-left combatant) 0
-          (npc-alive combatant) nil)))
+(defmethod combatant-apply-hit ((combatant player) &optional amount)
+  (let* ((damage (if amount amount 1))
+         (hp (- (player-hp combatant) damage)))
+    (setf (player-hp combatant) (max 0 hp))))
+
+(defmethod combatant-apply-hit ((combatant npc) &optional amount)
+  (let ((damage (if amount amount 1)))
+    (decf (npc-hits-left combatant) damage)
+    (setf (npc-provoked combatant) t)
+    (when (<= (npc-hits-left combatant) 0)
+      (setf (npc-hits-left combatant) 0
+            (npc-alive combatant) nil))))
 
 (defmethod combatant-trigger-hit-effect ((combatant player))
   (setf (player-hit-active combatant) t
@@ -577,22 +820,32 @@
 
 (defun make-npc (start-x start-y &optional (archetype *rat-archetype*))
   ;; Construct an NPC state struct at the given start position.
-  (%make-npc :x start-x
-             :y start-y
-             :anim-state :idle
-             :facing :down
-             :archetype archetype
-             :frame-index 0
-             :frame-timer 0.0
-             :hits-left (if archetype
-                            (npc-archetype-max-hits archetype)
-                            *npc-max-hits*)
-             :alive t
-             :hit-active nil
-             :hit-timer 0.0
-             :hit-frame 0
-             :hit-facing :down
-             :hit-facing-sign 1.0))
+  (let ((sx (float start-x 1.0f0))
+        (sy (float start-y 1.0f0)))
+    (%make-npc :x sx
+               :y sy
+               :anim-state :idle
+               :facing :down
+               :archetype archetype
+               :behavior-state :idle
+               :provoked nil
+               :home-x sx
+               :home-y sy
+               :wander-x sx
+               :wander-y sy
+               :wander-timer 0.0
+               :attack-timer 0.0
+               :frame-index 0
+               :frame-timer 0.0
+               :hits-left (if archetype
+                              (npc-archetype-max-hits archetype)
+                              *npc-max-hits*)
+               :alive t
+               :hit-active nil
+               :hit-timer 0.0
+               :hit-frame 0
+               :hit-facing :down
+               :hit-facing-sign 1.0)))
 
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
@@ -1193,6 +1446,126 @@
       (setf (npc-frame-index npc) frame-index
             (npc-frame-timer npc) frame-timer))))
 
+(defun update-npc-behavior (npc player world)
+  ;; Update NPC behavior state based on archetype rules and player range.
+  (let ((archetype (npc-archetype npc)))
+    (cond
+      ((not (npc-alive npc))
+       (setf (npc-behavior-state npc) :dead))
+      ((not archetype)
+       (setf (npc-behavior-state npc) :idle))
+      (t
+       (let* ((provoked (npc-provoked npc))
+              (aggro-mode (npc-archetype-aggro-mode archetype))
+              (retaliate (npc-archetype-retaliate archetype))
+              (flee-at (npc-archetype-flee-at-hits archetype))
+              (in-range (npc-in-perception-range-p npc player world)))
+         (cond
+           ((and (> flee-at 0)
+                 (<= (npc-hits-left npc) flee-at))
+            (setf (npc-behavior-state npc) :flee))
+           ((and provoked retaliate in-range)
+            (setf (npc-behavior-state npc) :retaliate))
+           ((and in-range (eq aggro-mode :always))
+            (setf (npc-behavior-state npc) :aggressive))
+           ((and in-range (eq aggro-mode :provoked) provoked)
+            (setf (npc-behavior-state npc) :aggressive))
+           (t
+            (setf (npc-behavior-state npc) :idle))))))))
+
+(defun update-npc-movement (npc player world dt)
+  ;; Move NPC based on behavior state and keep it near its home radius.
+  (when (npc-alive npc)
+    (let* ((state (npc-behavior-state npc))
+           (speed (npc-move-speed npc))
+           (flee-mult (npc-flee-speed-mult npc))
+           (attack-range (npc-attack-range npc world))
+           (attack-range-sq (* attack-range attack-range))
+           (dx 0.0)
+           (dy 0.0)
+           (face-dx 0.0)
+           (face-dy 0.0))
+      (let* ((home-radius (npc-home-radius npc world))
+             (home-dx (- (npc-home-x npc) (npc-x npc)))
+             (home-dy (- (npc-home-y npc) (npc-y npc)))
+             (home-dist-sq (+ (* home-dx home-dx) (* home-dy home-dy)))
+             (home-radius-sq (* home-radius home-radius)))
+        (if (and (> home-radius 0.0)
+                 (> home-dist-sq home-radius-sq))
+            (progn
+              (setf face-dx home-dx
+                    face-dy home-dy)
+              (multiple-value-setq (dx dy)
+                (normalize-vector home-dx home-dy)))
+            (case state
+              (:flee
+               (let ((vx (- (npc-x npc) (player-x player)))
+                     (vy (- (npc-y npc) (player-y player))))
+                 (setf face-dx vx
+                       face-dy vy)
+                 (if (and (zerop vx) (zerop vy))
+                     (setf dx 1.0
+                           dy 0.0)
+                     (multiple-value-setq (dx dy)
+                       (normalize-vector vx vy)))
+                 (setf speed (* speed (max 1.0 flee-mult)))))
+              ((:aggressive :retaliate)
+               (let* ((vx (- (player-x player) (npc-x npc)))
+                      (vy (- (player-y player) (npc-y npc)))
+                      (dist-sq (+ (* vx vx) (* vy vy))))
+                 (setf face-dx vx
+                       face-dy vy)
+                 (if (<= dist-sq attack-range-sq)
+                     (setf dx 0.0
+                           dy 0.0)
+                     (multiple-value-setq (dx dy)
+                       (normalize-vector vx vy)))))
+              (t
+               (multiple-value-setq (dx dy)
+                 (npc-wander-direction npc world dt))
+               (setf face-dx dx
+                     face-dy dy)))))
+      (when (or (not (zerop face-dx))
+                (not (zerop face-dy)))
+        (setf (npc-facing npc) (player-direction face-dx face-dy)))
+      (when (or (not (zerop dx))
+                (not (zerop dy)))
+        (multiple-value-bind (half-w half-h)
+            (npc-collision-half world)
+          (multiple-value-bind (nx ny out-dx out-dy)
+              (attempt-move (world-wall-map world)
+                            (npc-x npc)
+                            (npc-y npc)
+                            dx dy (* speed dt)
+                            half-w half-h
+                            (world-tile-dest-size world))
+            (declare (ignore out-dx out-dy))
+            (setf (npc-x npc) (float (clamp nx (world-wall-min-x world)
+                                            (world-wall-max-x world))
+                                     1.0f0)
+                  (npc-y npc) (float (clamp ny (world-wall-min-y world)
+                                            (world-wall-max-y world))
+                                     1.0f0))))))))
+
+(defun update-npc-attack (npc player world dt)
+  ;; Handle NPC melee attacks and cooldowns.
+  (when (npc-alive npc)
+    (let* ((timer (max 0.0 (- (npc-attack-timer npc) dt)))
+           (state (npc-behavior-state npc))
+           (attack-range (npc-attack-range npc world))
+           (attack-range-sq (* attack-range attack-range)))
+      (setf (npc-attack-timer npc) timer)
+      (when (and (<= timer 0.0)
+                 (or (eq state :aggressive)
+                     (eq state :retaliate)))
+        (let* ((dx (- (player-x player) (npc-x npc)))
+               (dy (- (player-y player) (npc-y npc)))
+               (dist-sq (+ (* dx dx) (* dy dy))))
+          (when (<= dist-sq attack-range-sq)
+            (combatant-apply-hit player (npc-attack-damage npc))
+            (combatant-trigger-hit-effect player)
+            (setf (npc-attack-timer npc) (npc-attack-cooldown npc))))))))
+
 (defun apply-melee-hit (player target world)
   ;; Apply melee damage once per attack if the hitbox overlaps the target.
   (when (and (player-attacking player)
@@ -1338,6 +1711,9 @@
       (log-player-position player world))
     (update-player-animation player dt)
     (apply-melee-hit player npc world)
+    (update-npc-behavior npc player world)
+    (update-npc-movement npc player world dt)
+    (update-npc-attack npc player world dt)
     (update-npc-animation npc dt)
     (combatant-update-hit-effect player dt)
     (combatant-update-hit-effect npc dt)))
