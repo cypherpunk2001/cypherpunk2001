@@ -1,13 +1,14 @@
 # map.lisp
 
 Purpose
-- Parse TMX maps, load tilesets, and build collision data.
+- Parse TMX maps when provided, load tilesets, and build collision data.
 
 Why we do it this way
 - TMX gives us a production-ready pipeline with Tiled while keeping runtime
   parsing simple.
 - Chunked layers enable culling and scale to large worlds.
 - Collision lives in data, not in code, so levels are easy to iterate.
+- TMX is optional; we can disable it while we iterate on custom data formats.
 
 What gets built
 - `map-data`: tileset metadata, layers, bounds, and collision hash table.
@@ -25,11 +26,24 @@ Walkthrough: collision from TMX
 3) Each blocked tile is stored in a hash for fast collision queries.
 4) Movement and debug overlay query the same hash.
 
+Walkthrough: disable TMX
+1) Set `:map-path` to `nil` in `data/game-data.lisp`.
+2) `load-tmx-map` returns nil and the world falls back to the procedural wall map.
+3) Collision checks continue to work with the fallback.
+
 Example: configure collision layers
 ```lisp
 ;; In data/game-data.lisp
 (:tunables
  (:collision-layers ("Objects1" "Objects2" "Objects3")))
+```
+
+Example: disable TMX
+```lisp
+;; In data/game-data.lisp
+(:tunables
+ (:map-path nil)
+ (:collision-layers nil))
 ```
 
 Design note

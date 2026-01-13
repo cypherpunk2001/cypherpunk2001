@@ -23,7 +23,7 @@ Key functions
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
-2) Draw floor tiles and TMX layers with chunk culling.
+2) Draw floor tiles; if a TMX map is loaded, draw its layers, otherwise draw the fallback wall map.
 3) If debug is enabled, overlay collision/bounds grid.
 4) Draw player and NPCs in world space.
 5) Draw HUD and pause menu in screen space.

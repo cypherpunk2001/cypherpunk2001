@@ -35,9 +35,6 @@ mmorpg/
 
 ## Current Task
 
-Currently the world map generates such that if there are two unblocked squares to the human eye it looks like i should be able to walk through them. but they're the same size as my character (green square in debug) so i'm unable to walk through an area that looks like I should be able to walk through. See screenshot attached.
-
-
 ---
 
 ## Future Tasks / Roadmap

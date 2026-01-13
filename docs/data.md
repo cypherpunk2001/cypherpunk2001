@@ -30,6 +30,7 @@ Walkthrough: startup data load
 Common tunables
 - `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
 - `:collision-edge-epsilon` to control edge contact tolerance.
+- `:map-path` and `:collision-layers` to point at a TMX map (set both to `nil` to disable TMX).
 
 Example: new animation set
 ```lisp

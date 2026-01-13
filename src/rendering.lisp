@@ -250,7 +250,7 @@
                                                              tile-dest
                                                              origin
                                                              0.0
-                                                             raylib:+white+)))))))
+                                                             raylib:+white+))))))
           (loop :for layer :across (map-data-layers map)
                 :do (draw-map-layer layer map-tilesets tile-source tile-dest origin
                                     tile-dest-size start-col end-col start-row end-row)))
@@ -288,7 +288,7 @@
                                                          tile-dest
                                                          origin
                                                          0.0
-                                                         raylib:+white+)))))
+                                                         raylib:+white+))))))
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row
