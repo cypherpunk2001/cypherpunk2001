@@ -12,6 +12,7 @@ Why we do it this way
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Sprite, tileset, zone, world layout, and audio defaults.
+- Editor defaults (palette root, export path, layer IDs, overlay colors).
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
@@ -35,6 +36,10 @@ Walkthrough: load a zone file
 1) Set `:zone-path` in `data/game-data.lisp`.
 2) `load-zone` builds collision tiles from chunked layers.
 3) The world uses the zone's collision data for blocking tiles.
+
+Walkthrough: customize editor export
+1) Set `:editor-export-path` in `data/game-data.lisp`.
+2) Editor Mode writes zone files to the new location on export.
 
 Example: tuning player speed
 ```lisp

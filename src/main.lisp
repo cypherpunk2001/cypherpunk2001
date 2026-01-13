@@ -12,13 +12,14 @@
       (multiple-value-setq (spawn-x spawn-y)
         (world-open-position world center-x center-y)))
     (let* ((player (make-player spawn-x spawn-y))
-         (npcs (make-npcs player world))
-         (entities (make-entities player npcs))
-         (audio (make-audio))
-         (ui (make-ui))
-         (render (make-render))
-         (assets (load-assets world))
-         (camera (make-camera)))
+           (npcs (make-npcs player world))
+           (entities (make-entities player npcs))
+           (audio (make-audio))
+           (ui (make-ui))
+           (render (make-render))
+           (assets (load-assets world))
+           (camera (make-camera))
+           (editor (make-editor world assets player)))
       (ensure-npcs-open-spawn npcs world)
       (when *verbose-logs*
         (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
@@ -38,11 +39,13 @@
                   :ui ui
                   :render render
                   :assets assets
-                  :camera camera))))
+                  :camera camera
+                  :editor editor))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
   (shutdown-audio (game-audio game))
+  (unload-editor-objects (game-editor game))
   (unload-assets (game-assets game)))
 
 (defun update-game (game dt)
@@ -54,42 +57,52 @@
          (audio (game-audio game))
          (ui (game-ui game))
          (camera (game-camera game))
+         (editor (game-editor game))
          (player-intent (player-intent player))
          (mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
          (mouse-down (raylib:is-mouse-button-down +mouse-left+)))
     (update-audio audio)
     (update-camera-zoom camera)
-    (update-ui-input ui audio mouse-clicked)
+    (let ((menu-action (update-ui-input ui audio mouse-clicked)))
+      (when (eq menu-action :toggle-editor)
+        (toggle-editor-mode editor player)
+        (setf (ui-menu-open ui) nil)))
     (reset-frame-intent player-intent)
     (loop :for npc :across npcs
           :do (reset-frame-intent (npc-intent npc)))
-    (unless (ui-menu-open ui)
+    (unless (or (ui-menu-open ui)
+                (editor-active editor))
       (update-target-from-mouse player player-intent camera dt mouse-clicked mouse-down))
-    (update-input-direction player player-intent mouse-clicked)
-    (unless (ui-menu-open ui)
+    (unless (editor-active editor)
+      (update-input-direction player player-intent mouse-clicked))
+    (unless (or (ui-menu-open ui)
+                (editor-active editor))
       (update-input-actions player-intent (not mouse-clicked)))
-    (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
-                       (not (zerop (intent-move-dy player-intent)))
-                       (intent-target-active player-intent)))
-           (speed-mult (update-running-state player dt moving
-                                             (intent-run-toggle player-intent))))
-      (update-player-position player player-intent world speed-mult dt))
-    (when (and (not (ui-menu-open ui))
-               (intent-attack player-intent))
-      (start-player-attack player player-intent))
+    (unless (editor-active editor)
+      (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
+                         (not (zerop (intent-move-dy player-intent)))
+                         (intent-target-active player-intent)))
+             (speed-mult (update-running-state player dt moving
+                                               (intent-run-toggle player-intent))))
+        (update-player-position player player-intent world speed-mult dt))
+      (when (and (not (ui-menu-open ui))
+                 (intent-attack player-intent))
+        (start-player-attack player player-intent)))
     (when *verbose-logs*
       (log-player-position player world))
-    (loop :for entity :across entities
-          :do (update-entity-animation entity dt))
-    (loop :for npc :across npcs
-          :do (apply-melee-hit player npc world))
-    (loop :for npc :across npcs
-          :do (update-npc-behavior npc player world)
-              (update-npc-intent npc player world dt)
-              (update-npc-movement npc world dt)
-              (update-npc-attack npc player world dt))
-    (loop :for entity :across entities
-          :do (combatant-update-hit-effect entity dt))))
+    (update-editor editor world camera ui dt)
+    (unless (editor-active editor)
+      (loop :for entity :across entities
+            :do (update-entity-animation entity dt))
+      (loop :for npc :across npcs
+            :do (apply-melee-hit player npc world))
+      (loop :for npc :across npcs
+            :do (update-npc-behavior npc player world)
+                (update-npc-intent npc player world dt)
+                (update-npc-movement npc world dt)
+                (update-npc-attack npc player world dt))
+      (loop :for entity :across entities
+            :do (combatant-update-hit-effect entity dt)))))
 
 (defun run (&key (max-seconds 0.0) (max-frames 0))
   ;; Entry point that initializes game state and drives the main loop.

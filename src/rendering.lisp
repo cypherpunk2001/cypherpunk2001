@@ -117,7 +117,7 @@
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
 
-(defun draw-world (world render assets camera player npcs ui)
+(defun draw-world (world render assets camera player npcs ui editor)
   ;; Render floor, map layers, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
          (tile-size-f (world-tile-size-f world))
@@ -127,8 +127,15 @@
          (tile-dest (render-tile-dest render))
          (origin (render-origin render))
          (wall-map (world-wall-map world))
-         (x (player-x player))
-         (y (player-y player))
+         (zone (world-zone world))
+         (zone-layers (and zone (zone-layers zone)))
+         (chunk-size (and zone (zone-chunk-size zone)))
+         (x (if (and editor (editor-active editor))
+                (editor-camera-x editor)
+                (player-x player)))
+         (y (if (and editor (editor-active editor))
+                (editor-camera-y editor)
+                (player-y player)))
          (zoom (camera-zoom camera))
          (half-view-width (/ *window-width* (* 2.0 zoom)))
          (half-view-height (/ *window-height* (* 2.0 zoom)))
@@ -155,6 +162,22 @@
                                                    origin
                                                    0.0
                                                    raylib:+white+))
+                        (when zone-layers
+                          (loop :for layer :across zone-layers
+                                :unless (zone-layer-collision-p layer)
+                                  :do (let ((layer-index (zone-layer-tile-at layer
+                                                                             chunk-size
+                                                                             col row)))
+                                        (when (not (zerop layer-index))
+                                          (set-tile-source-rect tile-source
+                                                                layer-index
+                                                                tile-size-f)
+                                          (raylib:draw-texture-pro tileset
+                                                                   tile-source
+                                                                   tile-dest
+                                                                   origin
+                                                                   0.0
+                                                                   raylib:+white+)))))
                         (let ((wall-index (wall-tile-at wall-map col row)))
                           (when (not (zerop wall-index))
                             (set-tile-source-rect tile-source wall-index tile-size-f)
@@ -164,6 +187,8 @@
                                                      origin
                                                      0.0
                                                      raylib:+white+)))))
+    (draw-zone-objects zone editor render tile-source tile-dest origin
+                       tile-dest-size start-col end-col start-row end-row)
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row
@@ -207,6 +232,32 @@
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui)))))))
   )
+
+(defun draw-zone-objects (zone editor render tile-source tile-dest origin
+                          tile-dest-size start-col end-col start-row end-row)
+  ;; Draw placed zone objects inside the current view bounds.
+  (when (and zone editor)
+    (dolist (obj (zone-objects zone))
+      (let ((tx (getf obj :x))
+            (ty (getf obj :y))
+            (entry (editor-object-by-id editor (getf obj :id))))
+        (when (and entry
+                   (<= start-col tx) (<= tx end-col)
+                   (<= start-row ty) (<= ty end-row))
+          (let* ((src-w (editor-object-width entry))
+                 (src-h (editor-object-height entry))
+                 (dest-x (* tx tile-dest-size))
+                 (dest-y (* ty tile-dest-size))
+                 (dest-w (* src-w *tile-scale*))
+                 (dest-h (* src-h *tile-scale*)))
+            (set-rectangle tile-source 0.0 0.0 src-w src-h)
+            (set-rectangle tile-dest dest-x dest-y dest-w dest-h)
+            (raylib:draw-texture-pro (editor-object-texture entry)
+                                     tile-source
+                                     tile-dest
+                                     origin
+                                     0.0
+                                     raylib:+white+)))))))
 
 (defun npc-textures-for (npc assets)
   ;; Select the NPC texture set based on archetype.
@@ -414,7 +465,7 @@
     (raylib:draw-rectangle 6 6 110 24 (ui-hud-bg-color ui))
     (raylib:draw-text run-text 10 10 20 raylib:+white+)))
 
-(defun draw-menu (ui audio)
+(defun draw-menu (ui audio editor)
   ;; Render the pause menu and hover states.
   (let* ((mouse-x (raylib:get-mouse-x))
          (mouse-y (raylib:get-mouse-y))
@@ -471,6 +522,12 @@
                                        (ui-menu-debug-y ui)
                                        (ui-menu-debug-size ui)
                                        (ui-menu-debug-size ui)))
+         (editor-on (and editor (editor-active editor)))
+         (hover-editor (point-in-rect-p mouse-x mouse-y
+                                        (ui-menu-editor-x ui)
+                                        (ui-menu-editor-y ui)
+                                        (ui-menu-editor-size ui)
+                                        (ui-menu-editor-size ui)))
          (fs-on (raylib:is-window-fullscreen))
          (hover-fs (point-in-rect-p mouse-x mouse-y
                                     (ui-menu-fullscreen-x ui)
@@ -481,6 +538,10 @@
                             (hover-debug (ui-menu-button-hover-color ui))
                             (debug-on (ui-menu-button-color ui))
                             (t (ui-menu-panel-color ui))))
+         (editor-box-color (cond
+                             (hover-editor (ui-menu-button-hover-color ui))
+                             (editor-on (ui-menu-button-color ui))
+                             (t (ui-menu-panel-color ui))))
          (fs-box-color (cond
                          (hover-fs (ui-menu-button-hover-color ui))
                          (fs-on (ui-menu-button-color ui))
@@ -573,6 +634,21 @@
                       (- (ui-menu-debug-y ui) 2)
                       (ui-menu-volume-text-size ui)
                       (ui-menu-text-color ui))
+    (raylib:draw-rectangle (ui-menu-editor-x ui)
+                           (ui-menu-editor-y ui)
+                           (ui-menu-editor-size ui)
+                           (ui-menu-editor-size ui)
+                           editor-box-color)
+    (raylib:draw-rectangle-lines (ui-menu-editor-x ui)
+                                 (ui-menu-editor-y ui)
+                                 (ui-menu-editor-size ui)
+                                 (ui-menu-editor-size ui)
+                                 (ui-menu-text-color ui))
+    (raylib:draw-text (ui-menu-editor-label ui)
+                      (+ (ui-menu-editor-x ui) 28)
+                      (- (ui-menu-editor-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      (ui-menu-text-color ui))
     (raylib:draw-rectangle (ui-menu-fullscreen-x ui)
                            (ui-menu-fullscreen-y ui)
                            (ui-menu-fullscreen-size ui)
@@ -608,19 +684,23 @@
          (ui (game-ui game))
          (render (game-render game))
          (assets (game-assets game))
-         (camera (game-camera game)))
+         (camera (game-camera game))
+         (editor (game-editor game)))
     (raylib:with-drawing
       (raylib:clear-background raylib:+black+)
-      (let ((camera-2d (raylib:make-camera-2d
-                        :target (raylib:make-vector2 :x (player-x player)
-                                                     :y (player-y player))
-                        :offset (camera-offset camera)
-                        :rotation 0.0
-                        :zoom (camera-zoom camera))))
-        (raylib:with-mode-2d camera-2d
-          (draw-world world render assets camera player npcs ui)
-          (loop :for entity :across entities
-                :do (draw-entity entity assets render))))
+      (multiple-value-bind (camera-x camera-y)
+          (editor-camera-target editor player)
+        (let ((camera-2d (raylib:make-camera-2d
+                          :target (raylib:make-vector2 :x camera-x :y camera-y)
+                          :offset (camera-offset camera)
+                          :rotation 0.0
+                          :zoom (camera-zoom camera))))
+          (raylib:with-mode-2d camera-2d
+            (draw-world world render assets camera player npcs ui editor)
+            (loop :for entity :across entities
+                  :do (draw-entity entity assets render))
+            (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui)
+      (draw-editor-ui-overlay editor ui)
       (when (ui-menu-open ui)
-        (draw-menu ui audio)))))
+        (draw-menu ui audio editor)))))

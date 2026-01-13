@@ -62,9 +62,13 @@
          (menu-debug-x (+ menu-panel-x menu-padding))
          (menu-debug-y (+ menu-volume-y menu-volume-button-height 24))
          (menu-debug-label "Debug Collision Overlay")
+         (menu-editor-size 18)
+         (menu-editor-x menu-debug-x)
+         (menu-editor-y (+ menu-debug-y menu-debug-size menu-toggle-gap))
+         (menu-editor-label "Editor Mode")
          (menu-fullscreen-size 18)
          (menu-fullscreen-x menu-debug-x)
-         (menu-fullscreen-y (+ menu-debug-y menu-debug-size menu-toggle-gap))
+         (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
          (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
          (menu-overlay-color (raylib:make-color :r 0 :g 0 :b 0 :a 110))
@@ -122,6 +126,10 @@
               :menu-debug-x menu-debug-x
               :menu-debug-y menu-debug-y
               :menu-debug-label menu-debug-label
+              :menu-editor-size menu-editor-size
+              :menu-editor-x menu-editor-x
+              :menu-editor-y menu-editor-y
+              :menu-editor-label menu-editor-label
               :menu-fullscreen-size menu-fullscreen-size
               :menu-fullscreen-x menu-fullscreen-x
               :menu-fullscreen-y menu-fullscreen-y
@@ -174,6 +182,10 @@
        (setf *debug-collision-overlay* enabled
              *debug-npc-logs* enabled)))
     ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-editor-x ui) (ui-menu-editor-y ui)
+                      (ui-menu-editor-size ui) (ui-menu-editor-size ui))
+     :toggle-editor)
+    ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
@@ -181,9 +193,11 @@
 
 (defun update-ui-input (ui audio mouse-clicked)
   ;; Handle UI toggle input and click interactions.
+  (let ((action nil))
   (when (raylib:is-key-pressed +key-escape+)
     (setf (ui-menu-open ui) (not (ui-menu-open ui))))
   (when (and (ui-menu-open ui) mouse-clicked)
-    (handle-menu-click ui audio
-                       (raylib:get-mouse-x)
-                       (raylib:get-mouse-y))))
+    (setf action (handle-menu-click ui audio
+                                    (raylib:get-mouse-x)
+                                    (raylib:get-mouse-y))))
+  action))

@@ -10,6 +10,7 @@ Why we do it this way
 
 Key concepts
 - `world-blocked-tile-p` decides if a tile is blocked (zone collision tiles are converted into the wall map at load time).
+- `set-world-blocked-tile` lets the editor update the wall map at runtime.
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
 - `world-open-position` finds the nearest open tile that fits the player collider.

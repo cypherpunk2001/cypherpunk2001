@@ -15,5 +15,6 @@
                (:file "src/ai")
                (:file "src/audio")
                (:file "src/ui")
+               (:file "src/editor")
                (:file "src/rendering")
                (:file "src/main")))

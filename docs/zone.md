@@ -46,7 +46,11 @@ Key functions
 - `load-zone`: reads a zone file and builds chunk/layer structures.
 - `zone-wall-map`: converts collision layers into a wall map array.
 - `zone-layer-tile-at`: fetches a tile index from chunk data.
+- `ensure-zone-layer`, `zone-layer-set-tile`: editor helpers for mutating layers.
+- `zone-add-object`, `zone-remove-object-at`: editor helpers for object placement.
+- `zone-slice`, `zone-to-plist`, `write-zone`: export helpers for editor saves.
 
 Design note
 - Collision tiles are precomputed into a hash for fast lookups.
 - The wall map is derived once at load time to keep movement cheap.
+- Export helpers preserve the chunked format so later streaming is easy.

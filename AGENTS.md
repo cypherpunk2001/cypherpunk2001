@@ -35,11 +35,8 @@ mmorpg/
 
 ## Current Task
 
-0.5) the Floor tile randomization autogeneration code can be very much simplified because we are about to create 1.) interactive map editor, so clean this code up before proceeding to 1.
+**Remember to run `make checkparens` often while generating code. This tool will help you and is faster and more reliable than using python to analyze for missing parentheses.**
 
----
-
-## Future Tasks / Roadmap
 
 1) Build an interactive map editor that exports to our custom map format.
    This is to be an interactive in-game map editor (Minecraft-like) that exports our custom map format (accessible from ESC), and saves the custom maps to the data/ location.
@@ -67,6 +64,10 @@ Export format requirement:
 - Export output is our custom Lisp data format for zones/chunks.
 - Zone files contain chunked tile layers + collision layers + object placements.
 - Loading the game loads the current zone(s); editing updates the zone data and can be re-exported.
+
+---
+
+## Future Tasks / Roadmap
 
 2) Add a world graph (town nodes + path edges) that references zone files.
 

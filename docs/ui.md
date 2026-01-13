@@ -9,12 +9,12 @@ Why we do it this way
 
 What it does
 - Builds layout constants (panel sizes, button positions, labels).
-- Handles menu click actions (quit, music, volume, debug, fullscreen).
+- Handles menu click actions (quit, music, volume, debug, editor mode, fullscreen).
 - Provides precomputed stamina labels to avoid consing.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.
-- `update-ui-input`, `handle-menu-click`.
+- `update-ui-input`, `handle-menu-click` (returns menu actions like editor toggle).
 
 Walkthrough: debug toggle
 1) Player opens the menu with Escape.
@@ -24,3 +24,4 @@ Walkthrough: debug toggle
 
 Design note
 - UI toggles debug overlays without touching the rendering logic directly.
+- Editor Mode is exposed as a checkbox, but gameplay systems own the behavior.

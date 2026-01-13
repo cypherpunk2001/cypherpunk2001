@@ -31,6 +31,9 @@ Common tunables
 - `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
 - `:collision-edge-epsilon` to control edge contact tolerance.
 - `:zone-path` to load a zone file from `data/`.
+- `:editor-object-root` and `:editor-export-path` to drive editor palettes/exports.
+- `:editor-tile-layer-id` and `:editor-collision-layer-id` to map editor brushes to layers.
+- `:editor-move-speed` to tune editor camera navigation.
 
 Example: new animation set
 ```lisp

@@ -14,7 +14,7 @@ Start with the game loop, then follow the data flow:
 1) `docs/main.md` (orchestration)
 2) `docs/types.md` and `docs/intent.md` (data layout and action layer)
 3) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
-4) `docs/zone.md` and `docs/rendering.md` (world data + draw pipeline)
+4) `docs/zone.md`, `docs/rendering.md`, `docs/editor.md` (world data + draw pipeline + editor)
 5) `docs/ui.md` and `docs/audio.md` (player-facing polish)
 6) `docs/data.md` and `docs/config.md` (tuning and data-driven behavior)
 7) `docs/utils.md` and `docs/package.md` (supporting helpers)
@@ -77,6 +77,7 @@ Engine files
 - [ai.md](ai.md)
 - [audio.md](audio.md)
 - [ui.md](ui.md)
+- [editor.md](editor.md)
 - [rendering.md](rendering.md)
 - [main.md](main.md)
 

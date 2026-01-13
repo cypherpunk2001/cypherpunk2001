@@ -10,23 +10,24 @@ Why we do it this way
 
 Pipeline overview
 1) Load textures in `load-assets`.
-2) Draw world layers and debug overlays in `draw-world`.
+2) Draw world layers, zone objects, and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD and menu overlays.
+5) Draw HUD, editor overlays, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
-- `draw-world`.
+- `draw-world`, `draw-zone-objects`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
 - `draw-hud`, `draw-menu`, `draw-game`.
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
-2) Draw floor tiles and the current wall map.
-3) If debug is enabled, overlay collision/bounds grid.
-4) Draw player and NPCs in world space.
-5) Draw HUD and pause menu in screen space.
+2) Draw floor tiles, zone layers, and wall map tiles.
+3) Draw placed zone objects inside the view bounds.
+4) If debug is enabled, overlay collision/bounds grid.
+5) Draw player and NPCs in world space.
+6) Draw HUD, editor overlays, and pause menu in screen space.
 
 Example: draw flow
 ```lisp
@@ -41,3 +42,4 @@ Design note
   validate that collision and visuals are aligned.
 - NPC AI debug text is only drawn when explicitly enabled, keeping the
   default render path clean and fast.
+- The camera target follows the editor camera when Editor Mode is active.

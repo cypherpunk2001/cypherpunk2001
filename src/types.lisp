@@ -52,6 +52,7 @@
   menu-volume-button-width menu-volume-button-height menu-volume-gap menu-volume-y
   menu-volume-down-x menu-volume-up-x menu-volume-bars-x
   menu-toggle-gap menu-debug-size menu-debug-x menu-debug-y menu-debug-label
+  menu-editor-size menu-editor-x menu-editor-y menu-editor-label
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
@@ -80,9 +81,20 @@
   ;; Camera state used by 2D mode.
   offset zoom)
 
+(defstruct (editor (:constructor %make-editor))
+  ;; Editor state for in-game map editing.
+  active mode
+  camera-x camera-y move-speed
+  selected-tile tile-count
+  tile-layer-id collision-layer-id
+  object-catalog object-table object-index
+  selection-start-x selection-start-y selection-end-x selection-end-y
+  mode-label tile-label object-label-text status-label status-timer
+  export-path dirty)
+
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player npcs entities audio ui render assets camera)
+  world player npcs entities audio ui render assets camera editor)
 
 (defun world-spawn-center (world)
   ;; Return a spawn center inside the collision bounds.

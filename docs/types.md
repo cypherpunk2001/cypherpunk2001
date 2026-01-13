@@ -13,6 +13,7 @@ Key structs
 - `player`, `npc`: runtime entities with an `intent` and animation/combat state.
 - `world`: zone metadata, wall-map data, collision bounds, and derived sizes.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state.
+- `editor`: editor mode state (camera, palette selections, export status).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors

@@ -50,6 +50,18 @@
   ;; Return true when a tile coordinate blocks movement.
   (wall-blocked-p (world-wall-map world) tx ty))
 
+(defun set-world-blocked-tile (world tx ty value)
+  ;; Update the world wall map at TX/TY for editor changes.
+  (let* ((wall-map (world-wall-map world))
+         (local-x (- tx *wall-origin-x*))
+         (local-y (- ty *wall-origin-y*)))
+    (when (and wall-map
+               (<= 0 local-x)
+               (<= 0 local-y)
+               (< local-x (array-dimension wall-map 1))
+               (< local-y (array-dimension wall-map 0)))
+      (setf (aref wall-map local-y local-x) (if (and value (not (zerop value))) 1 0)))))
+
 (defun world-search-radius (world)
   ;; Return a max search radius in tiles for open spawn placement.
   (max (world-wall-map-width world) (world-wall-map-height world)))

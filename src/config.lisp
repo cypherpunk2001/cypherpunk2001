@@ -16,6 +16,7 @@
 (defparameter *run-speed-mult* 2.0) ;; Movement speed multiplier while running.
 (defparameter *run-stamina-max* 10.0) ;; Seconds of run stamina when full.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
+(defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
 (defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
@@ -26,6 +27,10 @@
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
 (defparameter *zone-path* nil) ;; Zone data path relative to repo (nil uses wall map).
+(defparameter *editor-object-root* "../assets/2 Dungeon Tileset/2 Objects") ;; Root directory for editor object palette.
+(defparameter *editor-export-path* "data/zones/editor-zone.lisp") ;; Default export path for editor zones.
+(defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.
+(defparameter *editor-collision-layer-id* :walls) ;; Zone layer ID used for collision painting.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector
@@ -81,6 +86,8 @@
 (defparameter *debug-npc-text-size* 12) ;; Debug text size for NPC AI overlay.
 (defparameter *debug-npc-text-offset* 18) ;; Extra vertical offset for NPC debug text.
 (defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
+(defparameter *editor-selection-color* (raylib:make-color :r 255 :g 215 :b 0 :a 200)) ;; Editor selection rectangle color.
+(defparameter *editor-cursor-color* (raylib:make-color :r 80 :g 220 :b 255 :a 200)) ;; Editor cursor highlight color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).
@@ -132,7 +139,19 @@
 (defparameter +key-w+ (cffi:foreign-enum-value 'raylib:keyboard-key :w)) ;; Raylib keycode for the W key.
 (defparameter +key-tab+ (cffi:foreign-enum-value 'raylib:keyboard-key :tab)) ;; Raylib keycode for the Tab key.
 (defparameter +key-space+ (cffi:foreign-enum-value 'raylib:keyboard-key :space)) ;; Raylib keycode for the Space key.
+(defparameter +key-q+ (cffi:foreign-enum-value 'raylib:keyboard-key :q)) ;; Raylib keycode for the Q key.
+(defparameter +key-e+ (cffi:foreign-enum-value 'raylib:keyboard-key :e)) ;; Raylib keycode for the E key.
+(defparameter +key-z+ (cffi:foreign-enum-value 'raylib:keyboard-key :z)) ;; Raylib keycode for the Z key.
+(defparameter +key-x+ (cffi:foreign-enum-value 'raylib:keyboard-key :x)) ;; Raylib keycode for the X key.
+(defparameter +key-c+ (cffi:foreign-enum-value 'raylib:keyboard-key :c)) ;; Raylib keycode for the C key.
+(defparameter +key-b+ (cffi:foreign-enum-value 'raylib:keyboard-key :b)) ;; Raylib keycode for the B key.
+(defparameter +key-n+ (cffi:foreign-enum-value 'raylib:keyboard-key :n)) ;; Raylib keycode for the N key.
+(defparameter +key-one+ (cffi:foreign-enum-value 'raylib:keyboard-key :one)) ;; Raylib keycode for the 1 key.
+(defparameter +key-two+ (cffi:foreign-enum-value 'raylib:keyboard-key :two)) ;; Raylib keycode for the 2 key.
+(defparameter +key-three+ (cffi:foreign-enum-value 'raylib:keyboard-key :three)) ;; Raylib keycode for the 3 key.
+(defparameter +key-f5+ (cffi:foreign-enum-value 'raylib:keyboard-key :f5)) ;; Raylib keycode for the F5 key.
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift)) ;; Raylib keycode for the Left Shift key.
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift)) ;; Raylib keycode for the Right Shift key.
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left)) ;; Raylib mouse button code for left click.
+(defparameter +mouse-right+ (cffi:foreign-enum-value 'raylib:mouse-button :right)) ;; Raylib mouse button code for right click.
 (defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle)) ;; Raylib mouse button code for middle click.

@@ -11,9 +11,10 @@ Update flow (high level)
 1) Input/UI -> intent
 2) Movement/combat -> state updates
 3) Animation/effects -> visuals ready to render
+4) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
-- `make-game`: assembles world, entities, audio, UI, render, assets, camera.
+- `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
 - `update-game`: orchestrates system updates.
@@ -21,9 +22,10 @@ Key functions
 
 Walkthrough: one frame
 1) Read input and UI; write intent for player and NPCs.
-2) Update movement/combat; change positions, hit points, and cooldowns.
-3) Advance animation/effect timers.
-4) Render the frame (world -> entities -> HUD/menu).
+2) If editor mode is active, update editor camera/painting and skip gameplay.
+3) Otherwise update movement/combat; change positions, hit points, and cooldowns.
+4) Advance animation/effect timers.
+5) Render the frame (world -> entities -> HUD/menu/editor overlay).
 
 Example: core loop
 ```lisp

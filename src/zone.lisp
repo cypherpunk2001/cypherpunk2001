@@ -152,6 +152,182 @@
           (aref (zone-chunk-tiles chunk) idx))
         0)))
 
+(defun zone-tile-in-bounds-p (zone tx ty)
+  ;; Return true when TX/TY lies within the zone dimensions.
+  (and (<= 0 tx)
+       (< tx (zone-width zone))
+       (<= 0 ty)
+       (< ty (zone-height zone))))
+
+(defun zone-layer-by-id (zone id)
+  ;; Find a layer by ID or return nil.
+  (when zone
+    (loop :for layer :across (zone-layers zone)
+          :when (eql (zone-layer-id layer) id)
+            :do (return layer))))
+
+(defun append-zone-layer (zone layer)
+  ;; Append LAYER to the zone's layer vector.
+  (let* ((layers (zone-layers zone))
+         (count (length layers))
+         (next (make-array (1+ count))))
+    (replace next layers)
+    (setf (aref next count) layer
+          (zone-layers zone) next)
+    layer))
+
+(defun ensure-zone-layer (zone id &key (collision-p nil))
+  ;; Find or create a layer with ID, ensuring collision flag if provided.
+  (let ((layer (zone-layer-by-id zone id)))
+    (if layer
+        layer
+        (append-zone-layer
+         zone
+         (%make-zone-layer :id id
+                           :collision-p collision-p
+                           :chunks (make-hash-table :test 'eql))))))
+
+(defun zone-layer-ensure-chunk (layer chunk-size cx cy)
+  ;; Find or create a chunk in LAYER at chunk coordinates CX/CY.
+  (let* ((key (zone-chunk-key cx cy))
+         (chunks (zone-layer-chunks layer))
+         (chunk (gethash key chunks)))
+    (unless chunk
+      (let ((tiles (make-array (* chunk-size chunk-size) :initial-element 0)))
+        (setf chunk (%make-zone-chunk :x cx :y cy :tiles tiles)
+              (gethash key chunks) chunk)))
+    chunk))
+
+(defun zone-layer-set-tile (layer chunk-size tx ty value)
+  ;; Set a tile in LAYER at TX/TY to VALUE.
+  (when (and (<= 0 tx) (<= 0 ty))
+    (let* ((cx (floor tx chunk-size))
+           (cy (floor ty chunk-size))
+           (chunk (zone-layer-ensure-chunk layer chunk-size cx cy))
+           (local-x (- tx (* cx chunk-size)))
+           (local-y (- ty (* cy chunk-size)))
+           (idx (+ local-x (* local-y chunk-size))))
+      (setf (aref (zone-chunk-tiles chunk) idx) value))))
+
+(defun zone-set-collision-tile (zone tx ty value)
+  ;; Update the collision hash for a tile at TX/TY.
+  (let ((key (tile-key tx ty))
+        (tiles (zone-collision-tiles zone)))
+    (if (and value (not (zerop value)))
+        (setf (gethash key tiles) t)
+        (remhash key tiles))))
+
+(defun zone-remove-object-at (zone tx ty)
+  ;; Remove any object at TX/TY from the zone.
+  (setf (zone-objects zone)
+        (remove-if (lambda (obj)
+                     (and (eql (getf obj :x) tx)
+                          (eql (getf obj :y) ty)))
+                   (zone-objects zone))))
+
+(defun zone-add-object (zone object)
+  ;; Add OBJECT to the zone, replacing any at the same tile.
+  (zone-remove-object-at zone (getf object :x) (getf object :y))
+  (push object (zone-objects zone)))
+
+(defun zone-chunk-spec (chunk chunk-size)
+  ;; Serialize a chunk into a plist spec.
+  (let* ((tiles (zone-chunk-tiles chunk))
+         (count (length tiles))
+         (fill (when (> count 0) (aref tiles 0)))
+         (uniform (and fill
+                       (loop :for idx :from 1 :below count
+                             :always (= (aref tiles idx) fill)))))
+    (list :x (zone-chunk-x chunk)
+          :y (zone-chunk-y chunk)
+          :tiles (if uniform
+                     nil
+                     (coerce tiles 'list))
+          :fill (if uniform fill nil))))
+
+(defun zone-layer-spec (layer chunk-size)
+  ;; Serialize a layer into a plist spec.
+  (let ((chunk-specs nil))
+    (maphash (lambda (_key chunk)
+               (declare (ignore _key))
+               (push (zone-chunk-spec chunk chunk-size) chunk-specs))
+             (zone-layer-chunks layer))
+    (list :id (zone-layer-id layer)
+          :collision (zone-layer-collision-p layer)
+          :chunks (nreverse chunk-specs))))
+
+(defun zone-to-plist (zone)
+  ;; Serialize a zone into a plist suitable for writing.
+  (let* ((chunk-size (zone-chunk-size zone))
+         (layers (loop :for layer :across (zone-layers zone)
+                       :collect (zone-layer-spec layer chunk-size))))
+    (list :id (zone-id zone)
+          :chunk-size chunk-size
+          :width (zone-width zone)
+          :height (zone-height zone)
+          :layers layers
+          :objects (zone-objects zone))))
+
+(defun zone-slice (zone min-x min-y width height)
+  ;; Return a new zone containing the tiles inside the given region.
+  (let* ((chunk-size (zone-chunk-size zone))
+         (max-x (+ min-x (1- width)))
+         (max-y (+ min-y (1- height)))
+         (new-layers (make-array (length (zone-layers zone))))
+         (objects nil))
+    (loop :for idx :from 0
+          :for layer :across (zone-layers zone)
+          :do (let ((new-layer (%make-zone-layer
+                                :id (zone-layer-id layer)
+                                :collision-p (zone-layer-collision-p layer)
+                                :chunks (make-hash-table :test 'eql))))
+                (loop :for ty :from min-y :to max-y
+                      :for local-y :from 0
+                      :do (loop :for tx :from min-x :to max-x
+                                :for local-x :from 0
+                                :for tile = (zone-layer-tile-at layer chunk-size tx ty)
+                                :when (not (zerop tile))
+                                  :do (zone-layer-set-tile new-layer chunk-size
+                                                           local-x local-y tile)))
+                (setf (aref new-layers idx) new-layer)))
+    (dolist (obj (zone-objects zone))
+      (let ((tx (getf obj :x))
+            (ty (getf obj :y)))
+        (when (and (<= min-x tx) (<= tx max-x)
+                   (<= min-y ty) (<= ty max-y))
+          (push (list :id (getf obj :id)
+                      :x (- tx min-x)
+                      :y (- ty min-y))
+                objects))))
+    (%make-zone :id (zone-id zone)
+                :chunk-size chunk-size
+                :width width
+                :height height
+                :layers new-layers
+                :collision-tiles (build-zone-collision-tiles (coerce new-layers 'list)
+                                                             chunk-size)
+                :objects (nreverse objects))))
+
+(defun resolve-zone-path (path)
+  ;; Resolve PATH relative to the system root if needed.
+  (if (and path (not (pathnamep path)))
+      (merge-pathnames path (asdf:system-source-directory :mmorpg))
+      path))
+
+(defun write-zone (zone path)
+  ;; Write ZONE data to PATH, ensuring the destination directory exists.
+  (let* ((full-path (resolve-zone-path path)))
+    (when full-path
+      (ensure-directories-exist full-path)
+      (with-open-file (out full-path
+                           :direction :output
+                           :if-exists :supersede
+                           :if-does-not-exist :create)
+        (with-standard-io-syntax
+          (let ((*print-pretty* t)
+                (*print-right-margin* 100))
+            (pprint (zone-to-plist zone) out)))))))
+
 (defun load-zone (path)
   ;; Load a zone from PATH, returning a zone struct or nil.
   (let* ((data (read-zone-data path))
