@@ -9,7 +9,7 @@ Why we do it this way
 - Per-axis movement resolution avoids "tunneling" and feels more responsive.
 
 Key concepts
-- `world-blocked-tile-p` decides if a tile is blocked (currently using the wall map).
+- `world-blocked-tile-p` decides if a tile is blocked (zone collision tiles are converted into the wall map at load time).
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
 - `world-open-position` finds the nearest open tile that fits the player collider.

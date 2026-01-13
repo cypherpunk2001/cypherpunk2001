@@ -30,6 +30,7 @@ Walkthrough: startup data load
 Common tunables
 - `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
 - `:collision-edge-epsilon` to control edge contact tolerance.
+- `:zone-path` to load a zone file from `data/`.
 
 Example: new animation set
 ```lisp

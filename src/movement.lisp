@@ -241,10 +241,13 @@
 
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
-  (let* ((tile-size-f (float *tile-size* 1.0))
+  (let* ((zone (load-zone *zone-path*))
+         (tile-size-f (float *tile-size* 1.0))
          (tile-dest-size (* tile-size-f *tile-scale*))
          (floor-index *floor-tile-index*)
-         (wall-map (build-wall-map))
+         (wall-map (if zone
+                       (zone-wall-map zone)
+                       (build-wall-map)))
          (wall-map-width (array-dimension wall-map 1))
          (wall-map-height (array-dimension wall-map 0))
          (collision-half-width (* (/ tile-dest-size 2.0) *player-collision-scale*))
@@ -262,6 +265,7 @@
     (%make-world :tile-size-f tile-size-f
                  :tile-dest-size tile-dest-size
                  :floor-index floor-index
+                 :zone zone
                  :wall-map wall-map
                  :wall-map-width wall-map-width
                  :wall-map-height wall-map-height

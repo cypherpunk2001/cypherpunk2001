@@ -34,6 +34,7 @@
     (:tile-size . *tile-size*)
     (:tile-scale . *tile-scale*)
     (:tileset-columns . *tileset-columns*)
+    (:zone-path . *zone-path*)
     (:map-decoration-enabled . *map-decoration-enabled*)
     (:floor-tile-index . *floor-tile-index*)
     (:floor-variant-mod . *floor-variant-mod*)

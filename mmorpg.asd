@@ -8,6 +8,7 @@
                (:file "src/intent")
                (:file "src/types")
                (:file "src/utils")
+               (:file "src/zone")
                (:file "src/movement")
                (:file "src/input")
                (:file "src/combat")

@@ -1,4 +1,5 @@
 (:tunables
+ (:zone-path "data/zones/demo-zone.lisp")
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
  (:npc-spawn-ids (:rat :goblin :orc))

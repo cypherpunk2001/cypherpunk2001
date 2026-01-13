@@ -1,0 +1,178 @@
+;; NOTE: If you change behavior here, update docs/zone.md :)
+(in-package #:mmorpg)
+
+(defstruct (zone-chunk (:constructor %make-zone-chunk))
+  ;; Chunk of tile data in chunk coordinates.
+  x y tiles)
+
+(defstruct (zone-layer (:constructor %make-zone-layer))
+  ;; Layer of chunked tiles with an optional collision flag.
+  id collision-p chunks)
+
+(defstruct (zone (:constructor %make-zone))
+  ;; Zone metadata with layered chunked tiles.
+  id chunk-size width height layers collision-tiles objects)
+
+(defun zone-chunk-key (x y)
+  ;; Pack chunk coordinates into a single integer key.
+  (logior (ash (logand x #xffffffff) 32)
+          (logand y #xffffffff)))
+
+(defun tile-key (tx ty)
+  ;; Pack tile coordinates into a single integer key.
+  (logior (ash (logand tx #xffffffff) 32)
+          (logand ty #xffffffff)))
+
+(defun tile-key-x (key)
+  ;; Extract X from a packed tile key.
+  (ldb (byte 32 32) key))
+
+(defun tile-key-y (key)
+  ;; Extract Y from a packed tile key.
+  (ldb (byte 32 0) key))
+
+(defun read-zone-data (path)
+  ;; Read a single zone data form without evaluation.
+  (let* ((full-path (if (and path (not (pathnamep path)))
+                        (merge-pathnames path (asdf:system-source-directory :mmorpg))
+                        path)))
+    (when (and full-path (probe-file full-path))
+      (with-open-file (in full-path :direction :input)
+        (with-standard-io-syntax
+          (let ((*read-eval* nil))
+            (read in nil nil)))))))
+
+(defun zone-data-plist (data)
+  ;; Normalize zone data to a plist.
+  (cond
+    ((and (listp data) (keywordp (first data))) data)
+    ((and (listp data) (eq (first data) :zone)) (second data))
+    (t nil)))
+
+(defun ensure-tile-vector (tiles)
+  ;; Normalize tile data into a vector.
+  (cond
+    ((null tiles) nil)
+    ((vectorp tiles) tiles)
+    ((listp tiles) (coerce tiles 'vector))
+    (t (error "Zone tiles must be a list or vector: ~s" tiles))))
+
+(defun build-tiles-from-fill (chunk-size fill overrides)
+  ;; Build a tile vector from a fill value plus override coordinates.
+  (let* ((count (* chunk-size chunk-size))
+         (tiles (make-array count :initial-element fill)))
+    (dolist (entry overrides)
+      (destructuring-bind (x y value) entry
+        (when (or (< x 0) (>= x chunk-size)
+                  (< y 0) (>= y chunk-size))
+          (error "Zone override out of bounds: ~s" entry))
+        (setf (aref tiles (+ x (* y chunk-size))) value)))
+    tiles))
+
+(defun zone-chunk-from-spec (spec chunk-size)
+  ;; Build a zone chunk from a plist spec.
+  (let* ((x (getf spec :x))
+         (y (getf spec :y))
+         (tiles (ensure-tile-vector (getf spec :tiles))))
+    (unless (and (numberp x) (numberp y))
+      (error "Zone chunk missing :x or :y: ~s" spec))
+    (unless tiles
+      (let ((fill (getf spec :fill 0))
+            (overrides (getf spec :overrides nil)))
+        (setf tiles (build-tiles-from-fill chunk-size fill overrides))))
+    (let ((expected (* chunk-size chunk-size)))
+      (when (/= (length tiles) expected)
+        (error "Zone chunk ~s,~s has ~d tiles (expected ~d)" x y (length tiles) expected)))
+    (%make-zone-chunk :x x :y y :tiles tiles)))
+
+(defun zone-layer-from-spec (spec chunk-size)
+  ;; Build a zone layer from a plist spec.
+  (let* ((id (getf spec :id))
+         (collision-p (getf spec :collision nil))
+         (chunks (make-hash-table :test 'eql))
+         (chunk-specs (getf spec :chunks nil)))
+    (dolist (chunk-spec chunk-specs)
+      (let* ((chunk (zone-chunk-from-spec chunk-spec chunk-size))
+             (key (zone-chunk-key (zone-chunk-x chunk) (zone-chunk-y chunk))))
+        (setf (gethash key chunks) chunk)))
+    (%make-zone-layer :id id
+                      :collision-p collision-p
+                      :chunks chunks)))
+
+(defun build-zone-collision-tiles (layers chunk-size)
+  ;; Build a hash of blocked tiles from collision layers.
+  (let ((blocked (make-hash-table :test 'eql)))
+    (dolist (layer layers)
+      (when (zone-layer-collision-p layer)
+        (maphash
+         (lambda (_key chunk)
+           (declare (ignore _key))
+           (let* ((tiles (zone-chunk-tiles chunk))
+                  (base-x (* (zone-chunk-x chunk) chunk-size))
+                  (base-y (* (zone-chunk-y chunk) chunk-size))
+                  (limit (length tiles)))
+             (loop :for idx :from 0 :below limit
+                   :for tile = (aref tiles idx)
+                   :when (not (zerop tile))
+                     :do (let ((local-x (mod idx chunk-size))
+                               (local-y (floor idx chunk-size)))
+                           (setf (gethash (tile-key (+ base-x local-x)
+                                                    (+ base-y local-y))
+                                          blocked)
+                                 t)))))
+         (zone-layer-chunks layer))))
+    blocked))
+
+(defun zone-wall-map (zone)
+  ;; Convert collision tiles into a wall map array.
+  (let* ((width (zone-width zone))
+         (height (zone-height zone))
+         (wall-map (make-array (list height width) :initial-element 0)))
+    (maphash
+     (lambda (key _value)
+       (declare (ignore _value))
+       (let ((tx (tile-key-x key))
+             (ty (tile-key-y key)))
+         (when (and (<= 0 tx) (< tx width)
+                    (<= 0 ty) (< ty height))
+           (setf (aref wall-map ty tx) 1))))
+     (zone-collision-tiles zone))
+    wall-map))
+
+(defun zone-layer-tile-at (layer chunk-size tx ty)
+  ;; Return the tile index for a layer at tile coordinate TX/TY.
+  (let* ((cx (floor tx chunk-size))
+         (cy (floor ty chunk-size))
+         (key (zone-chunk-key cx cy))
+         (chunk (gethash key (zone-layer-chunks layer))))
+    (if chunk
+        (let* ((local-x (- tx (* cx chunk-size)))
+               (local-y (- ty (* cy chunk-size)))
+               (idx (+ local-x (* local-y chunk-size))))
+          (aref (zone-chunk-tiles chunk) idx))
+        0)))
+
+(defun load-zone (path)
+  ;; Load a zone from PATH, returning a zone struct or nil.
+  (let* ((data (read-zone-data path))
+         (plist (zone-data-plist data)))
+    (when plist
+      (let* ((id (getf plist :id))
+             (chunk-size (or (getf plist :chunk-size) 32))
+             (width (getf plist :width))
+             (height (getf plist :height))
+             (layer-specs (getf plist :layers nil))
+             (layers (mapcar (lambda (spec)
+                               (zone-layer-from-spec spec chunk-size))
+                             layer-specs))
+             (objects (getf plist :objects nil))
+             (collision-tiles (build-zone-collision-tiles layers chunk-size)))
+        (unless (and (numberp width) (numberp height))
+          (error "Zone requires :width and :height: ~s" plist))
+        (%make-zone :id id
+                    :chunk-size chunk-size
+                    :width width
+                    :height height
+                    :layers (coerce layers 'vector)
+                    :collision-tiles collision-tiles
+                    :objects objects)))))

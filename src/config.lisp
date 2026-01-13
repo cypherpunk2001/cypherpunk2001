@@ -25,6 +25,7 @@
 (defparameter *player-animation-set-id* :player) ;; Animation set ID used for the player sprite set.
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
+(defparameter *zone-path* nil) ;; Zone data path relative to repo (nil uses wall map).
 (defparameter *map-decoration-enabled* nil) ;; When true, draws procedural floor variations under the floor tiles.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.

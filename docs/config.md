@@ -11,7 +11,7 @@ Why we do it this way
 
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
-- Sprite, tileset, world layout, and audio defaults.
+- Sprite, tileset, zone, world layout, and audio defaults.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
@@ -30,6 +30,11 @@ Walkthrough: adjust wall-map bounds
 1) Set `:wall-map-width` and `:wall-map-height` in `data/game-data.lisp`.
 2) `make-world` rebuilds the wall map at startup.
 3) Movement clamps to the new bounds.
+
+Walkthrough: load a zone file
+1) Set `:zone-path` in `data/game-data.lisp`.
+2) `load-zone` builds collision tiles from chunked layers.
+3) The world uses the zone's collision data for blocking tiles.
 
 Example: tuning player speed
 ```lisp
