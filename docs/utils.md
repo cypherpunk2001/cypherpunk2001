@@ -12,7 +12,7 @@ Key helpers
 - `normalize-direction`, `normalize-vector`: avoid faster diagonals.
 - `screen-to-world`: convert mouse to world coordinates with camera zoom.
 - `player-direction`, `player-state`, `player-animation-params`: animation logic helpers.
-- `u32-hash`: deterministic variation for tiling and landmarks.
+- `u32-hash`: deterministic variation for wall tile selection.
 
 Example: diagonal movement normalization
 ```lisp

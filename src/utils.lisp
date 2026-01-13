@@ -76,7 +76,7 @@
     (:attack (values *attack-frame-count* *attack-frame-time*))))
 
 (defun u32-hash (x y &optional (seed 1337))
-  ;; Generate a deterministic 32-bit hash for tile variation.
+  ;; Generate a deterministic 32-bit hash for wall tile selection.
   (logand #xffffffff
           (+ (* x 73856093)
              (* y 19349663)

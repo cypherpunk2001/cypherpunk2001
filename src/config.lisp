@@ -26,7 +26,6 @@
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
 (defparameter *zone-path* nil) ;; Zone data path relative to repo (nil uses wall map).
-(defparameter *map-decoration-enabled* nil) ;; When true, draws procedural floor variations under the floor tiles.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector
@@ -46,13 +45,6 @@
 (defparameter *tile-scale* 4.0) ;; Scale factor for drawing tiles to the screen.
 (defparameter *tileset-columns* 19) ;; Number of columns in the atlas grid.
 (defparameter *floor-tile-index* 40) ;; Which atlas tile index to use for the floor fill.
-(defparameter *floor-variant-indices* #(41 42)) ;; Occasional variants (0 can be used for empty).
-(defparameter *floor-variant-mod* 10) ;; 1 in N chance to use a variant instead of main.
-(defparameter *floor-cluster-size* 3) ;; Size of clustered variant blocks, in tiles.
-(defparameter *floor-seed* 1337) ;; Seed for deterministic floor variation.
-(defparameter *landmark-indices* #(41 42)) ;; Sparse decorative overlays.
-(defparameter *landmark-mod* 80) ;; 1 in N tiles become a landmark.
-(defparameter *landmark-seed* 7331) ;; Seed for deterministic landmark placement.
 (defparameter *wall-map-width* 40) ;; Width of the test wall map in tiles.
 (defparameter *wall-map-height* 24) ;; Height of the test wall map in tiles.
 (defparameter *wall-origin-x* 0) ;; World tile X where the wall map starts.

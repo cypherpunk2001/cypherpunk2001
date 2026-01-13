@@ -1,30 +1,9 @@
 ;; NOTE: If you change behavior here, update docs/rendering.md :)
 (in-package #:mmorpg)
 
-(defun floor-tile-at (x y main-index variant-indices)
-  ;; Choose a floor tile index with clustered variant noise.
-  (let* ((cluster-size (max 1 *floor-cluster-size*))
-         (variant-count (length variant-indices))
-         (variant-mod (max 1 *floor-variant-mod*))
-         (cx (floor x cluster-size))
-         (cy (floor y cluster-size))
-         (h (u32-hash cx cy *floor-seed*))
-         (h2 (u32-hash (+ cx 17) (+ cy 31) (+ *floor-seed* 7331))))
-    (if (and (> variant-count 0)
-             (zerop (mod h variant-mod)))
-        (aref variant-indices (mod h2 variant-count))
-        main-index)))
-
-(defun landmark-tile-at (x y)
-  ;; Choose an optional landmark tile index with sparse hashing.
-  (let* ((variant-count (length *landmark-indices*))
-         (variant-mod (max 1 *landmark-mod*))
-         (h (u32-hash x y *landmark-seed*))
-         (h2 (u32-hash (+ x 19) (+ y 47) (+ *landmark-seed* 101))))
-    (if (and (> variant-count 0)
-             (zerop (mod h variant-mod)))
-        (aref *landmark-indices* (mod h2 variant-count))
-        0)))
+(defun floor-tile-at (_x _y main-index)
+  ;; Return the base floor tile index.
+  main-index)
 
 (defun wall-tile-at (wall-map tx ty)
   ;; Return the wall tile index for rendering or 0 if empty.
@@ -165,9 +144,7 @@
           :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
           :do (loop :for col :from start-col :to end-col
                     :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                    :for tile-index = (floor-tile-at col row
-                                                     floor-index
-                                                     *floor-variant-indices*)
+                    :for tile-index = (floor-tile-at col row floor-index)
                     :do (set-rectangle tile-dest dest-x dest-y
                                        tile-dest-size tile-dest-size)
                         (when (not (zerop tile-index))
@@ -178,15 +155,6 @@
                                                    origin
                                                    0.0
                                                    raylib:+white+))
-                        (let ((landmark-index (landmark-tile-at col row)))
-                          (when (not (zerop landmark-index))
-                            (set-tile-source-rect tile-source landmark-index tile-size-f)
-                            (raylib:draw-texture-pro tileset
-                                                     tile-source
-                                                     tile-dest
-                                                     origin
-                                                     0.0
-                                                     raylib:+white+)))
                         (let ((wall-index (wall-tile-at wall-map col row)))
                           (when (not (zerop wall-index))
                             (set-tile-source-rect tile-source wall-index tile-size-f)

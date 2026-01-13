@@ -35,14 +35,11 @@ mmorpg/
 
 ## Current Task
 
-- Define a Lisp data format for zones/chunks (chunked tile data with collision layers) that we can load directly.
-
+0.5) the Floor tile randomization autogeneration code can be very much simplified because we are about to create 1.) interactive map editor, so clean this code up before proceeding to 1.
 
 ---
 
 ## Future Tasks / Roadmap
-
-0.5) the Floor tile randomization autogeneration code can be very much simplified because we are about to create 1.) interactive map editor, so clean this code up before proceeding to 1.
 
 1) Build an interactive map editor that exports to our custom map format.
    This is to be an interactive in-game map editor (Minecraft-like) that exports our custom map format (accessible from ESC), and saves the custom maps to the data/ location.
@@ -160,5 +157,9 @@ This is the agent’s most useful quick check alongside `make ci`.
 - exits automatically
 
 #### make checkdocs
+
+After adding new code files, there should be new docs files to match.
+
+After refactoring or removing code, leftover references to the old code should always be cleaned, updated or fixed.
 
 - Checks that every `src/foo.lisp` has a matching `docs/foo.md`, errors if any are missing, otherwise prints a friendly reminder when all pass.
