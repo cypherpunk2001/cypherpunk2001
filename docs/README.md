@@ -14,7 +14,7 @@ Start with the game loop, then follow the data flow:
 1) `docs/main.md` (orchestration)
 2) `docs/types.md` and `docs/intent.md` (data layout and action layer)
 3) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
-4) `docs/map.md` and `docs/rendering.md` (world data and draw pipeline)
+4) `docs/rendering.md` (world draw pipeline)
 5) `docs/ui.md` and `docs/audio.md` (player-facing polish)
 6) `docs/data.md` and `docs/config.md` (tuning and data-driven behavior)
 7) `docs/utils.md` and `docs/package.md` (supporting helpers)
@@ -23,7 +23,7 @@ Start with the game loop, then follow the data flow:
 - Behavior lives in systems, not in the main loop.
 - Entities hold data; systems consume data and intent.
 - Rendering never drives gameplay.
-- Data is external and editable (TMX + data files).
+- Data is external and editable (tunable configs and archetypes).
 - Performance matters: reuse objects and cull work early.
 
 ## Flow Diagrams
@@ -44,7 +44,7 @@ Animation + Effects
 
 Render flow (one frame)
 ```
-World (map + tiles) -> Entities -> HUD -> Menu
+World (tiles + walls) -> Entities -> HUD -> Menu
 ```
 
 Data flow (startup)
@@ -70,7 +70,6 @@ Engine files
 - [intent.md](intent.md)
 - [types.md](types.md)
 - [utils.md](utils.md)
-- [map.md](map.md)
 - [input.md](input.md)
 - [movement.md](movement.md)
 - [combat.md](combat.md)

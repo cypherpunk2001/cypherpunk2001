@@ -34,8 +34,6 @@
     (:tile-size . *tile-size*)
     (:tile-scale . *tile-scale*)
     (:tileset-columns . *tileset-columns*)
-    (:map-path . *map-path*)
-    (:collision-layers . *map-collision-layers*)
     (:map-decoration-enabled . *map-decoration-enabled*)
     (:floor-tile-index . *floor-tile-index*)
     (:floor-variant-mod . *floor-variant-mod*)

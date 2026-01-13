@@ -38,7 +38,7 @@ Start with the documentation index and follow the suggested reading order.
 - `docs/main.md` (orchestration)
 - `docs/intent.md` + `docs/types.md` (data + action layer)
 - `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
-- `docs/map.md` and `docs/rendering.md` (world and draw pipeline)
+- `docs/rendering.md` (world and draw pipeline)
 - `docs/ui.md` and `docs/audio.md` (player-facing systems)
 
 The docs explain not just *what* the code does, but *why* the architecture

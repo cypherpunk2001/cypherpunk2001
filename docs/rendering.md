@@ -6,7 +6,7 @@ Purpose
 Why we do it this way
 - Rendering reads state, it does not create it. This keeps logic deterministic
   and makes it easy to add a headless/server mode later.
-- Chunk culling reduces draw calls and keeps large maps performant.
+- The draw pipeline is tile-based so we can add chunk culling and caching later.
 
 Pipeline overview
 1) Load textures in `load-assets`.
@@ -17,13 +17,13 @@ Pipeline overview
 
 Key functions
 - `load-assets`, `unload-assets`.
-- `draw-world`, `draw-map-layer`.
+- `draw-world`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
 - `draw-hud`, `draw-menu`, `draw-game`.
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
-2) Draw floor tiles; if a TMX map is loaded, draw its layers, otherwise draw the fallback wall map.
+2) Draw floor tiles and the current wall map.
 3) If debug is enabled, overlay collision/bounds grid.
 4) Draw player and NPCs in world space.
 5) Draw HUD and pause menu in screen space.

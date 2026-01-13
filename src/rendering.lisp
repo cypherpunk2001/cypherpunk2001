@@ -53,56 +53,6 @@
                    tile-size-f
                    tile-size-f)))
 
-(defun set-map-tile-source-rect (rect tileset tile-index)
-  ;; Set the atlas source rectangle for a TMX tileset tile index.
-  (let* ((columns (map-tileset-columns tileset))
-         (tile-size (float (map-tileset-tilewidth tileset) 1.0))
-         (col (mod tile-index columns))
-         (row (floor tile-index columns)))
-    (set-rectangle rect
-                   (* col tile-size)
-                   (* row tile-size)
-                   tile-size
-                   tile-size)))
-
-(defun draw-map-layer (layer tilesets tile-source tile-dest origin tile-dest-size
-                             start-col end-col start-row end-row)
-  ;; Draw a TMX layer using chunked culling.
-  (loop :for chunk :across (map-layer-chunks layer)
-        :for chunk-left = (map-chunk-x chunk)
-        :for chunk-top = (map-chunk-y chunk)
-        :for chunk-right = (+ chunk-left (map-chunk-width chunk) -1)
-        :for chunk-bottom = (+ chunk-top (map-chunk-height chunk) -1)
-        :when (and (<= chunk-left end-col)
-                   (>= chunk-right start-col)
-                   (<= chunk-top end-row)
-                   (>= chunk-bottom start-row))
-        :do (let* ((tiles (map-chunk-tiles chunk))
-                   (width (map-chunk-width chunk)))
-              (loop :for idx :across (map-chunk-nonzero-indices chunk)
-                    :for local-x = (mod idx width)
-                    :for local-y = (floor idx width)
-                    :for tx = (+ chunk-left local-x)
-                    :for ty = (+ chunk-top local-y)
-                    :when (and (<= start-col tx end-col)
-                               (<= start-row ty end-row))
-                    :do (let* ((gid (aref tiles idx)))
-                          (when (not (zerop gid))
-                            (let ((tileset (map-tileset-for-gid tilesets gid)))
-                              (when tileset
-                                (let ((tile-index (map-tile-index tileset gid)))
-                                  (set-map-tile-source-rect tile-source tileset tile-index)
-                                  (set-rectangle tile-dest
-                                                 (* tx tile-dest-size)
-                                                 (* ty tile-dest-size)
-                                                 tile-dest-size
-                                                 tile-dest-size)
-                                  (raylib:draw-texture-pro (map-tileset-texture tileset)
-                                                           tile-source
-                                                           tile-dest
-                                                           origin
-                                                           0.0
-                                                           raylib:+white+))))))))))
 
 (defun make-render ()
   ;; Allocate reusable rectangles and origin vector for rendering.
@@ -123,8 +73,6 @@
          (half-sprite-height (/ scaled-height 2.0))
          (player-set (get-animation-set *player-animation-set-id* :player))
          (blood-set (get-animation-set :blood))
-         (map (world-map world))
-         (map-tilesets (when map (load-map-tilesets map)))
          (npc-ids (npc-animation-set-ids))
          (npc-animations (make-hash-table :test 'eq))
          (tileset (raylib:load-texture *tileset-path*))
@@ -161,7 +109,6 @@
                   :blood-down blood-down
                   :blood-up blood-up
                   :blood-side blood-side
-                  :map-tilesets map-tilesets
                   :scaled-width scaled-width
                   :scaled-height scaled-height
                   :half-sprite-width half-sprite-width
@@ -187,12 +134,6 @@
                  (raylib:unload-texture (npc-textures-up-idle textures))
                  (raylib:unload-texture (npc-textures-side-idle textures)))
                npc-animations)))
-  (let ((map-tilesets (assets-map-tilesets assets)))
-    (when map-tilesets
-      (loop :for tileset :across map-tilesets
-            :do (let ((texture (map-tileset-texture tileset)))
-                  (when texture
-                    (raylib:unload-texture texture))))))
   (raylib:unload-texture (assets-blood-down assets))
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
@@ -206,8 +147,6 @@
          (tile-source (render-tile-source render))
          (tile-dest (render-tile-dest render))
          (origin (render-origin render))
-         (map (world-map world))
-         (map-tilesets (assets-map-tilesets assets))
          (wall-map (world-wall-map world))
          (x (player-x player))
          (y (player-y player))
@@ -222,73 +161,41 @@
          (end-col (ceiling view-right tile-dest-size))
          (start-row (floor view-top tile-dest-size))
          (end-row (ceiling view-bottom tile-dest-size)))
-    (if map
-        (progn
-          (when *map-decoration-enabled*
-            (loop :for row :from start-row :to end-row
-                  :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-                  :do (loop :for col :from start-col :to end-col
-                            :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                            :for tile-index = (floor-tile-at col row
-                                                             floor-index
-                                                             *floor-variant-indices*)
-                            :do (set-rectangle tile-dest dest-x dest-y
-                                               tile-dest-size tile-dest-size)
-                                (when (not (zerop tile-index))
-                                  (set-tile-source-rect tile-source tile-index tile-size-f)
-                                  (raylib:draw-texture-pro tileset
-                                                           tile-source
-                                                           tile-dest
-                                                           origin
-                                                           0.0
-                                                           raylib:+white+))
-                                (let ((landmark-index (landmark-tile-at col row)))
-                                  (when (not (zerop landmark-index))
-                                    (set-tile-source-rect tile-source landmark-index tile-size-f)
-                                    (raylib:draw-texture-pro tileset
-                                                             tile-source
-                                                             tile-dest
-                                                             origin
-                                                             0.0
-                                                             raylib:+white+))))))
-          (loop :for layer :across (map-data-layers map)
-                :do (draw-map-layer layer map-tilesets tile-source tile-dest origin
-                                    tile-dest-size start-col end-col start-row end-row)))
-        (loop :for row :from start-row :to end-row
-              :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-              :do (loop :for col :from start-col :to end-col
-                        :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                        :for tile-index = (floor-tile-at col row
-                                                         floor-index
-                                                         *floor-variant-indices*)
-                        :do (set-rectangle tile-dest dest-x dest-y
-                                           tile-dest-size tile-dest-size)
-                            (when (not (zerop tile-index))
-                              (set-tile-source-rect tile-source tile-index tile-size-f)
-                              (raylib:draw-texture-pro tileset
-                                                       tile-source
-                                                       tile-dest
-                                                       origin
-                                                       0.0
-                                                       raylib:+white+))
-                            (let ((landmark-index (landmark-tile-at col row)))
-                              (when (not (zerop landmark-index))
-                                (set-tile-source-rect tile-source landmark-index tile-size-f)
-                                (raylib:draw-texture-pro tileset
-                                                         tile-source
-                                                         tile-dest
-                                                         origin
-                                                         0.0
-                                                         raylib:+white+)))
-                            (let ((wall-index (wall-tile-at wall-map col row)))
-                              (when (not (zerop wall-index))
-                                (set-tile-source-rect tile-source wall-index tile-size-f)
-                                (raylib:draw-texture-pro tileset
-                                                         tile-source
-                                                         tile-dest
-                                                         origin
-                                                         0.0
-                                                         raylib:+white+))))))
+    (loop :for row :from start-row :to end-row
+          :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+          :do (loop :for col :from start-col :to end-col
+                    :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                    :for tile-index = (floor-tile-at col row
+                                                     floor-index
+                                                     *floor-variant-indices*)
+                    :do (set-rectangle tile-dest dest-x dest-y
+                                       tile-dest-size tile-dest-size)
+                        (when (not (zerop tile-index))
+                          (set-tile-source-rect tile-source tile-index tile-size-f)
+                          (raylib:draw-texture-pro tileset
+                                                   tile-source
+                                                   tile-dest
+                                                   origin
+                                                   0.0
+                                                   raylib:+white+))
+                        (let ((landmark-index (landmark-tile-at col row)))
+                          (when (not (zerop landmark-index))
+                            (set-tile-source-rect tile-source landmark-index tile-size-f)
+                            (raylib:draw-texture-pro tileset
+                                                     tile-source
+                                                     tile-dest
+                                                     origin
+                                                     0.0
+                                                     raylib:+white+)))
+                        (let ((wall-index (wall-tile-at wall-map col row)))
+                          (when (not (zerop wall-index))
+                            (set-tile-source-rect tile-source wall-index tile-size-f)
+                            (raylib:draw-texture-pro tileset
+                                                     tile-source
+                                                     tile-dest
+                                                     origin
+                                                     0.0
+                                                     raylib:+white+)))))
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row
@@ -297,22 +204,12 @@
                         :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
                             :for ix = (round dest-x)
                             :for iy = (round dest-y)
-                            :do (cond
-                                  (map
-                                  (cond
-                                    ((map-tile-outside-bounds-p map col row)
-                                     (raylib:draw-rectangle ix iy tile-px tile-px
-                                                            (ui-debug-wall-color ui)))
-                                    ((world-blocked-tile-p world col row)
-                                     (raylib:draw-rectangle ix iy tile-px tile-px
-                                                            (ui-debug-collision-color ui)))))
-                                  (t
-                                   (when (wall-blocked-p wall-map col row)
-                                     (raylib:draw-rectangle ix iy tile-px tile-px
-                                                            (ui-debug-collision-color ui)))
-                               (when (not (zerop (wall-tile-at wall-map col row)))
-                                 (raylib:draw-rectangle ix iy tile-px tile-px
-                                                        (ui-debug-wall-color ui)))))
+                            :do (when (wall-blocked-p wall-map col row)
+                                  (raylib:draw-rectangle ix iy tile-px tile-px
+                                                         (ui-debug-collision-color ui)))
+                                (when (not (zerop (wall-tile-at wall-map col row)))
+                                  (raylib:draw-rectangle ix iy tile-px tile-px
+                                                         (ui-debug-wall-color ui)))
                             (raylib:draw-rectangle-lines ix iy tile-px tile-px
                                                          (ui-debug-grid-color ui)))))
       (let ((ix (round (- x (world-collision-half-width world))))

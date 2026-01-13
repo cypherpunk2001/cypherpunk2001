@@ -17,7 +17,6 @@ mmorpg/
     config.lisp
     types.lisp
     utils.lisp
-    map.lisp
     input.lisp
     movement.lisp
     combat.lisp
@@ -35,10 +34,49 @@ mmorpg/
 
 ## Current Task
 
+- Remove TMX support fully (loader, structs, config hooks) now that we are committing to a custom map format.
+
+- Arrange the Future Roadmap tasks in order of design priority (if it matters)
+
 ---
 
 ## Future Tasks / Roadmap
 
+1) Define a Lisp data format for zones/chunks (chunked tile data with collision layers) that we can load directly.
+2) Build an interactive map editor that exports to our custom map format.
+
+2) Build an interactive in-game map editor (Minecraft-like) that exports our custom map format (accessible from ESC), and saves the custom maps to the data/ location. (we can lock it down so players cant modify maps later on.)
+
+Intent:
+- This is a *playable* editor mode where you move around the world camera/player and paint tiles/objects live.
+- The editor should require no authoring tools beyond an assets folder of PNGs.
+
+Core UX:
+- Enter “Editor Mode” in-game.
+- Navigate around the world freely (Minecraft-ish: pan/scroll/wasd, zoom optional).
+- Select a tile from our PNG tile palette and “paint” it onto the world.
+- Place and remove objects (e.g., houses, props) from an object palette.
+- Changes are visible immediately in the running game.
+- When satisfied, export to our Common Lisp metadata format.
+
+Assets-driven authoring:
+- Tiles and placeable objects are discovered from the assets folder (PNG-based).
+- No external map files, no hand-written metadata required to start building.
+- Each tile/object corresponds to an asset identifier (derived from filename or manifest).
+
+World / Zones model:
+- Treat the edit space as one large conceptual world you can roam around.
+- Persistence/export is done in *zones* (and/or chunks) rather than one monolithic file.
+- The editor supports selecting a zone region and exporting it as a zone file.
+- Runtime loads zones (and their chunked tile + collision layers) as the player enters them.
+
+Export format requirement:
+- Export output is our custom Lisp data format for zones/chunks.
+- Zone files contain chunked tile layers + collision layers + object placements.
+- Loading the game loads the current zone(s); editing updates the zone data and can be re-exported.
+
+3) Add a world graph (town nodes + path edges) that references zone files.
+4) Cache static chunks into render textures for large-world rendering performance.
 
 
 ---

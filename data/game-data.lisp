@@ -1,6 +1,4 @@
 (:tunables
- (:map-path nil)
- (:collision-layers nil)
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
  (:npc-spawn-ids (:rat :goblin :orc))

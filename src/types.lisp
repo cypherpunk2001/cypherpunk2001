@@ -28,7 +28,6 @@
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
   tile-size-f tile-dest-size floor-index
-  map collision-tiles
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
   wall-min-x wall-max-x wall-min-y wall-max-y)
@@ -75,7 +74,6 @@
   side-idle side-walk side-attack
   npc-animations
   blood-down blood-up blood-side
-  map-tilesets
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
 (defstruct (camera (:constructor %make-camera))

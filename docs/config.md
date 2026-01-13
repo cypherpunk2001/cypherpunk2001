@@ -11,7 +11,7 @@ Why we do it this way
 
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
-- Sprite, tileset, map, and audio defaults (TMX is optional when `*map-path*` is nil).
+- Sprite, tileset, world layout, and audio defaults.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
@@ -26,10 +26,10 @@ Walkthrough: change movement speed
 2) `load-game-data` applies the tunable at startup.
 3) Movement uses the updated value the next frame.
 
-Walkthrough: disable TMX maps
-1) Set `:map-path` to `nil` in `data/game-data.lisp`.
-2) `load-tmx-map` returns nil and the world builds a fallback wall map.
-3) Collision queries use the fallback data until a map is supplied.
+Walkthrough: adjust wall-map bounds
+1) Set `:wall-map-width` and `:wall-map-height` in `data/game-data.lisp`.
+2) `make-world` rebuilds the wall map at startup.
+3) Movement clamps to the new bounds.
 
 Example: tuning player speed
 ```lisp
