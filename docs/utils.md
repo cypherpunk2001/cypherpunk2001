@@ -11,6 +11,7 @@ Key helpers
 - `clamp`: world bounds and UI limits.
 - `normalize-direction`, `normalize-vector`: avoid faster diagonals.
 - `screen-to-world`: convert mouse to world coordinates with camera zoom.
+- `minimap-view-bounds`: compute a player-centered minimap view box.
 - `basename`: derive a short filename label for UI overlays.
 - `sanitize-identifier`: turn filenames into keyword-safe IDs.
 - `relative-path-from-root`: normalize asset paths relative to a root folder.

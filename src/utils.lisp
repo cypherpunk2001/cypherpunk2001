@@ -29,6 +29,20 @@
             (+ (/ (- sy (raylib:vector2-y camera-offset)) zoom)
                target-y))))
 
+(defun minimap-view-bounds (world player)
+  ;; Return minimap view origin and size centered on the player.
+  (let* ((min-x (world-wall-min-x world))
+         (max-x (world-wall-max-x world))
+         (min-y (world-wall-min-y world))
+         (max-y (world-wall-max-y world))
+         (span-x (max 1.0 (- max-x min-x)))
+         (span-y (max 1.0 (- max-y min-y)))
+         (center-x (player-x player))
+         (center-y (player-y player))
+         (view-min-x (- center-x (/ span-x 2.0)))
+         (view-min-y (- center-y (/ span-y 2.0))))
+    (values view-min-x view-min-y span-x span-y)))
+
 (defun point-in-rect-p (x y rx ry rw rh)
   ;; Return true when point (x,y) lies inside the given rectangle bounds.
   (and (>= x rx)

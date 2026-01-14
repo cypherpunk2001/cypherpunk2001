@@ -73,7 +73,10 @@
           :do (reset-frame-intent (npc-intent npc)))
     (unless (or (ui-menu-open ui)
                 (editor-active editor))
-      (update-target-from-mouse player player-intent camera dt mouse-clicked mouse-down))
+      (let ((minimap-handled (update-target-from-minimap player player-intent ui world
+                                                         dt mouse-clicked mouse-down)))
+        (unless minimap-handled
+          (update-target-from-mouse player player-intent camera dt mouse-clicked mouse-down))))
     (unless (editor-active editor)
       (update-input-direction player player-intent mouse-clicked))
     (unless (or (ui-menu-open ui)

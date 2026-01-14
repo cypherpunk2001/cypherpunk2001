@@ -66,6 +66,52 @@
   (unless mouse-down
     (setf (player-mouse-hold-timer player) 0.0)))
 
+(defun minimap-screen-to-world (ui world player screen-x screen-y)
+  ;; Convert minimap screen coordinates into world space.
+  (multiple-value-bind (view-min-x view-min-y span-x span-y)
+      (minimap-view-bounds world player)
+    (let* ((rx (if (> (ui-minimap-width ui) 0)
+                   (/ (- screen-x (ui-minimap-x ui))
+                      (ui-minimap-width ui))
+                   0.0))
+           (ry (if (> (ui-minimap-height ui) 0)
+                   (/ (- screen-y (ui-minimap-y ui))
+                      (ui-minimap-height ui))
+                   0.0))
+           (clamped-x (clamp rx 0.0 1.0))
+           (clamped-y (clamp ry 0.0 1.0)))
+      (values (+ view-min-x (* clamped-x span-x))
+              (+ view-min-y (* clamped-y span-y))))))
+
+(defun update-target-from-minimap (player intent ui world dt mouse-clicked mouse-down)
+  ;; Handle minimap click/hold to update the player target position.
+  (let* ((mouse-x (raylib:get-mouse-x))
+         (mouse-y (raylib:get-mouse-y))
+         (inside (point-in-rect-p mouse-x mouse-y
+                                  (ui-minimap-x ui)
+                                  (ui-minimap-y ui)
+                                  (ui-minimap-width ui)
+                                  (ui-minimap-height ui))))
+    (when (and inside mouse-clicked)
+      (clear-player-auto-walk player)
+      (multiple-value-bind (target-x target-y)
+          (minimap-screen-to-world ui world player mouse-x mouse-y)
+        (set-intent-target intent target-x target-y)
+        (setf (player-mouse-hold-timer player) 0.0))
+      t)
+    (when (and inside mouse-down (not mouse-clicked))
+      (incf (player-mouse-hold-timer player) dt)
+      (when (>= (player-mouse-hold-timer player) *mouse-hold-repeat-seconds*)
+        (setf (player-mouse-hold-timer player) 0.0)
+        (clear-player-auto-walk player)
+        (multiple-value-bind (target-x target-y)
+            (minimap-screen-to-world ui world player mouse-x mouse-y)
+          (set-intent-target intent target-x target-y)))
+      t)
+    (unless mouse-down
+      (setf (player-mouse-hold-timer player) 0.0))
+    (and inside (or mouse-clicked mouse-down))))
+
 (defun update-input-direction (player intent mouse-clicked)
   ;; Compute input dx/dy and handle auto-walk toggles.
   (let ((input-dx 0.0)

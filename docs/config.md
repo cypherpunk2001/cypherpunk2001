@@ -16,6 +16,7 @@ What lives here
 - Editor defaults (palette root, export path, layer IDs, overlay colors).
 - Zone defaults and editor zone root for creating new zones.
 - Loading overlay duration for zone transitions.
+- Minimap sizing and placement defaults.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
@@ -48,6 +49,10 @@ Walkthrough: configure the world graph
 Walkthrough: tweak zone loading overlay
 1) Set `:zone-loading-seconds` in `data/game-data.lisp`.
 2) UI uses the value to display a brief "Loading..." overlay on zone swaps.
+
+Walkthrough: adjust the minimap size
+1) Set `:minimap-width`, `:minimap-height`, and `:minimap-padding` in `data/game-data.lisp`.
+2) UI repositions the minimap each boot using the new values.
 
 Walkthrough: configure default zone sizing
 1) Set `:zone-default-width`, `:zone-default-height`, and `:zone-default-chunk-size`.

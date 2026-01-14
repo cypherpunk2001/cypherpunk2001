@@ -470,6 +470,53 @@
     (raylib:draw-text "Zone" 128 10 20 raylib:+white+)
     (raylib:draw-text zone-label 176 10 20 raylib:+white+)))
 
+(defun minimap-world-to-screen (ui world player world-x world-y)
+  ;; Convert world coordinates into minimap screen space.
+  (multiple-value-bind (view-min-x view-min-y span-x span-y)
+      (minimap-view-bounds world player)
+    (let* ((rx (if (> span-x 0.0)
+                   (/ (- world-x view-min-x) span-x)
+                   0.0))
+           (ry (if (> span-y 0.0)
+                   (/ (- world-y view-min-y) span-y)
+                   0.0)))
+      (if (and (<= 0.0 rx) (<= rx 1.0)
+               (<= 0.0 ry) (<= ry 1.0))
+          (values (+ (ui-minimap-x ui) (* rx (ui-minimap-width ui)))
+                  (+ (ui-minimap-y ui) (* ry (ui-minimap-height ui))))
+          (values nil nil)))))
+
+(defun draw-minimap (world player npcs ui)
+  ;; Render the minimap overlay and markers.
+  (let* ((map-x (ui-minimap-x ui))
+         (map-y (ui-minimap-y ui))
+         (map-width (ui-minimap-width ui))
+         (map-height (ui-minimap-height ui))
+         (point-size (ui-minimap-point-size ui))
+         (half (truncate (/ point-size 2))))
+    (raylib:draw-rectangle map-x map-y map-width map-height
+                           (ui-minimap-bg-color ui))
+    (raylib:draw-rectangle-lines map-x map-y map-width map-height
+                                 (ui-minimap-border-color ui))
+    (multiple-value-bind (px py)
+        (minimap-world-to-screen ui world player (player-x player) (player-y player))
+      (when (and px py)
+        (raylib:draw-rectangle (- (truncate px) half)
+                               (- (truncate py) half)
+                               point-size
+                               point-size
+                               (ui-minimap-player-color ui))))
+    (loop :for npc :across npcs
+          :when (npc-alive npc)
+          :do (multiple-value-bind (nx ny)
+                  (minimap-world-to-screen ui world player (npc-x npc) (npc-y npc))
+                (when (and nx ny)
+                  (raylib:draw-rectangle (- (truncate nx) half)
+                                         (- (truncate ny) half)
+                                         point-size
+                                         point-size
+                                         (ui-minimap-npc-color ui)))))))
+
 (defun draw-loading-overlay (ui)
   ;; Draw a brief loading label while zones swap.
   (when (> (ui-loading-timer ui) 0.0)
@@ -724,6 +771,7 @@
                   :do (draw-entity entity assets render))
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)
+      (draw-minimap world player npcs ui)
       (draw-loading-overlay ui)
       (draw-editor-ui-overlay editor ui)
       (when (ui-menu-open ui)

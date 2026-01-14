@@ -57,6 +57,8 @@
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
+  minimap-x minimap-y minimap-width minimap-height minimap-point-size
+  minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
   debug-grid-color debug-wall-color debug-collision-color debug-collider-color
   stamina-labels)
 

@@ -78,6 +78,15 @@
          (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
          (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
          (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
+         (minimap-width *minimap-width*)
+         (minimap-height *minimap-height*)
+         (minimap-point-size *minimap-point-size*)
+         (minimap-x (- *window-width* *minimap-padding* *minimap-width*))
+         (minimap-y *minimap-padding*)
+         (minimap-bg-color *minimap-bg-color*)
+         (minimap-border-color *minimap-border-color*)
+         (minimap-player-color *minimap-player-color*)
+         (minimap-npc-color *minimap-npc-color*)
          (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
          (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
          (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -144,6 +153,15 @@
               :menu-text-color menu-text-color
               :menu-button-color menu-button-color
               :menu-button-hover-color menu-button-hover-color
+              :minimap-x minimap-x
+              :minimap-y minimap-y
+              :minimap-width minimap-width
+              :minimap-height minimap-height
+              :minimap-point-size minimap-point-size
+              :minimap-bg-color minimap-bg-color
+              :minimap-border-color minimap-border-color
+              :minimap-player-color minimap-player-color
+              :minimap-npc-color minimap-npc-color
               :debug-grid-color debug-grid-color
               :debug-wall-color debug-wall-color
               :debug-collision-color debug-collision-color

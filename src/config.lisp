@@ -17,6 +17,10 @@
 (defparameter *run-stamina-max* 10.0) ;; Seconds of run stamina when full.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 (defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
+(defparameter *minimap-width* 220) ;; Minimap width in pixels.
+(defparameter *minimap-height* 220) ;; Minimap height in pixels.
+(defparameter *minimap-padding* 12) ;; Padding from screen edges for minimap placement.
+(defparameter *minimap-point-size* 4) ;; Size of player/NPC markers on the minimap.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
 (defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
@@ -94,6 +98,10 @@
 (defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
 (defparameter *editor-cursor-color* (raylib:make-color :r 80 :g 220 :b 255 :a 200)) ;; Editor cursor highlight color.
 (defparameter *editor-spawn-color* (raylib:make-color :r 255 :g 140 :b 60 :a 210)) ;; Editor spawn marker color.
+(defparameter *minimap-bg-color* (raylib:make-color :r 8 :g 12 :b 18 :a 190)) ;; Minimap background color.
+(defparameter *minimap-border-color* (raylib:make-color :r 220 :g 220 :b 220 :a 200)) ;; Minimap border color.
+(defparameter *minimap-player-color* (raylib:make-color :r 80 :g 220 :b 255 :a 220)) ;; Minimap player marker color.
+(defparameter *minimap-npc-color* (raylib:make-color :r 255 :g 120 :b 80 :a 200)) ;; Minimap NPC marker color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).

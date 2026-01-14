@@ -25,7 +25,7 @@ Walkthrough: from intent to position
 3) Call `attempt-move` which resolves collisions per axis.
 4) Clamp to world bounds.
 5) If the player pushes against a world edge, consult the world graph and
-   transition zones (preserving edge offset).
+   transition zones (preserving edge offset and click-to-move targets).
 6) Store final position and velocity.
 
 Example: applying intent
@@ -44,3 +44,5 @@ Design note
 - Spawning on open tiles prevents actors from getting stuck inside blocked
   collision layers.
 - Zone transitions only happen on edges defined in `data/world-graph.lisp`.
+- Active click-to-move targets persist across zone transitions so long walks
+  can continue without re-clicking.

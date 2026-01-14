@@ -13,13 +13,13 @@ Pipeline overview
 2) Draw world layers, zone objects, and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label), loading overlay, editor overlays, and menu overlays.
+5) Draw HUD (stamina + zone label), minimap (centered on player), loading overlay, editor overlays, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
 - `draw-world`, `draw-zone-objects`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
-- `draw-hud`, `draw-menu`, `draw-game`.
+- `draw-hud`, `draw-minimap`, `draw-menu`, `draw-game`.
 - `draw-loading-overlay` for zone swap feedback.
 
 Walkthrough: world rendering
@@ -28,7 +28,7 @@ Walkthrough: world rendering
 3) Draw placed zone objects inside the view bounds.
 4) If debug is enabled, overlay collision/bounds grid.
 5) Draw player and NPCs in world space.
-6) Draw HUD, loading overlay, editor overlays, and pause menu in screen space.
+6) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
 
 Example: draw flow
 ```lisp
@@ -45,3 +45,4 @@ Design note
   default render path clean and fast.
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
+- The minimap recenters on the player, so you can always click ahead to set a target.

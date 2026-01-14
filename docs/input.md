@@ -11,16 +11,23 @@ What it does
 - Converts WASD/arrow keys into a movement intent.
 - Handles auto-walk toggles.
 - Converts mouse clicks into a target intent (click-to-move).
+- Converts minimap clicks into a target intent (minimap click-to-move).
 - Emits action intents for running and attacking.
 - Updates camera zoom from the mouse wheel.
 
 Key functions
-- `update-input-direction`, `update-target-from-mouse`, `update-input-actions`.
+- `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,
+  `update-input-actions`.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.
 2) Write `intent-target-x/y` and mark the target active.
 3) Movement system consumes that target later in the frame.
+
+Walkthrough: minimap click to target
+1) Check if the click lands inside the minimap rectangle.
+2) Convert minimap screen coordinates into world coordinates using a view centered on the player.
+3) Write `intent-target-x/y` and mark the target active.
 
 Example flow
 ```lisp

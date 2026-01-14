@@ -346,9 +346,15 @@
   ;; Apply a zone transition using EXIT metadata.
   (let* ((world (game-world game))
          (player (game-player game))
+         (intent (player-intent player))
          (graph (world-world-graph world))
          (target-id (getf exit :to))
-         (target-path (and graph (world-graph-zone-path graph target-id))))
+         (target-path (and graph (world-graph-zone-path graph target-id)))
+         (had-target (intent-target-active intent))
+         (target-offset-x (when had-target
+                            (- (intent-target-x intent) (player-x player))))
+         (target-offset-y (when had-target
+                            (- (intent-target-y intent) (player-y player)))))
     (when (and target-path (probe-file target-path))
       (let* ((zone (load-zone target-path))
              (spawn-edge (or (getf exit :spawn-edge)
@@ -379,9 +385,11 @@
                     (player-y player) spawn-y
                     (player-dx player) 0.0
                     (player-dy player) 0.0)))
-          (let ((intent (player-intent player)))
-            (reset-frame-intent intent)
-            (clear-intent-target intent))
+          (reset-frame-intent intent)
+          (when had-target
+            (set-intent-target intent
+                               (+ (player-x player) target-offset-x)
+                               (+ (player-y player) target-offset-y)))
           (setf (player-attacking player) nil
                 (player-attack-hit player) nil
                 (player-attack-timer player) 0.0)
