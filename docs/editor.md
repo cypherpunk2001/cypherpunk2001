@@ -59,6 +59,7 @@ Key responsibilities
 - Mutate zone layers and collision tiles in-place for immediate feedback.
 - Update the world wall-map so collisions update live.
 - Export zones with `zone-to-plist` and `zone-slice`.
+- Reset player/NPC spawns and refresh minimap previews when the active zone changes.
 
 Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.

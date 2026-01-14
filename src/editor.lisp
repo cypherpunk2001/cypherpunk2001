@@ -183,6 +183,8 @@
         (setf (player-attacking player) nil
               (player-attack-hit player) nil
               (player-attack-timer player) 0.0))
+      (setf (world-minimap-spawns world)
+            (build-adjacent-minimap-spawns world player))
     (when (editor-active editor)
       (setf (editor-camera-x editor) (player-x player)
             (editor-camera-y editor) (player-y player)))

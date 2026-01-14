@@ -17,6 +17,10 @@ Key concepts
 - `update-zone-transition` checks the world graph and swaps zones on edge exit.
 - `world-open-position` finds the nearest open tile that fits the player collider.
 - `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
+- Zone transitions carry engaged NPCs that are within perception range into the next zone,
+  preserving their offset from the player.
+- Zone transitions cache NPCs per zone (excluding carried NPCs) so returning to a zone
+  restores its population without duplicating spawns.
 - `*collision-edge-epsilon*` avoids treating exact tile-edge contact as blocked.
 
 Walkthrough: from intent to position
@@ -46,3 +50,9 @@ Design note
 - Zone transitions only happen on edges defined in `data/world-graph.lisp`.
 - Active click-to-move targets persist across zone transitions so long walks
   can continue without re-clicking.
+- Zone swaps refresh cached minimap spawn previews from adjacent zones, falling
+  back to the zone-centered default spawn grid (matching `make-npcs`) when a
+  zone has no explicit spawns. Previews are offset using world collision bounds
+  so they align with adjacent zone placement, and render when the player is
+  pushing against a valid exit edge or within `*minimap-preview-edge-tiles*`
+  tiles of one.

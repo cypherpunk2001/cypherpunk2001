@@ -35,57 +35,7 @@ mmorpg/
 
 ## Current Task
 
-**Remember to run `make checkparens` often while generating code. This tool will help you and is faster and more reliable than using python to analyze for missing parentheses.**
-
-Proposed model
-
-Zone remains the unit of edit/save/load (zone-1.lisp, zone-2.lisp, ...).
-Add a “world graph” layer that defines connections between zones.
-Each connection is an exit with:
-from-zone id
-edge or region (e.g., :north, or a rectangular boundary/portal)
-to-zone id
-spawn rule (where to place the player in the target zone)
-Two flavors of exits (pick one, or mix)
-
-Edge‑based transitions (simple, Runescape‑like)
-You walk off the north edge of zone‑1, you load zone‑2 and spawn at its south edge.
-Data: (:from :zone-1 :edge :north :to :zone-2 :spawn-edge :south :offset :preserve-x)
-Portal/region transitions (for gates, doors, caves)
-You define a rectangular region in zone‑1 that triggers a transition.
-Data: (:from :zone-1 :rect (x y w h) :to :zone-2 :spawn (x y))
-Runtime flow
-
-On movement update, check if the player crosses any defined exit trigger.
-If so:
-Save dirty zone (optional auto‑save or explicit).
-Load target zone.
-Place player using the target spawn rule.
-Update world bounds/collision.
-Where to store the graph
-
-Separate file world-graph.lisp for clarity, or embed in each zone under :exits (I’d lean separate so zones stay simple and reusable).
-Editor could eventually place exits visually (future roadmap).
-Questions to refine
-
-Do you want transitions only on the four edges, or also explicit portals?
-
-- Why don't we only make zone transitions on the 4 edges North, South, East, West, and then we can add portals later (they are def planned.)?
-
-Should edges preserve the player’s X/Y offset (so it feels continuous), or always spawn at a fixed point?
-
-- Yes, preserve. It should feel continuous when loading from one zone region in to another. One thing that might help also is if the HUD showed what zone we are currently in while walking (since we have not designed a minimap yet)
-
-Do you want a single “world map” file, or per‑zone exits embedded in each zone?
-
-- I am not certain, I do want it feel like Runescape while walking though from zone to zone, hopefully this will scale since we can kind of chunk it while walking? I will let you make the engineer decision on this.
-
-Should transitions auto‑save dirty zones, or require a manual save?
-
-- Likewise I am not sure yet, you decide please.
-
-If you answer those, I can propose a concrete data schema and runtime checks that match your intent.
-
+Currently when I cross from Zone 1 to zone 2 i dont see the preview dots on the minimap so the enemies kind of surprise me as I cross over. You're a new agent so ingest the codebase as well before beginning. Thanks and welcome to the team.
 
 ---
 

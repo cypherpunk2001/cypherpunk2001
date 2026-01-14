@@ -71,6 +71,107 @@
   (values (+ (* (+ tx 0.5) tile-size))
           (+ (* (+ ty 0.5) tile-size))))
 
+(defun edge-zone-offset (edge span-x span-y)
+  ;; Return world offset to the neighboring zone along EDGE.
+  (ecase edge
+    (:north (values 0.0 (- span-y)))
+    (:south (values 0.0 span-y))
+    (:east (values span-x 0.0))
+    (:west (values (- span-x) 0.0))))
+
+(defun zone-bounds-from-dimensions (tile-dest-size width height collision-half-width collision-half-height)
+  ;; Return wall bounds for a zone with WIDTH/HEIGHT in tiles.
+  (let* ((wall-min-x (+ (* (+ *wall-origin-x* 1) tile-dest-size)
+                        collision-half-width))
+         (wall-max-x (- (* (+ *wall-origin-x* (1- width))
+                           tile-dest-size)
+                        collision-half-width))
+         (wall-min-y (+ (* (+ *wall-origin-y* 1) tile-dest-size)
+                        collision-half-height))
+         (wall-max-y (- (* (+ *wall-origin-y* (1- height))
+                           tile-dest-size)
+                        collision-half-height)))
+    (values wall-min-x wall-max-x wall-min-y wall-max-y)))
+
+(defun default-npc-spawn-positions (center-x center-y tile-size player-half-width)
+  ;; Build default NPC spawn positions around CENTER-X/CENTER-Y.
+  (let* ((npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
+         (gap (max (* *npc-spawn-gap-tiles* tile-size)
+                   (+ player-half-width npc-half)))
+         (cols (max 1 *npc-spawn-columns*))
+         (count (max 0 *npc-count*))
+         (positions nil))
+    (loop :for i :from 0 :below count
+          :for col = (mod i cols)
+          :for row = (floor i cols)
+          :for x = (+ center-x (* (1+ col) gap))
+          :for y = (+ center-y (* row gap))
+          :do (push (cons x y) positions))
+    (nreverse positions)))
+
+(defun build-adjacent-minimap-spawns (world &optional player)
+  ;; Build cached spawn positions for adjacent zones on the minimap.
+  (let* ((graph (world-world-graph world))
+         (zone (world-zone world))
+         (zone-id (and zone (zone-id zone)))
+         (tile-size (world-tile-dest-size world))
+         (min-x (world-wall-min-x world))
+         (max-x (world-wall-max-x world))
+         (min-y (world-wall-min-y world))
+         (max-y (world-wall-max-y world))
+         (span-x (max 1.0 (- max-x min-x)))
+         (span-y (max 1.0 (- max-y min-y)))
+         (spawns nil))
+    (when (and graph zone-id)
+      (dolist (exit (world-graph-exits graph zone-id))
+        (let* ((edge (getf exit :edge))
+               (target-id (getf exit :to))
+               (target-path (and edge target-id
+                                 (world-graph-zone-path graph target-id))))
+          (when (and edge target-path (probe-file target-path))
+            (multiple-value-bind (offset-x offset-y)
+                (edge-zone-offset edge span-x span-y)
+              (let* ((data (read-zone-data target-path))
+                     (plist (zone-data-plist data))
+                     (zone-spawns (getf plist :spawns nil))
+                     (width (getf plist :width))
+                     (height (getf plist :height))
+                     (target-width (if (and (numberp width) (> width 0))
+                                       width
+                                       (world-wall-map-width world)))
+                     (target-height (if (and (numberp height) (> height 0))
+                                        height
+                                        (world-wall-map-height world))))
+                (if (and zone-spawns (not (null zone-spawns)))
+                    (dolist (spawn zone-spawns)
+                      (let* ((tx (getf spawn :x))
+                             (ty (getf spawn :y))
+                             (count (max 1 (getf spawn :count 1))))
+                        (when (and (numberp tx) (numberp ty))
+                          (multiple-value-bind (cx cy)
+                              (tile-center-position tile-size tx ty)
+                            (loop :repeat count
+                                  :do (push (list edge
+                                                  (+ cx offset-x)
+                                                  (+ cy offset-y))
+                                            spawns))))))
+                    (multiple-value-bind (target-min-x target-max-x target-min-y target-max-y)
+                        (zone-bounds-from-dimensions tile-size
+                                                     target-width
+                                                     target-height
+                                                     (world-collision-half-width world)
+                                                     (world-collision-half-height world))
+                      (let ((center-x (/ (+ target-min-x target-max-x) 2.0))
+                            (center-y (/ (+ target-min-y target-max-y) 2.0)))
+                        (dolist (pos (default-npc-spawn-positions center-x center-y
+                                                                 tile-size
+                                                                 (world-collision-half-width world)))
+                          (push (list edge
+                                      (+ (car pos) offset-x)
+                                      (+ (cdr pos) offset-y))
+                                spawns)))))))))))
+    (nreverse spawns)))
+
 (defun position-blocked-p (world x y half-w half-h)
   ;; Return true when a collider centered at X/Y is blocked.
   (blocked-at-p world x y half-w half-h (world-tile-dest-size world)))
@@ -308,6 +409,41 @@
                   weight w))))
       edge)))
 
+(defun world-preview-edge (world player)
+  ;; Return the edge to preview minimap spawns for.
+  (let ((edge (world-exit-edge world player)))
+    (if edge
+        edge
+        (let* ((zone (world-zone world))
+               (zone-id (and zone (zone-id zone)))
+               (graph (world-world-graph world))
+               (threshold (* (world-tile-dest-size world)
+                             (max 0.0 *minimap-preview-edge-tiles*)))
+               (x (player-x player))
+               (y (player-y player))
+               (min-x (world-wall-min-x world))
+               (max-x (world-wall-max-x world))
+               (min-y (world-wall-min-y world))
+               (max-y (world-wall-max-y world)))
+          (when (and graph zone-id (> threshold 0.0))
+            (let ((best-edge nil)
+                  (best-distance nil))
+              (dolist (exit (world-graph-exits graph zone-id))
+                (let* ((edge (getf exit :edge))
+                       (edge-distance (case edge
+                                        (:west (max 0.0 (- x min-x)))
+                                        (:east (max 0.0 (- max-x x)))
+                                        (:north (max 0.0 (- y min-y)))
+                                        (:south (max 0.0 (- max-y y)))
+                                        (t nil))))
+                  (when (and edge-distance
+                             (<= edge-distance threshold))
+                    (when (or (null best-distance)
+                              (< edge-distance best-distance))
+                      (setf best-distance edge-distance
+                            best-edge edge)))))
+              best-edge))))))
+
 (defun world-edge-exit (world edge)
   ;; Return the exit spec for EDGE in the current zone.
   (let* ((zone (world-zone world))
@@ -318,13 +454,9 @@
             :key (lambda (exit) (getf exit :edge))
             :test #'eq))))
 
-(defun edge-spawn-position (world spawn-edge preserve-axis ratio)
+(defun edge-spawn-position-bounds (min-x max-x min-y max-y spawn-edge preserve-axis ratio)
   ;; Return spawn coordinates for a target edge and optional offset.
-  (let* ((min-x (world-wall-min-x world))
-         (max-x (world-wall-max-x world))
-         (min-y (world-wall-min-y world))
-         (max-y (world-wall-max-y world))
-         (spawn-x (case spawn-edge
+  (let* ((spawn-x (case spawn-edge
                     (:west min-x)
                     (:east max-x)
                     (t nil)))
@@ -342,11 +474,118 @@
       (setf spawn-y (edge-preserve-position min-y max-y 0.5)))
     (values spawn-x spawn-y)))
 
+(defun edge-spawn-position (world spawn-edge preserve-axis ratio)
+  ;; Return spawn coordinates for a target edge and optional offset.
+  (edge-spawn-position-bounds (world-wall-min-x world)
+                              (world-wall-max-x world)
+                              (world-wall-min-y world)
+                              (world-wall-max-y world)
+                              spawn-edge preserve-axis ratio))
+
+(defun npc-transition-range-sq (npc world)
+  ;; Return squared perception range for transition decisions.
+  (let* ((archetype (npc-archetype npc))
+         (tiles (if archetype
+                    (npc-archetype-perception-tiles archetype)
+                    0.0))
+         (range (* tiles (world-tile-dest-size world))))
+    (* range range)))
+
+(defun npc-transition-candidate-p (npc player world)
+  ;; Return true when an NPC should follow across a zone edge.
+  (when (npc-alive npc)
+    (let* ((dx (- (player-x player) (npc-x npc)))
+           (dy (- (player-y player) (npc-y npc)))
+           (dist-sq (+ (* dx dx) (* dy dy)))
+           (range-sq (npc-transition-range-sq npc world)))
+      (and (> range-sq 0.0)
+           (<= dist-sq range-sq)
+           (or (npc-provoked npc)
+               (member (npc-behavior-state npc)
+                       '(:aggressive :retaliate :flee)))))))
+
+(defun collect-transition-npcs (npcs player world)
+  ;; Collect NPCs that should carry across zone transitions.
+  (let ((entries nil)
+        (px (player-x player))
+        (py (player-y player)))
+    (loop :for npc :across npcs
+          :when (npc-transition-candidate-p npc player world)
+          :do (push (list npc (- (npc-x npc) px) (- (npc-y npc) py)) entries))
+    (nreverse entries)))
+
+(defun build-carry-npc-table (entries)
+  ;; Build a lookup table for NPCs carried across a zone transition.
+  (let ((table (make-hash-table :test 'eq)))
+    (dolist (entry entries)
+      (setf (gethash (first entry) table) t))
+    table))
+
+(defun cache-zone-npcs (world zone-id npcs carried-table)
+  ;; Cache NPCs for ZONE-ID, excluding those in CARRIED-TABLE.
+  (let ((cache (world-zone-npc-cache world)))
+    (when (and cache zone-id npcs)
+      (if (null carried-table)
+          (setf (gethash zone-id cache) npcs)
+          (let ((kept 0))
+            (loop :for npc :across npcs
+                  :unless (gethash npc carried-table)
+                    :do (incf kept))
+            (let ((stored (make-array kept))
+                  (index 0))
+              (loop :for npc :across npcs
+                    :unless (gethash npc carried-table)
+                      :do (setf (aref stored index) npc)
+                          (incf index))
+              (setf (gethash zone-id cache) stored)))))))
+
+(defun cached-zone-npcs (world zone-id)
+  ;; Return cached NPCs for ZONE-ID, if any.
+  (let ((cache (world-zone-npc-cache world)))
+    (and cache zone-id (gethash zone-id cache))))
+
+(defun reposition-transition-npcs (entries player world)
+  ;; Reposition carried NPCs around the player's new spawn.
+  (let ((moved nil))
+    (dolist (entry entries)
+      (destructuring-bind (npc dx dy) entry
+        (let ((target-x (+ (player-x player) dx))
+              (target-y (+ (player-y player) dy)))
+          (multiple-value-bind (half-w half-h)
+              (npc-collision-half world)
+            (multiple-value-bind (nx ny)
+                (world-open-position-for world target-x target-y half-w half-h)
+              (setf (npc-x npc) nx
+                    (npc-y npc) ny
+                    (npc-home-x npc) nx
+                    (npc-home-y npc) ny
+                    (npc-wander-x npc) nx
+                    (npc-wander-y npc) ny)
+              (reset-frame-intent (npc-intent npc))
+              (push npc moved))))))
+    (nreverse moved)))
+
+(defun merge-npc-vectors (base extras)
+  ;; Append EXTRAS to BASE and return a new NPC array.
+  (if (null extras)
+      base
+      (let* ((base-count (length base))
+             (extra-count (length extras))
+             (result (make-array (+ base-count extra-count))))
+        (replace result base)
+        (loop :for npc :in extras
+              :for i :from base-count
+              :do (setf (aref result i) npc))
+        result)))
+
 (defun transition-zone (game exit edge)
   ;; Apply a zone transition using EXIT metadata.
   (let* ((world (game-world game))
          (player (game-player game))
          (intent (player-intent player))
+         (current-zone (world-zone world))
+         (current-zone-id (and current-zone (zone-id current-zone)))
+         (current-npcs (game-npcs game))
          (graph (world-world-graph world))
          (target-id (getf exit :to))
          (target-path (and graph (world-graph-zone-path graph target-id)))
@@ -354,8 +593,11 @@
          (target-offset-x (when had-target
                             (- (intent-target-x intent) (player-x player))))
          (target-offset-y (when had-target
-                            (- (intent-target-y intent) (player-y player)))))
+                            (- (intent-target-y intent) (player-y player))))
+         (carry (collect-transition-npcs current-npcs player world))
+         (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
+      (cache-zone-npcs world current-zone-id current-npcs carry-table)
       (let* ((zone (load-zone target-path))
              (spawn-edge (or (getf exit :spawn-edge)
                              (getf exit :to-edge)
@@ -393,10 +635,16 @@
           (setf (player-attacking player) nil
                 (player-attack-hit player) nil
                 (player-attack-timer player) 0.0)
-          (let ((npcs (make-npcs player world)))
+          (setf (world-minimap-spawns world)
+                (build-adjacent-minimap-spawns world player))
+          (let* ((target-zone-id (and zone (zone-id zone)))
+                 (cached (cached-zone-npcs world target-zone-id))
+                 (npcs (or cached (make-npcs player world)))
+                 (carried (reposition-transition-npcs carry player world)))
             (ensure-npcs-open-spawn npcs world)
-            (setf (game-npcs game) npcs
-                  (game-entities game) (make-entities player npcs)))
+            (let ((merged (merge-npc-vectors npcs carried)))
+              (setf (game-npcs game) merged
+                    (game-entities game) (make-entities player merged))))
           t)))))
 
 (defun update-zone-transition (game)
@@ -451,21 +699,26 @@
          (wall-max-y (- (* (+ *wall-origin-y* (1- wall-map-height))
                            tile-dest-size)
                         collision-half-height)))
-    (%make-world :tile-size-f tile-size-f
-                 :tile-dest-size tile-dest-size
-                 :floor-index floor-index
-                 :zone zone
-                 :zone-label (zone-label zone)
-                 :world-graph graph
-                 :wall-map wall-map
-                 :wall-map-width wall-map-width
-                 :wall-map-height wall-map-height
-                 :collision-half-width collision-half-width
-                 :collision-half-height collision-half-height
-                 :wall-min-x wall-min-x
-                 :wall-max-x wall-max-x
-                 :wall-min-y wall-min-y
-                 :wall-max-y wall-max-y)))
+    (let ((world (%make-world :tile-size-f tile-size-f
+                              :tile-dest-size tile-dest-size
+                              :floor-index floor-index
+                              :zone zone
+                              :zone-label (zone-label zone)
+                              :world-graph graph
+                              :zone-npc-cache (make-hash-table :test 'eq)
+                              :minimap-spawns nil
+                              :wall-map wall-map
+                              :wall-map-width wall-map-width
+                              :wall-map-height wall-map-height
+                              :collision-half-width collision-half-width
+                              :collision-half-height collision-half-height
+                              :wall-min-x wall-min-x
+                              :wall-max-x wall-max-x
+                              :wall-min-y wall-min-y
+                              :wall-max-y wall-max-y)))
+      (setf (world-minimap-spawns world)
+            (build-adjacent-minimap-spawns world))
+      world)))
 
 (defun apply-zone-to-world (world zone)
   ;; Replace the world's zone and rebuild wall-map-derived bounds.
@@ -500,4 +753,6 @@
       (when graph
         (setf (world-graph-zone-paths graph)
               (build-zone-paths (resolve-zone-path *zone-root*)))))
+    (setf (world-minimap-spawns world)
+          (build-adjacent-minimap-spawns world))
     world))

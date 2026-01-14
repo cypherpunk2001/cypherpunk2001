@@ -19,6 +19,7 @@ Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
+- Refreshes adjacent minimap spawn previews after the player spawn is known.
 - `update-game`: orchestrates system updates.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 

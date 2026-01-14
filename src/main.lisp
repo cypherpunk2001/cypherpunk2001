@@ -20,6 +20,8 @@
            (assets (load-assets world))
            (camera (make-camera))
            (editor (make-editor world assets player)))
+      (setf (world-minimap-spawns world)
+            (build-adjacent-minimap-spawns world player))
       (ensure-npcs-open-spawn npcs world)
       (when *verbose-logs*
         (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"

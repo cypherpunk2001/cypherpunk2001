@@ -27,7 +27,7 @@
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
-  tile-size-f tile-dest-size floor-index zone zone-label world-graph
+  tile-size-f tile-dest-size floor-index zone zone-label world-graph zone-npc-cache minimap-spawns
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
   wall-min-x wall-max-x wall-min-y wall-max-y)
@@ -172,7 +172,7 @@
                :hit-facing-sign 1.0)))
 
 (defun make-npcs (player world &optional (count *npc-count*))
-  ;; Construct a fixed NPC pool placed in a simple grid near the player.
+  ;; Construct a fixed NPC pool placed in a simple grid near the zone center.
   (let* ((zone (world-zone world))
          (spawns (and zone (zone-spawns zone))))
     (if (and spawns (not (null spawns)))
@@ -205,15 +205,17 @@
                (cols (max 1 *npc-spawn-columns*))
                (spawn-ids *npc-spawn-ids*)
                (spawn-count (if spawn-ids (length spawn-ids) 0)))
-          (loop :for i :from 0 :below npc-count
-                :for col = (mod i cols)
-                :for row = (floor i cols)
-                :for x = (+ (player-x player) (* (1+ col) gap))
-                :for y = (+ (player-y player) (* row gap))
-                :for archetype = (if (> spawn-count 0)
-                                     (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
-                                     nil)
-                :do (setf (aref npcs i) (make-npc x y archetype)))
+          (multiple-value-bind (anchor-x anchor-y)
+              (world-spawn-center world)
+            (loop :for i :from 0 :below npc-count
+                  :for col = (mod i cols)
+                  :for row = (floor i cols)
+                  :for x = (+ anchor-x (* (1+ col) gap))
+                  :for y = (+ anchor-y (* row gap))
+                  :for archetype = (if (> spawn-count 0)
+                                       (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
+                                       nil)
+                  :do (setf (aref npcs i) (make-npc x y archetype))))
           npcs))))
 
 (defun make-entities (player npcs)

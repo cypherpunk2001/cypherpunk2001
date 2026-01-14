@@ -32,6 +32,7 @@
     (:minimap-height . *minimap-height*)
     (:minimap-padding . *minimap-padding*)
     (:minimap-point-size . *minimap-point-size*)
+    (:minimap-preview-edge-tiles . *minimap-preview-edge-tiles*)
     (:sprite-frame-width . *sprite-frame-width*)
     (:sprite-frame-height . *sprite-frame-height*)
     (:sprite-scale . *sprite-scale*)

@@ -11,14 +11,14 @@ Why we do it this way
 
 Key structs
 - `player`, `npc`: runtime entities with an `intent` and animation/combat state.
-- `world`: zone metadata, world graph, wall-map data, collision bounds, and derived sizes.
+- `world`: zone metadata, world graph, per-zone NPC cache, wall-map data, collision bounds, derived sizes, and minimap spawn previews (explicit spawns or default grid).
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer and minimap layout).
 - `editor`: editor mode state (camera, palette selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
-- `make-npcs`: spawn a pool using zone spawns when present, else grid spacing.
+- `make-npcs`: spawn a pool using zone spawns when present, else a grid anchored to the zone spawn center.
 - `world-spawn-center`: returns a center point inside world collision bounds.
 - `make-entities`: pack NPCs + player into a stable array.
 

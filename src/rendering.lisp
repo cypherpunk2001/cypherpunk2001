@@ -515,7 +515,24 @@
                                          (- (truncate ny) half)
                                          point-size
                                          point-size
-                                         (ui-minimap-npc-color ui)))))))
+                                         (ui-minimap-npc-color ui)))))
+    (let* ((preview (world-minimap-spawns world))
+           (preview-size (max 2 (truncate (/ point-size 2))))
+           (preview-half (truncate (/ preview-size 2)))
+           (preview-edge (world-preview-edge world player))
+           (preview-exit (and preview-edge (world-edge-exit world preview-edge))))
+      (when preview-exit
+        (dolist (entry preview)
+          (destructuring-bind (edge px py) entry
+            (when (eq edge preview-edge)
+              (multiple-value-bind (sx sy)
+                  (minimap-world-to-screen ui world player px py)
+                (when (and sx sy)
+                  (raylib:draw-rectangle (- (truncate sx) preview-half)
+                                         (- (truncate sy) preview-half)
+                                         preview-size
+                                         preview-size
+                                         (ui-minimap-npc-color ui)))))))))))
 
 (defun draw-loading-overlay (ui)
   ;; Draw a brief loading label while zones swap.

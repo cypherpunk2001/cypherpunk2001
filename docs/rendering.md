@@ -13,7 +13,7 @@ Pipeline overview
 2) Draw world layers, zone objects, and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label), minimap (centered on player), loading overlay, editor overlays, and menu overlays.
+5) Draw HUD (stamina + zone label), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -46,3 +46,9 @@ Design note
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
 - The minimap recenters on the player, so you can always click ahead to set a target.
+- The minimap draws small preview markers for spawns in adjacent zones so you can
+  see potential enemies before crossing; zones without explicit spawns show the
+  zone-centered default grid (matching `make-npcs`) instead. Previews render while
+  you are pushing against a connected edge or standing within
+  `*minimap-preview-edge-tiles*` tiles of one to avoid confusing them with
+  in-zone NPCs.

@@ -21,6 +21,7 @@
 (defparameter *minimap-height* 220) ;; Minimap height in pixels.
 (defparameter *minimap-padding* 12) ;; Padding from screen edges for minimap placement.
 (defparameter *minimap-point-size* 4) ;; Size of player/NPC markers on the minimap.
+(defparameter *minimap-preview-edge-tiles* 1.5) ;; Tiles from an exit edge to show adjacent zone spawn previews.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
 (defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
