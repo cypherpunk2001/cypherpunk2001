@@ -13,6 +13,8 @@
   ;; Build UI layout constants and colors for the menu and HUD.
   (let* ((menu-open nil)
          (exit-requested nil)
+         (loading-label "Loading...")
+         (loading-timer 0.0)
          (menu-padding 32)
          (menu-panel-width (truncate (* *window-width* 0.92)))
          (menu-panel-height (truncate (* *window-height* 0.92)))
@@ -83,6 +85,8 @@
          (stamina-labels (make-stamina-labels)))
     (%make-ui :menu-open menu-open
               :exit-requested exit-requested
+              :loading-label loading-label
+              :loading-timer loading-timer
               :menu-padding menu-padding
               :menu-panel-width menu-panel-width
               :menu-panel-height menu-panel-height
@@ -201,3 +205,15 @@
                                     (raylib:get-mouse-x)
                                     (raylib:get-mouse-y))))
   action))
+
+(defun ui-trigger-loading (ui &optional (seconds *zone-loading-seconds*))
+  ;; Ensure the loading overlay stays visible for at least SECONDS.
+  (when (and seconds (> seconds 0.0))
+    (setf (ui-loading-timer ui)
+          (max (ui-loading-timer ui) seconds))))
+
+(defun update-ui-loading (ui dt)
+  ;; Advance the loading overlay timer.
+  (when (> (ui-loading-timer ui) 0.0)
+    (setf (ui-loading-timer ui)
+          (max 0.0 (- (ui-loading-timer ui) dt)))))

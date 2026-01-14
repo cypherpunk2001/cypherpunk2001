@@ -470,6 +470,24 @@
     (raylib:draw-text "Zone" 128 10 20 raylib:+white+)
     (raylib:draw-text zone-label 176 10 20 raylib:+white+)))
 
+(defun draw-loading-overlay (ui)
+  ;; Draw a brief loading label while zones swap.
+  (when (> (ui-loading-timer ui) 0.0)
+    (let* ((label (ui-loading-label ui))
+           (font-size 22)
+           (padding 16)
+           (text-width (truncate (* (length label) (* font-size 0.6))))
+           (box-width (+ text-width (* padding 2)))
+           (box-height (+ font-size (* padding 2)))
+           (box-x (truncate (- (/ *window-width* 2) (/ box-width 2))))
+           (box-y (truncate (- (/ *window-height* 2) (/ box-height 2))))
+           (text-x (+ box-x padding))
+           (text-y (+ box-y padding)))
+      (raylib:draw-rectangle box-x box-y box-width box-height
+                             (ui-menu-panel-color ui))
+      (raylib:draw-text label text-x text-y font-size
+                        (ui-menu-text-color ui)))))
+
 (defun draw-menu (ui audio editor)
   ;; Render the pause menu and hover states.
   (let* ((mouse-x (raylib:get-mouse-x))
@@ -706,6 +724,7 @@
                   :do (draw-entity entity assets render))
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)
+      (draw-loading-overlay ui)
       (draw-editor-ui-overlay editor ui)
       (when (ui-menu-open ui)
         (draw-menu ui audio editor)))))

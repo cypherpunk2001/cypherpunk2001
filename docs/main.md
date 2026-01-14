@@ -11,6 +11,7 @@ Update flow (high level)
 1) Input/UI -> intent
 2) Movement/combat -> state updates
 3) Zone transitions (edge exits) -> load new zone if needed
+4) UI timers (loading overlay, menus) -> update per frame
 4) Animation/effects -> visuals ready to render
 5) Editor mode (when enabled) overrides gameplay updates
 
@@ -26,7 +27,8 @@ Walkthrough: one frame
 2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
 3) Otherwise update movement/combat; change positions, hit points, and cooldowns.
 4) Advance animation/effect timers.
-5) Render the frame (world -> entities -> HUD/menu/editor overlay).
+5) Update UI timers for loading overlays.
+6) Render the frame (world -> entities -> HUD/loading/menu/editor overlay).
 
 Example: core loop
 ```lisp

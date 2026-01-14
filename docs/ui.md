@@ -11,16 +11,24 @@ What it does
 - Builds layout constants (panel sizes, button positions, labels).
 - Handles menu click actions (quit, music, volume, debug, editor mode, fullscreen).
 - Provides precomputed stamina labels to avoid consing.
+- Tracks a short loading overlay timer for zone transitions.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.
 - `update-ui-input`, `handle-menu-click` (returns menu actions like editor toggle).
+- `ui-trigger-loading`, `update-ui-loading` for zone transition overlays.
 
 Walkthrough: debug toggle
 1) Player opens the menu with Escape.
 2) Click on the debug checkbox.
 3) UI flips `*debug-collision-overlay*` and `*debug-npc-logs*`.
 4) Rendering reads the flag and draws the overlay.
+
+Walkthrough: zone loading overlay
+1) Movement triggers a zone transition.
+2) `ui-trigger-loading` starts a short timer.
+3) `update-ui-loading` counts down each frame.
+4) Rendering draws "Loading..." while the timer is active.
 
 Design note
 - UI toggles debug overlays without touching the rendering logic directly.

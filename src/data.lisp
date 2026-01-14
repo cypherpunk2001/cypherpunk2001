@@ -41,6 +41,7 @@
     (:zone-default-height . *zone-default-height*)
     (:zone-default-chunk-size . *zone-default-chunk-size*)
     (:world-graph-path . *world-graph-path*)
+    (:zone-loading-seconds . *zone-loading-seconds*)
     (:editor-object-root . *editor-object-root*)
     (:editor-export-path . *editor-export-path*)
     (:editor-tile-layer-id . *editor-tile-layer-id*)

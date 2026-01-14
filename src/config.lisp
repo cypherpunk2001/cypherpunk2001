@@ -32,6 +32,7 @@
 (defparameter *zone-default-height* 64) ;; Default zone height in tiles for new zones.
 (defparameter *zone-default-chunk-size* 8) ;; Default chunk size in tiles for new zones.
 (defparameter *world-graph-path* "data/world-graph.lisp") ;; World graph data path relative to repo.
+(defparameter *zone-loading-seconds* 0.35) ;; Seconds to show the zone loading overlay after transitions.
 (defparameter *editor-object-root* "../assets/2 Dungeon Tileset/2 Objects") ;; Root directory for editor object palette.
 (defparameter *editor-export-path* "data/zones/editor-zone.lisp") ;; Default export path for editor zones.
 (defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.

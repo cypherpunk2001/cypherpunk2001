@@ -41,6 +41,7 @@
 (defstruct (ui (:constructor %make-ui))
   ;; UI state for menu layout, colors, and HUD labels.
   menu-open exit-requested
+  loading-label loading-timer
   menu-padding menu-panel-width menu-panel-height menu-panel-x menu-panel-y
   menu-title menu-hint menu-track-title menu-button-label menu-prev-label menu-next-label
   menu-vol-down-label menu-vol-up-label

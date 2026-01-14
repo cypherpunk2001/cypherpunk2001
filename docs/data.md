@@ -34,6 +34,7 @@ Common tunables
 - `:zone-root` for editor zone file discovery and creation.
 - `:zone-default-width`, `:zone-default-height`, `:zone-default-chunk-size` for new zones.
 - `:world-graph-path` to load the world graph edges for zone transitions.
+- `:zone-loading-seconds` to control how long the loading overlay displays.
 - `:editor-object-root` and `:editor-export-path` to drive editor palettes/exports.
 - `:editor-tile-layer-id` and `:editor-collision-layer-id` to map editor brushes to layers.
 - `:editor-move-speed` to tune editor camera navigation.
