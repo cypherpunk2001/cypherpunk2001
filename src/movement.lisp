@@ -184,16 +184,107 @@
         (make-array 0)
         (let* ((height (array-dimension wall-map 0))
                (width (array-dimension wall-map 1))
+               (zone (world-zone world))
+               (zone-id (and zone (zone-id zone)))
+               (graph (world-world-graph world))
+               (exits (and graph zone-id (world-graph-exits graph zone-id)))
                (tile-size (world-tile-dest-size world))
                (origin-x *wall-origin-x*)
                (origin-y *wall-origin-y*)
-               (count 0))
+               (count 0)
+               (perimeter-count 0))
+          (when (and (> width 0) (> height 0))
+            (labels ((edge-exit-p (edge)
+                       (and exits
+                            (find edge exits
+                                  :key (lambda (exit) (getf exit :edge))
+                                  :test #'eq)))
+                     (count-perimeter (tx ty)
+                       (when (zerop (aref wall-map ty tx))
+                         (incf perimeter-count))))
+              (let* ((show-north (not (edge-exit-p :north)))
+                     (show-south (not (edge-exit-p :south)))
+                     (show-west (not (edge-exit-p :west)))
+                     (show-east (not (edge-exit-p :east)))
+                     (show-top (if (= height 1)
+                                   (or show-north show-south)
+                                   show-north))
+                     (show-bottom (and (> height 1) show-south))
+                     (show-left (if (= width 1)
+                                    (or show-west show-east)
+                                    show-west))
+                     (show-right (and (> width 1) show-east)))
+                (when show-top
+                  (loop :for tx :from 0 :below width
+                        :do (count-perimeter tx 0)))
+                (when show-bottom
+                  (loop :for tx :from 0 :below width
+                        :do (count-perimeter tx (1- height))))
+                (when show-left
+                  (let* ((start-ty (if show-top 1 0))
+                         (end-ty (if show-bottom (- height 2) (1- height))))
+                    (when (<= start-ty end-ty)
+                      (loop :for ty :from start-ty :to end-ty
+                            :do (count-perimeter 0 ty)))))
+                (when show-right
+                  (let* ((start-ty (if show-top 1 0))
+                         (end-ty (if show-bottom (- height 2) (1- height)))
+                         (tx (1- width)))
+                    (when (<= start-ty end-ty)
+                      (loop :for ty :from start-ty :to end-ty
+                            :do (count-perimeter tx ty))))))))
           (loop :for ty :from 0 :below height
                 :do (loop :for tx :from 0 :below width
                           :when (not (zerop (aref wall-map ty tx)))
                             :do (incf count)))
-          (let ((points (make-array (* 2 count)))
+          (let ((points (make-array (* 2 (+ count perimeter-count))))
                 (index 0))
+            (when (and (> width 0) (> height 0))
+              (labels ((edge-exit-p (edge)
+                         (and exits
+                              (find edge exits
+                                    :key (lambda (exit) (getf exit :edge))
+                                    :test #'eq)))
+                       (store-perimeter (tx ty)
+                         (when (zerop (aref wall-map ty tx))
+                           (multiple-value-bind (cx cy)
+                               (tile-center-position tile-size
+                                                     (+ tx origin-x)
+                                                     (+ ty origin-y))
+                             (setf (aref points index) cx
+                                   (aref points (1+ index)) cy)
+                             (incf index 2)))))
+                (let* ((show-north (not (edge-exit-p :north)))
+                       (show-south (not (edge-exit-p :south)))
+                       (show-west (not (edge-exit-p :west)))
+                       (show-east (not (edge-exit-p :east)))
+                       (show-top (if (= height 1)
+                                     (or show-north show-south)
+                                     show-north))
+                       (show-bottom (and (> height 1) show-south))
+                       (show-left (if (= width 1)
+                                      (or show-west show-east)
+                                      show-west))
+                       (show-right (and (> width 1) show-east)))
+                  (when show-top
+                    (loop :for tx :from 0 :below width
+                          :do (store-perimeter tx 0)))
+                  (when show-bottom
+                    (loop :for tx :from 0 :below width
+                          :do (store-perimeter tx (1- height))))
+                  (when show-left
+                    (let* ((start-ty (if show-top 1 0))
+                           (end-ty (if show-bottom (- height 2) (1- height))))
+                      (when (<= start-ty end-ty)
+                        (loop :for ty :from start-ty :to end-ty
+                              :do (store-perimeter 0 ty)))))
+                  (when show-right
+                    (let* ((start-ty (if show-top 1 0))
+                           (end-ty (if show-bottom (- height 2) (1- height)))
+                           (tx (1- width)))
+                      (when (<= start-ty end-ty)
+                        (loop :for ty :from start-ty :to end-ty
+                              :do (store-perimeter tx ty))))))))
             (loop :for ty :from 0 :below height
                   :do (loop :for tx :from 0 :below width
                             :when (not (zerop (aref wall-map ty tx)))
