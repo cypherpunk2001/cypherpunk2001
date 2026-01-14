@@ -87,6 +87,7 @@
          (minimap-border-color *minimap-border-color*)
          (minimap-player-color *minimap-player-color*)
          (minimap-npc-color *minimap-npc-color*)
+         (minimap-collision-color *minimap-collision-color*)
          (debug-grid-color (raylib:make-color :r 255 :g 255 :b 255 :a 40))
          (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
          (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
@@ -162,6 +163,7 @@
               :minimap-border-color minimap-border-color
               :minimap-player-color minimap-player-color
               :minimap-npc-color minimap-npc-color
+              :minimap-collision-color minimap-collision-color
               :debug-grid-color debug-grid-color
               :debug-wall-color debug-wall-color
               :debug-collision-color debug-collision-color

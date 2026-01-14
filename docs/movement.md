@@ -11,6 +11,7 @@ Why we do it this way
 Key concepts
 - `world-blocked-tile-p` decides if a tile is blocked (zone collision tiles are converted into the wall map at load time).
 - `set-world-blocked-tile` lets the editor update the wall map at runtime.
+- `build-minimap-collisions` caches collision marker positions for minimap rendering.
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
 - `apply-zone-to-world` swaps the active zone and rebuilds world bounds.

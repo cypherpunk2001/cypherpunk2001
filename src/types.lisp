@@ -27,7 +27,8 @@
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
-  tile-size-f tile-dest-size floor-index zone zone-label world-graph zone-npc-cache minimap-spawns
+  tile-size-f tile-dest-size floor-index zone zone-label world-graph zone-npc-cache
+  minimap-spawns minimap-collisions
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
   wall-min-x wall-max-x wall-min-y wall-max-y)
@@ -59,6 +60,7 @@
   menu-button-color menu-button-hover-color
   minimap-x minimap-y minimap-width minimap-height minimap-point-size
   minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
+  minimap-collision-color
   debug-grid-color debug-wall-color debug-collision-color debug-collider-color
   stamina-labels)
 

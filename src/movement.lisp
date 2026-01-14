@@ -60,7 +60,12 @@
                (<= 0 local-y)
                (< local-x (array-dimension wall-map 1))
                (< local-y (array-dimension wall-map 0)))
-      (setf (aref wall-map local-y local-x) (if (and value (not (zerop value))) 1 0)))))
+      (let* ((next (if (and value (not (zerop value))) 1 0))
+             (prev (aref wall-map local-y local-x)))
+        (when (/= prev next)
+          (setf (aref wall-map local-y local-x) next)
+          (setf (world-minimap-collisions world)
+                (build-minimap-collisions world)))))))
 
 (defun world-search-radius (world)
   ;; Return a max search radius in tiles for open spawn placement.
@@ -171,6 +176,35 @@
                                       (+ (cdr pos) offset-y))
                                 spawns)))))))))))
     (nreverse spawns)))
+
+(defun build-minimap-collisions (world)
+  ;; Build cached collision marker positions for the minimap.
+  (let* ((wall-map (world-wall-map world)))
+    (if (not wall-map)
+        (make-array 0)
+        (let* ((height (array-dimension wall-map 0))
+               (width (array-dimension wall-map 1))
+               (tile-size (world-tile-dest-size world))
+               (origin-x *wall-origin-x*)
+               (origin-y *wall-origin-y*)
+               (count 0))
+          (loop :for ty :from 0 :below height
+                :do (loop :for tx :from 0 :below width
+                          :when (not (zerop (aref wall-map ty tx)))
+                            :do (incf count)))
+          (let ((points (make-array (* 2 count)))
+                (index 0))
+            (loop :for ty :from 0 :below height
+                  :do (loop :for tx :from 0 :below width
+                            :when (not (zerop (aref wall-map ty tx)))
+                              :do (multiple-value-bind (cx cy)
+                                      (tile-center-position tile-size
+                                                            (+ tx origin-x)
+                                                            (+ ty origin-y))
+                                    (setf (aref points index) cx
+                                          (aref points (1+ index)) cy)
+                                    (incf index 2))))
+            points)))))
 
 (defun position-blocked-p (world x y half-w half-h)
   ;; Return true when a collider centered at X/Y is blocked.
@@ -707,6 +741,7 @@
                               :world-graph graph
                               :zone-npc-cache (make-hash-table :test 'eq)
                               :minimap-spawns nil
+                              :minimap-collisions nil
                               :wall-map wall-map
                               :wall-map-width wall-map-width
                               :wall-map-height wall-map-height
@@ -718,6 +753,8 @@
                               :wall-max-y wall-max-y)))
       (setf (world-minimap-spawns world)
             (build-adjacent-minimap-spawns world))
+      (setf (world-minimap-collisions world)
+            (build-minimap-collisions world))
       world)))
 
 (defun apply-zone-to-world (world zone)
@@ -755,4 +792,6 @@
               (build-zone-paths (resolve-zone-path *zone-root*)))))
     (setf (world-minimap-spawns world)
           (build-adjacent-minimap-spawns world))
+    (setf (world-minimap-collisions world)
+          (build-minimap-collisions world))
     world))

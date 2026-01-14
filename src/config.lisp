@@ -103,6 +103,7 @@
 (defparameter *minimap-border-color* (raylib:make-color :r 220 :g 220 :b 220 :a 200)) ;; Minimap border color.
 (defparameter *minimap-player-color* (raylib:make-color :r 80 :g 220 :b 255 :a 220)) ;; Minimap player marker color.
 (defparameter *minimap-npc-color* (raylib:make-color :r 255 :g 120 :b 80 :a 200)) ;; Minimap NPC marker color.
+(defparameter *minimap-collision-color* (raylib:make-color :r 180 :g 180 :b 180 :a 140)) ;; Minimap collision marker color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).

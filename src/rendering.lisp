@@ -498,6 +498,21 @@
                            (ui-minimap-bg-color ui))
     (raylib:draw-rectangle-lines map-x map-y map-width map-height
                                  (ui-minimap-border-color ui))
+    (let* ((collisions (world-minimap-collisions world))
+           (collision-size (max 1 (truncate (/ point-size 2))))
+           (collision-half (truncate (/ collision-size 2))))
+      (when (and collisions (> (length collisions) 0))
+        (loop :for i :from 0 :below (length collisions) :by 2
+              :for wx = (aref collisions i)
+              :for wy = (aref collisions (1+ i))
+              :do (multiple-value-bind (sx sy)
+                      (minimap-world-to-screen ui world player wx wy)
+                    (when (and sx sy)
+                      (raylib:draw-rectangle (- (truncate sx) collision-half)
+                                             (- (truncate sy) collision-half)
+                                             collision-size
+                                             collision-size
+                                             (ui-minimap-collision-color ui)))))))
     (multiple-value-bind (px py)
         (minimap-world-to-screen ui world player (player-x player) (player-y player))
       (when (and px py)

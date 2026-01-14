@@ -12,7 +12,7 @@ What it does
 - Handles menu click actions (quit, music, volume, debug, editor mode, fullscreen).
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
-- Stores minimap layout/colors for rendering and input hit-testing.
+- Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.

@@ -16,7 +16,7 @@ What lives here
 - Editor defaults (palette root, export path, layer IDs, overlay colors).
 - Zone defaults and editor zone root for creating new zones.
 - Loading overlay duration for zone transitions.
-- Minimap sizing, placement, and preview edge distance defaults.
+- Minimap sizing, placement, preview edge distance, and minimap color defaults.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.

@@ -52,3 +52,4 @@ Design note
   you are pushing against a connected edge or standing within
   `*minimap-preview-edge-tiles*` tiles of one to avoid confusing them with
   in-zone NPCs.
+- Collision tiles render as faint minimap markers so navigational blockers are visible.
