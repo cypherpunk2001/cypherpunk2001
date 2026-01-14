@@ -287,3 +287,33 @@
                  :wall-max-x wall-max-x
                  :wall-min-y wall-min-y
                  :wall-max-y wall-max-y)))
+
+(defun apply-zone-to-world (world zone)
+  ;; Replace the world's zone and rebuild wall-map-derived bounds.
+  (let* ((tile-dest-size (world-tile-dest-size world))
+         (wall-map (if zone
+                       (zone-wall-map zone)
+                       (build-wall-map)))
+         (wall-map-width (array-dimension wall-map 1))
+         (wall-map-height (array-dimension wall-map 0))
+         (collision-half-width (world-collision-half-width world))
+         (collision-half-height (world-collision-half-height world))
+         (wall-min-x (+ (* (+ *wall-origin-x* 1) tile-dest-size)
+                        collision-half-width))
+         (wall-max-x (- (* (+ *wall-origin-x* (1- wall-map-width))
+                           tile-dest-size)
+                        collision-half-width))
+         (wall-min-y (+ (* (+ *wall-origin-y* 1) tile-dest-size)
+                        collision-half-height))
+         (wall-max-y (- (* (+ *wall-origin-y* (1- wall-map-height))
+                           tile-dest-size)
+                        collision-half-height)))
+    (setf (world-zone world) zone
+          (world-wall-map world) wall-map
+          (world-wall-map-width world) wall-map-width
+          (world-wall-map-height world) wall-map-height
+          (world-wall-min-x world) wall-min-x
+          (world-wall-max-x world) wall-max-x
+          (world-wall-min-y world) wall-min-y
+          (world-wall-max-y world) wall-max-y)
+    world))

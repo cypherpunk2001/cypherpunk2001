@@ -36,6 +36,10 @@
     (:tile-scale . *tile-scale*)
     (:tileset-columns . *tileset-columns*)
     (:zone-path . *zone-path*)
+    (:zone-root . *zone-root*)
+    (:zone-default-width . *zone-default-width*)
+    (:zone-default-height . *zone-default-height*)
+    (:zone-default-chunk-size . *zone-default-chunk-size*)
     (:editor-object-root . *editor-object-root*)
     (:editor-export-path . *editor-export-path*)
     (:editor-tile-layer-id . *editor-tile-layer-id*)
@@ -309,6 +313,19 @@
   ;; Select the default archetype for new NPCs.
   (or (find-npc-archetype *npc-default-archetype-id*)
       (first-npc-archetype)))
+
+(defun npc-archetype-ids ()
+  ;; Return a vector of available NPC archetype IDs sorted by name.
+  (let ((ids nil))
+    (maphash (lambda (id _value)
+               (declare (ignore _value))
+               (push id ids))
+             *npc-archetypes*)
+    (when ids
+      (setf ids (sort ids #'string< :key #'symbol-name)))
+    (if ids
+        (coerce ids 'vector)
+        (make-array 0))))
 
 (defun npc-animation-set-ids ()
   ;; Return the unique animation set IDs referenced by NPC archetypes.

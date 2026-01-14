@@ -11,7 +11,7 @@
 
 (defstruct (zone (:constructor %make-zone))
   ;; Zone metadata with layered chunked tiles.
-  id chunk-size width height layers collision-tiles objects)
+  id chunk-size width height layers collision-tiles objects spawns)
 
 (defun zone-chunk-key (x y)
   ;; Pack chunk coordinates into a single integer key.
@@ -230,6 +230,19 @@
   (zone-remove-object-at zone (getf object :x) (getf object :y))
   (push object (zone-objects zone)))
 
+(defun zone-remove-spawn-at (zone tx ty)
+  ;; Remove any spawn at TX/TY from the zone.
+  (setf (zone-spawns zone)
+        (remove-if (lambda (spawn)
+                     (and (eql (getf spawn :x) tx)
+                          (eql (getf spawn :y) ty)))
+                   (zone-spawns zone))))
+
+(defun zone-add-spawn (zone spawn)
+  ;; Add SPAWN to the zone, replacing any at the same tile.
+  (zone-remove-spawn-at zone (getf spawn :x) (getf spawn :y))
+  (push spawn (zone-spawns zone)))
+
 (defun zone-chunk-spec (chunk chunk-size)
   ;; Serialize a chunk into a plist spec.
   (let* ((tiles (zone-chunk-tiles chunk))
@@ -266,7 +279,8 @@
           :width (zone-width zone)
           :height (zone-height zone)
           :layers layers
-          :objects (zone-objects zone))))
+          :objects (zone-objects zone)
+          :spawns (zone-spawns zone))))
 
 (defun zone-slice (zone min-x min-y width height)
   ;; Return a new zone containing the tiles inside the given region.
@@ -274,7 +288,8 @@
          (max-x (+ min-x (1- width)))
          (max-y (+ min-y (1- height)))
          (new-layers (make-array (length (zone-layers zone))))
-         (objects nil))
+         (objects nil)
+         (spawns nil))
     (loop :for idx :from 0
           :for layer :across (zone-layers zone)
           :do (let ((new-layer (%make-zone-layer
@@ -299,6 +314,15 @@
                       :x (- tx min-x)
                       :y (- ty min-y))
                 objects))))
+    (dolist (spawn (zone-spawns zone))
+      (let ((tx (getf spawn :x))
+            (ty (getf spawn :y)))
+        (when (and (<= min-x tx) (<= tx max-x)
+                   (<= min-y ty) (<= ty max-y))
+          (push (list :id (getf spawn :id)
+                      :x (- tx min-x)
+                      :y (- ty min-y))
+                spawns))))
     (%make-zone :id (zone-id zone)
                 :chunk-size chunk-size
                 :width width
@@ -306,7 +330,23 @@
                 :layers new-layers
                 :collision-tiles (build-zone-collision-tiles (coerce new-layers 'list)
                                                              chunk-size)
-                :objects (nreverse objects))))
+                :objects (nreverse objects)
+                :spawns (nreverse spawns))))
+
+(defun make-empty-zone (id width height &key (chunk-size *zone-default-chunk-size*))
+  ;; Create a blank zone with no layers or placed content.
+  (%make-zone :id id
+              :chunk-size chunk-size
+              :width width
+              :height height
+              :layers (make-array 0)
+              :collision-tiles (make-hash-table :test 'eql)
+              :objects nil
+              :spawns nil))
+
+(defun zone-resize (zone width height)
+  ;; Return ZONE resized to WIDTH/HEIGHT tiles, preserving existing content.
+  (zone-slice zone 0 0 width height))
 
 (defun resolve-zone-path (path)
   ;; Resolve PATH relative to the system root if needed.
@@ -342,6 +382,7 @@
                                (zone-layer-from-spec spec chunk-size))
                              layer-specs))
              (objects (getf plist :objects nil))
+             (spawns (getf plist :spawns nil))
              (collision-tiles (build-zone-collision-tiles layers chunk-size)))
         (unless (and (numberp width) (numberp height))
           (error "Zone requires :width and :height: ~s" plist))
@@ -351,4 +392,5 @@
                     :height height
                     :layers (coerce layers 'vector)
                     :collision-tiles collision-tiles
-                    :objects objects)))))
+                    :objects objects
+                    :spawns spawns)))))

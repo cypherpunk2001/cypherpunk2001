@@ -1,7 +1,7 @@
 # editor.lisp
 
 Purpose
-- Provide an in-game, Minecraft-style map editor that paints tiles/objects and exports zones.
+- Provide an in-game, Minecraft-style map editor that paints tiles/objects, places spawns, and exports zones.
 
 Why we do it this way
 - Editing in the running game keeps collisions and visuals aligned.
@@ -11,15 +11,17 @@ Why we do it this way
 Core UX
 - Toggle Editor Mode from the Escape menu.
 - Move the editor camera freely to inspect tiles.
-- Paint tiles, paint collision, or place objects.
+- Paint tiles, paint collision, place objects, or place spawn points.
 - Export the current selection (or full zone) to `data/`.
+ - Create, delete, cycle, rename, and resize zones from hotkeys.
 
 Quick start (recommended flow)
 1) Esc -> toggle Editor Mode.
 2) Tile mode (`1`), then `Q/E` to pick a tile index.
 3) Left-click to paint, right-click to erase.
 4) Collision mode (`2`) to paint blocked tiles (LMB add, RMB remove).
-5) Press `F5` to export the full zone to `data/`.
+5) Spawn mode (`4`) to place NPC spawns (LMB add, RMB remove).
+6) Press `F5` to export the full zone to `data/`.
 
 Selection export (optional)
 1) Hover a tile, press `B` to set selection start.
@@ -28,17 +30,30 @@ Selection export (optional)
 4) Press `C` to clear the selection.
 
 What the on-screen text means
+- `Zone` = current zone name, index, and size.
 - `Mode` = current brush (tile/collision/object).
 - `Tile` = current tile index out of the tileset atlas.
-- `Object` = current object sprite from the palette folder.
+- `Object` / `Spawn` = current object sprite or NPC archetype selection.
 
 Controls (default)
-- `1` tile mode, `2` collision mode, `3` object mode.
-- `Q`/`E` cycle tiles, `Z`/`X` cycle objects.
+- `1` tile mode, `2` collision mode, `3` object mode, `4` spawn mode.
+- `Q`/`E` cycle tiles, `Z`/`X` cycle objects or spawns.
 - `WASD`/arrows move the editor camera.
 - `LMB` paint, `RMB` erase.
 - `B` set selection start, `N` set selection end, `C` clear selection.
 - `F5` export the selection (or full zone).
+- `F6` create zone, `F7` delete zone, `F8`/`F9` cycle zones.
+- `F10` shrink zone, `F11` grow zone, `F12` rename zone.
+
+Editor asset paths (configurable)
+- Tileset atlas path: `*tileset-path*` (`:tileset-path` in `data/game-data.lisp`).
+- Object palette root: `*editor-object-root*` (`:editor-object-root` in `data/game-data.lisp`).
+- Export path: `*editor-export-path*` (`:editor-export-path` in `data/game-data.lisp`).
+- Layer IDs used by brushes: `*editor-tile-layer-id*` and `*editor-collision-layer-id*`.
+- Zone root (for create/delete/list): `*zone-root*` (`:zone-root` in `data/game-data.lisp`).
+
+Spawn palette
+- Spawn selections are pulled from NPC archetypes loaded in `data/game-data.lisp`.
 
 Key responsibilities
 - Maintain editor state (`editor` struct) and cached UI labels.
@@ -51,3 +66,4 @@ Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.
 - Selection export is chunk-aware, so we can evolve to streaming later.
 - Export defaults to `*editor-export-path*` unless a zone path is already set.
+- Spawn mode writes `:spawns` into the zone file so runtime NPC placement can be data-driven.

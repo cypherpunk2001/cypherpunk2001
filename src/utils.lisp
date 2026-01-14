@@ -46,6 +46,27 @@
         (subseq path-str (1+ cut))
         path-str)))
 
+(defun sanitize-identifier (name &key (package :keyword))
+  ;; Convert NAME into a keyword-safe identifier.
+  (let* ((clean (map 'string
+                     (lambda (ch)
+                       (if (or (digit-char-p ch)
+                               (alpha-char-p ch))
+                           ch
+                           #\-))
+                     name))
+         (trimmed (string-trim "-" clean)))
+    (intern (string-upcase trimmed) package)))
+
+(defun relative-path-from-root (path root)
+  ;; Return PATH as a relative string from ROOT, if possible.
+  (let* ((root-str (namestring (uiop:ensure-directory-pathname root)))
+         (full-str (namestring path)))
+    (if (and (<= (length root-str) (length full-str))
+             (string= root-str full-str :end2 (length root-str)))
+        (string-left-trim "/" (subseq full-str (length root-str)))
+        full-str)))
+
 (defun sprite-path (filename)
   ;; Build a sprite sheet path under *player-sprite-dir*.
   (format nil "~a/~a" *player-sprite-dir* filename))

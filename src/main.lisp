@@ -90,7 +90,7 @@
         (start-player-attack player player-intent)))
     (when *verbose-logs*
       (log-player-position player world))
-    (update-editor editor world camera ui dt)
+    (update-editor editor game dt)
     (unless (editor-active editor)
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))

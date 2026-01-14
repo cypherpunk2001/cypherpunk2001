@@ -64,14 +64,23 @@ Export format requirement:
 - Export output is our custom Lisp data format for zones/chunks.
 - Zone files contain chunked tile layers + collision layers + object placements.
 - Loading the game loads the current zone(s); editing updates the zone data and can be re-exported.
+Immediate priorities:
+- Make zones larger by default and allow configurable zone sizing (shared size is OK).
+- Add editor workflows to create new zones and delete existing zones.
+- Add editor placement for NPC/monster spawn regions or points.
+- Document editor asset paths so new sprites can be added without code edits.
 
 ---
 
 ## Future Tasks / Roadmap
 
-2) Add a world graph (town nodes + path edges) that references zone files.
+2) Add zone lifecycle tools: create, delete, rename, resize, and list zones.
 
-3) Cache static chunks into render textures for large-world rendering performance.
+3) Add spawn tables: editor placements for NPC/monster spawns, and runtime consumption.
+
+4) Add a world graph (town nodes + path edges) that references zone files.
+
+5) Cache static chunks into render textures for large-world rendering performance.
 
 ---
 

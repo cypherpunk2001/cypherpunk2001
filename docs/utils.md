@@ -11,6 +11,9 @@ Key helpers
 - `clamp`: world bounds and UI limits.
 - `normalize-direction`, `normalize-vector`: avoid faster diagonals.
 - `screen-to-world`: convert mouse to world coordinates with camera zoom.
+- `basename`: derive a short filename label for UI overlays.
+- `sanitize-identifier`: turn filenames into keyword-safe IDs.
+- `relative-path-from-root`: normalize asset paths relative to a root folder.
 - `player-direction`, `player-state`, `player-animation-params`: animation logic helpers.
 - `u32-hash`: deterministic variation for wall tile selection.
 

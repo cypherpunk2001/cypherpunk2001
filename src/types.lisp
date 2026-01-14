@@ -88,6 +88,8 @@
   selected-tile tile-count
   tile-layer-id collision-layer-id
   object-catalog object-table object-index
+  zone-root zone-files zone-index zone-label
+  spawn-catalog spawn-index
   selection-start-x selection-start-y selection-end-x selection-end-y
   mode-label tile-label object-label-text status-label status-timer
   export-path dirty)
@@ -169,25 +171,48 @@
 
 (defun make-npcs (player world &optional (count *npc-count*))
   ;; Construct a fixed NPC pool placed in a simple grid near the player.
-  (let* ((npc-count (max 0 count))
-         (npcs (make-array npc-count))
-         (tile-size (world-tile-dest-size world))
-         (npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
-         (gap (max (* *npc-spawn-gap-tiles* tile-size)
-                   (+ (world-collision-half-width world) npc-half)))
-         (cols (max 1 *npc-spawn-columns*))
-         (spawn-ids *npc-spawn-ids*)
-         (spawn-count (if spawn-ids (length spawn-ids) 0)))
-    (loop :for i :from 0 :below npc-count
-          :for col = (mod i cols)
-          :for row = (floor i cols)
-          :for x = (+ (player-x player) (* (1+ col) gap))
-          :for y = (+ (player-y player) (* row gap))
-          :for archetype = (if (> spawn-count 0)
-                               (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
-                               nil)
-          :do (setf (aref npcs i) (make-npc x y archetype)))
-    npcs))
+  (let* ((zone (world-zone world))
+         (spawns (and zone (zone-spawns zone))))
+    (if (and spawns (not (null spawns)))
+        (let* ((tile-size (world-tile-dest-size world))
+               (total (loop :for spawn :in spawns
+                            :for count = (getf spawn :count 1)
+                            :sum (max 1 count)))
+               (npcs (make-array total)))
+          (loop :with index = 0
+                :for spawn :in spawns
+                :for count = (getf spawn :count 1)
+                :for spawn-count = (max 1 count)
+                :do (let* ((tx (getf spawn :x))
+                           (ty (getf spawn :y))
+                           (id (or (getf spawn :id) *npc-default-archetype-id*))
+                           (archetype (find-npc-archetype id)))
+                      (multiple-value-bind (x y)
+                          (tile-center-position tile-size (or tx 0) (or ty 0))
+                        (loop :repeat spawn-count
+                              :do (setf (aref npcs index)
+                                        (make-npc x y archetype))
+                                  (incf index)))))
+          npcs)
+        (let* ((npc-count (max 0 count))
+               (npcs (make-array npc-count))
+               (tile-size (world-tile-dest-size world))
+               (npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
+               (gap (max (* *npc-spawn-gap-tiles* tile-size)
+                         (+ (world-collision-half-width world) npc-half)))
+               (cols (max 1 *npc-spawn-columns*))
+               (spawn-ids *npc-spawn-ids*)
+               (spawn-count (if spawn-ids (length spawn-ids) 0)))
+          (loop :for i :from 0 :below npc-count
+                :for col = (mod i cols)
+                :for row = (floor i cols)
+                :for x = (+ (player-x player) (* (1+ col) gap))
+                :for y = (+ (player-y player) (* row gap))
+                :for archetype = (if (> spawn-count 0)
+                                     (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
+                                     nil)
+                :do (setf (aref npcs i) (make-npc x y archetype)))
+          npcs))))
 
 (defun make-entities (player npcs)
   ;; Build a stable entity array containing NPCs followed by the player.

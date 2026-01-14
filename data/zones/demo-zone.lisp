@@ -1,22 +1,31 @@
-(:id :demo
- :chunk-size 8
- :width 8
- :height 8
- :layers
- ((:id :floor :collision nil
-   :chunks ((:x 0 :y 0 :fill 0)))
-  (:id :walls :collision t
-   :chunks
-   ((:x 0 :y 0
-     :fill 0
-     :overrides
-     ((0 0 1) (1 0 1) (2 0 1) (3 0 1) (4 0 1) (5 0 1) (6 0 1) (7 0 1)
-      (0 1 1) (7 1 1)
-      (0 2 1) (7 2 1)
-      (0 3 1) (7 3 1)
-      (0 4 1) (7 4 1)
-      (0 5 1) (7 5 1)
-      (0 6 1) (7 6 1)
-      (0 7 1) (1 7 1) (2 7 1) (3 7 1) (4 7 1) (5 7 1) (6 7 1) (7 7 1))))))
- :objects
- ((:id :spawn :x 3 :y 3)))
+
+(:ID :DEMO :CHUNK-SIZE 8 :WIDTH 64 :HEIGHT 64 :LAYERS
+ ((:ID :FLOOR :COLLISION NIL :CHUNKS
+   ((:X 0 :Y 0 :TILES
+     (80 80 0 80 80 58 80 58 87 80 80 80 80 80 80 80 80 80 80 80 80 80 80 84 80 80 80 80 80 80 80
+      85 80 80 80 80 80 80 80 85 80 80 80 80 80 80 80 85 85 80 80 80 80 80 80 85 85 85 85 85 80 85
+      80 80)
+     :FILL NIL)
+    (:X 2 :Y 3 :TILES NIL :FILL 0) (:X 5 :Y 3 :TILES NIL :FILL 0) (:X 4 :Y 3 :TILES NIL :FILL 0)
+    (:X 3 :Y 4 :TILES NIL :FILL 0)
+    (:X 4 :Y 4 :TILES
+     (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 40 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+     :FILL NIL)
+    (:X 5 :Y 4 :TILES NIL :FILL 0) (:X 3 :Y 2 :TILES NIL :FILL 0) (:X 4 :Y 2 :TILES NIL :FILL 0)
+    (:X 5 :Y 2 :TILES NIL :FILL 0) (:X 2 :Y 4 :TILES NIL :FILL 0) (:X 6 :Y 4 :TILES NIL :FILL 0)
+    (:X 6 :Y 3 :TILES NIL :FILL 0) (:X 3 :Y 3 :TILES NIL :FILL 0)
+    (:X 2 :Y 2 :TILES
+     (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 45 0 0 0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+     :FILL NIL)
+    (:X 1 :Y 3 :TILES NIL :FILL 0) (:X 1 :Y 2 :TILES NIL :FILL 0) (:X 6 :Y 2 :TILES NIL :FILL 0)
+    (:X 6 :Y 5 :TILES NIL :FILL 0) (:X 5 :Y 5 :TILES NIL :FILL 0)))
+  (:ID :WALLS :COLLISION T :CHUNKS
+   ((:X 0 :Y 0 :TILES
+     (1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0
+      1 1 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1)
+     :FILL NIL))))
+ :OBJECTS ((:ID :SPAWN :X 3 :Y 3)) :SPAWNS
+ ((:ID :GOBLIN :X 27 :Y 24) (:ID :GOBLIN :X 28 :Y 24) (:ID :GOBLIN :X 28 :Y 25)
+  (:ID :GOBLIN :X 27 :Y 25)))

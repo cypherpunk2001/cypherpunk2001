@@ -13,6 +13,7 @@ Key concepts
 - `set-world-blocked-tile` lets the editor update the wall map at runtime.
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
+- `apply-zone-to-world` swaps the active zone and rebuilds world bounds.
 - `world-open-position` finds the nearest open tile that fits the player collider.
 - `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
 - `*collision-edge-epsilon*` avoids treating exact tile-edge contact as blocked.

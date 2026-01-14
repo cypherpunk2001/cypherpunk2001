@@ -13,6 +13,7 @@ What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Editor defaults (palette root, export path, layer IDs, overlay colors).
+- Zone defaults and editor zone root for creating new zones.
 - Movement, combat, NPC behavior, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
@@ -37,9 +38,18 @@ Walkthrough: load a zone file
 2) `load-zone` builds collision tiles from chunked layers.
 3) The world uses the zone's collision data for blocking tiles.
 
+Walkthrough: configure default zone sizing
+1) Set `:zone-default-width`, `:zone-default-height`, and `:zone-default-chunk-size`.
+2) New zones created in the editor use these values.
+3) Resize hotkeys step by the active zone's chunk size.
+
 Walkthrough: customize editor export
 1) Set `:editor-export-path` in `data/game-data.lisp`.
 2) Editor Mode writes zone files to the new location on export.
+
+Walkthrough: change zone root
+1) Set `:zone-root` in `data/game-data.lisp`.
+2) Editor zone create/delete/list operations use the new folder.
 
 Example: tuning player speed
 ```lisp

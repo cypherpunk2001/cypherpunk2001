@@ -5,18 +5,6 @@
   ;; Object metadata for editor palette entries.
   id label path texture width height)
 
-(defun sanitize-object-id (name)
-  ;; Convert NAME into a keyword-safe identifier.
-  (let* ((clean (map 'string
-                     (lambda (ch)
-                       (if (or (digit-char-p ch)
-                               (alpha-char-p ch))
-                           ch
-                           #\-))
-                     name))
-         (trimmed (string-trim "-" clean)))
-    (intern (string-upcase trimmed) :keyword)))
-
 (defun strip-extension (name)
   ;; Return NAME without a trailing extension.
   (let ((dot (position #\. name :from-end t)))
@@ -37,6 +25,26 @@
     (merge-pathnames (uiop:ensure-directory-pathname dir)
                      *default-pathname-defaults*)))
 
+(defun resolve-zone-root (root)
+  ;; Resolve the zone ROOT relative to the system source directory.
+  (resolve-zone-path (uiop:ensure-directory-pathname root)))
+
+(defun zone-root-prefix (root)
+  ;; Return ROOT as a normalized string without a trailing slash.
+  (string-right-trim "/"
+                     (namestring (uiop:ensure-directory-pathname root))))
+
+(defun collect-zone-files (root)
+  ;; Collect zone files under ROOT.
+  (let ((files nil))
+    (when (probe-file root)
+      (dolist (path (uiop:directory-files root))
+        (when (string-equal (pathname-type path) "lisp")
+          (push (namestring path) files))))
+    (if files
+        (coerce (sort files #'string<) 'vector)
+        (make-array 0))))
+
 (defun collect-png-files (root)
   ;; Recursively collect PNG files under ROOT.
   (let ((root (uiop:ensure-directory-pathname root)))
@@ -52,17 +60,11 @@
 
 (defun editor-object-from-path (path root)
   ;; Build an editor object entry from PATH.
-  (let* ((root-str (namestring (uiop:ensure-directory-pathname root)))
-         (full-str (namestring path))
-         (relative (if (and (<= (length root-str) (length full-str))
-                            (string= root-str full-str :end2 (length root-str)))
-                       (subseq full-str (length root-str))
-                       full-str))
-         (relative (string-left-trim "/" relative))
+  (let* ((relative (relative-path-from-root path root))
          (base (strip-extension relative))
-         (id (sanitize-object-id base))
+         (id (sanitize-identifier base))
          (label base)
-         (texture (raylib:load-texture full-str))
+         (texture (raylib:load-texture (namestring path)))
          (width (raylib:texture-width texture))
          (height (raylib:texture-height texture)))
     (%make-editor-object :id id
@@ -95,6 +97,186 @@
             :do (setf (gethash (editor-object-id obj) table) obj)))
     table))
 
+(defun load-editor-spawns ()
+  ;; Build the spawn palette from loaded NPC archetypes.
+  (let ((ids (npc-archetype-ids)))
+    (if (> (length ids) 0)
+        ids
+        (vector *npc-default-archetype-id*))))
+
+(defun editor-refresh-zone-files (editor)
+  ;; Refresh the zone file list and active index.
+  (let* ((root (editor-zone-root editor))
+         (files (collect-zone-files root))
+         (current (and *zone-path*
+                       (namestring (resolve-zone-path *zone-path*)))))
+    (when (and current (probe-file current)
+               (not (find current files :test #'string=)))
+      (setf files (coerce (append (coerce files 'list)
+                                  (list current))
+                          'vector)))
+    (setf (editor-zone-files editor) files
+          (editor-zone-index editor)
+          (or (and current (position current files :test #'string=)) 0))))
+
+(defun editor-current-zone-path (editor)
+  ;; Return the active zone path for the editor, if any.
+  (let ((files (editor-zone-files editor)))
+    (when (and files (> (length files) 0))
+      (aref files (mod (editor-zone-index editor) (length files))))))
+
+(defun editor-zone-id-from-path (path)
+  ;; Build a zone ID from PATH.
+  (sanitize-identifier (strip-extension (basename path))))
+
+(defun editor-next-zone-path (editor)
+  ;; Return a new zone file path under the editor zone root.
+  (let* ((root (zone-root-prefix (editor-zone-root editor)))
+         (index 1)
+         (path nil))
+    (loop
+      (setf path (format nil "~a/zone-~d.lisp" root index))
+      (unless (probe-file path)
+        (return path))
+      (incf index))))
+
+(defun editor-reset-game-for-zone (editor game)
+  ;; Reset player/NPC positions after a zone change.
+  (let* ((world (game-world game))
+         (player (game-player game))
+         (intent (player-intent player)))
+    (multiple-value-bind (center-x center-y)
+        (world-spawn-center world)
+      (multiple-value-bind (spawn-x spawn-y)
+          (world-open-position world center-x center-y)
+        (setf (player-x player) spawn-x
+              (player-y player) spawn-y
+              (player-dx player) 0.0
+              (player-dy player) 0.0)
+        (reset-frame-intent intent)
+        (clear-intent-target intent)
+        (setf (player-attacking player) nil
+              (player-attack-hit player) nil
+              (player-attack-timer player) 0.0))
+    (when (editor-active editor)
+      (setf (editor-camera-x editor) (player-x player)
+            (editor-camera-y editor) (player-y player)))
+    (let ((npcs (make-npcs player world)))
+      (ensure-npcs-open-spawn npcs world)
+      (setf (game-npcs game) npcs
+            (game-entities game) (make-entities player npcs))))))
+
+(defun editor-activate-zone (editor game zone path status)
+  ;; Activate ZONE/PATH and refresh editor state.
+  (when path
+    (setf *zone-path* path
+          (editor-export-path editor) path))
+  (apply-zone-to-world (game-world game) zone)
+  (editor-refresh-zone-files editor)
+  (update-editor-zone-label editor zone)
+  (setf (editor-dirty editor) nil)
+  (editor-reset-game-for-zone editor game)
+  (when status
+    (editor-status editor status)))
+
+(defun editor-load-zone (editor game path)
+  ;; Load a zone from PATH and activate it.
+  (let ((zone (and path (load-zone path))))
+    (if zone
+        (editor-activate-zone editor game zone path
+                              (format nil "Zone loaded: ~a" (basename path)))
+        (editor-status editor "Zone load failed"))))
+
+(defun editor-create-zone (editor game)
+  ;; Create a new blank zone and switch to it.
+  (let* ((root (editor-zone-root editor)))
+    (when root
+      (ensure-directories-exist (uiop:ensure-directory-pathname root))
+      (let* ((path (editor-next-zone-path editor))
+             (id (editor-zone-id-from-path path))
+             (width (max 1 *zone-default-width*))
+             (height (max 1 *zone-default-height*))
+             (chunk-size (max 1 *zone-default-chunk-size*))
+             (zone (make-empty-zone id width height :chunk-size chunk-size)))
+        (write-zone zone path)
+        (editor-activate-zone editor game zone path
+                              (format nil "Zone created: ~a" (basename path)))))))
+
+(defun editor-delete-zone (editor game)
+  ;; Delete the current zone file and switch to another.
+  (let* ((files (editor-zone-files editor))
+         (count (if files (length files) 0))
+         (index (editor-zone-index editor))
+         (path (editor-current-zone-path editor)))
+    (when path
+      (if (> count 1)
+          (let ((next-path (aref files (mod (1+ index) count))))
+            (ignore-errors (delete-file path))
+            (editor-load-zone editor game next-path)
+            (editor-status editor (format nil "Zone deleted: ~a" (basename path))))
+          (let* ((id (editor-zone-id-from-path path))
+                 (width (max 1 *zone-default-width*))
+                 (height (max 1 *zone-default-height*))
+                 (chunk-size (max 1 *zone-default-chunk-size*))
+                 (zone (make-empty-zone id width height :chunk-size chunk-size)))
+            (write-zone zone path)
+            (editor-activate-zone editor game zone path
+                                  "Zone reset (last zone)"))))))
+
+(defun editor-rename-zone (editor game)
+  ;; Rename the current zone file using the next available name.
+  (let* ((path (editor-current-zone-path editor))
+         (zone (and path (world-zone (game-world game)))))
+    (when (and path zone)
+      (let* ((new-path (editor-next-zone-path editor))
+             (new-id (editor-zone-id-from-path new-path)))
+        (setf (zone-id zone) new-id)
+        (write-zone zone new-path)
+        (ignore-errors (delete-file path))
+        (editor-activate-zone editor game zone new-path
+                              (format nil "Zone renamed: ~a" (basename new-path)))))))
+
+(defun editor-resize-zone (editor game delta)
+  ;; Resize the current zone by DELTA chunks.
+  (let* ((world (game-world game))
+         (zone (world-zone world)))
+    (when zone
+      (let* ((chunk-size (max 1 (zone-chunk-size zone)))
+             (step (* delta chunk-size))
+             (width (max chunk-size (+ (zone-width zone) step)))
+             (height (max chunk-size (+ (zone-height zone) step)))
+             (resized (zone-resize zone width height)))
+        (apply-zone-to-world world resized)
+        (setf (editor-dirty editor) t)
+        (update-editor-zone-label editor resized)
+        (editor-status editor (format nil "Zone resized: ~dx~d" width height))))))
+
+(defun editor-cycle-zone (editor game delta)
+  ;; Switch to the next/previous zone in the list.
+  (let* ((files (editor-zone-files editor))
+         (count (if files (length files) 0)))
+    (when (> count 0)
+      (setf (editor-zone-index editor)
+            (mod (+ (editor-zone-index editor) delta) count))
+      (editor-load-zone editor game (editor-current-zone-path editor)))))
+
+(defun editor-handle-zone-actions (editor game)
+  ;; Respond to zone lifecycle hotkeys while the editor is active.
+  (when (raylib:is-key-pressed +key-f6+)
+    (editor-create-zone editor game))
+  (when (raylib:is-key-pressed +key-f7+)
+    (editor-delete-zone editor game))
+  (when (raylib:is-key-pressed +key-f8+)
+    (editor-cycle-zone editor game -1))
+  (when (raylib:is-key-pressed +key-f9+)
+    (editor-cycle-zone editor game 1))
+  (when (raylib:is-key-pressed +key-f10+)
+    (editor-resize-zone editor game -1))
+  (when (raylib:is-key-pressed +key-f11+)
+    (editor-resize-zone editor game 1))
+  (when (raylib:is-key-pressed +key-f12+)
+    (editor-rename-zone editor game)))
+
 (defun unload-editor-objects (editor)
   ;; Unload object textures used by the editor.
   (let ((objects (editor-object-catalog editor)))
@@ -117,13 +299,20 @@
       (let ((index (mod (editor-object-index editor) (length objects))))
         (aref objects index)))))
 
+(defun editor-current-spawn-id (editor)
+  ;; Return the currently selected spawn archetype ID.
+  (let ((spawns (editor-spawn-catalog editor)))
+    (when (and spawns (> (length spawns) 0))
+      (let ((index (mod (editor-spawn-index editor) (length spawns))))
+        (aref spawns index)))))
+
 (defun editor-object-by-id (editor id)
   ;; Return the editor object matching ID.
   (when (and editor id)
     (let ((key (cond
                  ((keywordp id) id)
                  ((symbolp id) (intern (symbol-name id) :keyword))
-                 ((stringp id) (sanitize-object-id id))
+                 ((stringp id) (sanitize-identifier id))
                  (t id))))
       (gethash key (editor-object-table editor)))))
 
@@ -132,7 +321,8 @@
   (ecase mode
     (:tile "Mode: Tile")
     (:collision "Mode: Collision")
-    (:object "Mode: Object")))
+    (:object "Mode: Object")
+    (:spawn "Mode: Spawn")))
 
 (defun update-editor-labels (editor)
   ;; Refresh cached editor labels after selection changes.
@@ -142,18 +332,49 @@
         (format nil "Tile: ~d/~d"
                 (editor-selected-tile editor)
                 (max 1 (editor-tile-count editor))))
-  (let ((obj (editor-current-object editor)))
+  (let ((mode (editor-mode editor)))
     (setf (editor-object-label-text editor)
-          (if obj
-              (format nil "Object: ~a" (editor-object-label obj))
-              "Object: none"))))
+          (cond
+            ((eq mode :spawn)
+             (let* ((spawn-id (editor-current-spawn-id editor))
+                    (archetype (and spawn-id (find-npc-archetype spawn-id)))
+                    (label (or (and archetype (npc-archetype-name archetype))
+                               spawn-id)))
+               (if label
+                   (format nil "Spawn: ~a" label)
+                   "Spawn: none")))
+            (t
+             (let ((obj (editor-current-object editor)))
+               (if obj
+                   (format nil "Object: ~a" (editor-object-label obj))
+                   "Object: none")))))))
+
+(defun update-editor-zone-label (editor zone)
+  ;; Refresh the cached zone label for the editor overlay.
+  (let* ((files (editor-zone-files editor))
+         (count (if files (length files) 0))
+         (path (editor-current-zone-path editor))
+         (name (if path (basename path) "none")))
+    (setf (editor-zone-label editor)
+          (if zone
+              (format nil "Zone: ~a (~d/~d) ~dx~d"
+                      name
+                      (if (> count 0) (1+ (mod (editor-zone-index editor) count)) 0)
+                      count
+                      (zone-width zone)
+                      (zone-height zone))
+              (format nil "Zone: ~a (~d/~d)"
+                      name
+                      (if (> count 0) (1+ (mod (editor-zone-index editor) count)) 0)
+                      count)))))
 
 (defun make-editor (world assets player)
   ;; Build editor state with a tile palette and object catalog.
   (let* ((tile-count (tileset-tile-count (assets-tileset assets)))
          (objects (load-editor-objects))
          (object-table (build-editor-object-table objects))
-         (export-path (or *zone-path* *editor-export-path*))
+         (zone-root (resolve-zone-root *zone-root*))
+         (spawns (load-editor-spawns))
          (editor (%make-editor :active nil
                                :mode :tile
                                :camera-x (player-x player)
@@ -166,15 +387,27 @@
                                :object-catalog objects
                                :object-table object-table
                                :object-index 0
+                               :zone-root zone-root
+                               :zone-files (make-array 0)
+                               :zone-index 0
+                               :zone-label nil
+                               :spawn-catalog spawns
+                               :spawn-index 0
                                :selection-start-x nil
                                :selection-start-y nil
                                :selection-end-x nil
                                :selection-end-y nil
                                :status-label nil
                                :status-timer 0.0
-                               :export-path export-path
+                               :export-path nil
                                :dirty nil)))
+    (editor-refresh-zone-files editor)
+    (setf (editor-export-path editor)
+          (or (editor-current-zone-path editor)
+              *zone-path*
+              *editor-export-path*))
     (update-editor-labels editor)
+    (update-editor-zone-label editor (world-zone world))
     editor))
 
 (defun toggle-editor-mode (editor player)
@@ -220,6 +453,14 @@
     (when (and objects (> (length objects) 0))
       (setf (editor-object-index editor)
             (mod (+ (editor-object-index editor) delta) (length objects)))
+      (update-editor-labels editor))))
+
+(defun editor-adjust-spawn (editor delta)
+  ;; Move the selected spawn index by DELTA.
+  (let ((spawns (editor-spawn-catalog editor)))
+    (when (and spawns (> (length spawns) 0))
+      (setf (editor-spawn-index editor)
+            (mod (+ (editor-spawn-index editor) delta) (length spawns)))
       (update-editor-labels editor))))
 
 (defun editor-mouse-tile (editor world camera)
@@ -289,6 +530,9 @@
     (update-editor-labels editor))
   (when (raylib:is-key-pressed +key-three+)
     (setf (editor-mode editor) :object)
+    (update-editor-labels editor))
+  (when (raylib:is-key-pressed +key-four+)
+    (setf (editor-mode editor) :spawn)
     (update-editor-labels editor)))
 
 (defun editor-apply-paint (editor world camera)
@@ -324,7 +568,18 @@
                      (zone-add-object zone (list :id (editor-object-id obj)
                                                  :x tx
                                                  :y ty))
-                     (setf (editor-dirty editor) t)))))))))))
+                     (setf (editor-dirty editor) t)))))
+            (:spawn
+             (if right-down
+                 (progn
+                   (zone-remove-spawn-at zone tx ty)
+                   (setf (editor-dirty editor) t))
+                 (let ((spawn-id (editor-current-spawn-id editor)))
+                   (when spawn-id
+                     (zone-add-spawn zone (list :id spawn-id
+                                                :x tx
+                                                :y ty))
+                    (setf (editor-dirty editor) t)))))))))))
 
 (defun editor-export-zone (editor world)
   ;; Export the current zone (or selection) to disk.
@@ -346,25 +601,33 @@
         (setf (editor-dirty editor) nil)
         (editor-status editor "Zone exported")))))
 
-(defun update-editor (editor world camera ui dt)
+(defun update-editor (editor game dt)
   ;; Update editor input, camera, and painting when active.
-  (when (editor-active editor)
-    (update-editor-status editor dt)
-    (unless (ui-menu-open ui)
-      (editor-update-mode editor)
-      (editor-update-selection editor world camera)
-      (when (raylib:is-key-pressed +key-q+)
-        (editor-adjust-selection editor -1))
-      (when (raylib:is-key-pressed +key-e+)
-        (editor-adjust-selection editor 1))
-      (when (raylib:is-key-pressed +key-z+)
-        (editor-adjust-object editor -1))
-      (when (raylib:is-key-pressed +key-x+)
-        (editor-adjust-object editor 1))
-      (when (raylib:is-key-pressed +key-f5+)
-        (editor-export-zone editor world))
-      (editor-update-camera editor world dt)
-      (editor-apply-paint editor world camera))))
+  (let* ((world (game-world game))
+         (camera (game-camera game))
+         (ui (game-ui game)))
+    (when (editor-active editor)
+      (update-editor-status editor dt)
+      (unless (ui-menu-open ui)
+        (editor-update-mode editor)
+        (editor-update-selection editor world camera)
+        (editor-handle-zone-actions editor game)
+        (when (raylib:is-key-pressed +key-q+)
+          (editor-adjust-selection editor -1))
+        (when (raylib:is-key-pressed +key-e+)
+          (editor-adjust-selection editor 1))
+        (when (raylib:is-key-pressed +key-z+)
+          (if (eq (editor-mode editor) :spawn)
+              (editor-adjust-spawn editor -1)
+              (editor-adjust-object editor -1)))
+        (when (raylib:is-key-pressed +key-x+)
+          (if (eq (editor-mode editor) :spawn)
+              (editor-adjust-spawn editor 1)
+              (editor-adjust-object editor 1)))
+        (when (raylib:is-key-pressed +key-f5+)
+          (editor-export-zone editor world))
+        (editor-update-camera editor world dt)
+        (editor-apply-paint editor world camera)))))
 
 (defun draw-editor-selection (editor world)
   ;; Draw selection bounds in world space.
@@ -384,6 +647,24 @@
              (h (round (* height tile-size))))
         (raylib:draw-rectangle-lines x y w h *editor-selection-color*)))))
 
+(defun draw-editor-spawns (editor world)
+  ;; Draw spawn markers in world space while editing.
+  (let ((zone (world-zone world)))
+    (when zone
+      (let* ((tile-size (world-tile-dest-size world))
+             (size (round tile-size))
+             (dot (max 2 (round (* size 0.2)))))
+        (dolist (spawn (zone-spawns zone))
+          (let ((tx (getf spawn :x))
+                (ty (getf spawn :y)))
+            (when (and (numberp tx) (numberp ty))
+              (let* ((x (round (* tx tile-size)))
+                     (y (round (* ty tile-size)))
+                     (cx (+ x (round (/ (- size dot) 2))))
+                     (cy (+ y (round (/ (- size dot) 2)))))
+                (raylib:draw-rectangle-lines x y size size *editor-spawn-color*)
+                (raylib:draw-rectangle cx cy dot dot *editor-spawn-color*)))))))))
+
 (defun draw-editor-cursor (editor world camera)
   ;; Draw the tile highlight under the mouse cursor.
   (multiple-value-bind (tx ty _wx _wy)
@@ -402,6 +683,7 @@
   ;; Draw editor overlays in world space.
   (when (editor-active editor)
     (draw-editor-selection editor world)
+    (draw-editor-spawns editor world)
     (draw-editor-cursor editor world camera)))
 
 (defun draw-editor-ui-overlay (editor ui)
@@ -410,14 +692,20 @@
     (let ((x 16)
           (y 40)
           (line 18))
+      (when (editor-zone-label editor)
+        (raylib:draw-text (editor-zone-label editor) x y 16 (ui-menu-text-color ui))
+        (incf y line))
       (raylib:draw-text (editor-mode-label editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text (editor-tile-label editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text (editor-object-label-text editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "1/2/3 mode | Q/E tile | Z/X object | F5 export" x y 16
+      (raylib:draw-text "1/2/3/4 mode | Q/E tile | Z/X object/spawn | F5 export" x y 16
                         (ui-menu-text-color ui))
+      (incf y line)
+      (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle | F10/F11 resize | F12 rename"
+                        x y 16 (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text "B start | N end | C clear selection | LMB paint | RMB erase" x y 16
                         (ui-menu-text-color ui))

@@ -27,6 +27,10 @@
 
 (defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
 (defparameter *zone-path* nil) ;; Zone data path relative to repo (nil uses wall map).
+(defparameter *zone-root* "data/zones") ;; Directory that holds zone files for the editor.
+(defparameter *zone-default-width* 64) ;; Default zone width in tiles for new zones.
+(defparameter *zone-default-height* 64) ;; Default zone height in tiles for new zones.
+(defparameter *zone-default-chunk-size* 8) ;; Default chunk size in tiles for new zones.
 (defparameter *editor-object-root* "../assets/2 Dungeon Tileset/2 Objects") ;; Root directory for editor object palette.
 (defparameter *editor-export-path* "data/zones/editor-zone.lisp") ;; Default export path for editor zones.
 (defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.
@@ -88,6 +92,7 @@
 (defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
 (defparameter *editor-selection-color* (raylib:make-color :r 255 :g 215 :b 0 :a 200)) ;; Editor selection rectangle color.
 (defparameter *editor-cursor-color* (raylib:make-color :r 80 :g 220 :b 255 :a 200)) ;; Editor cursor highlight color.
+(defparameter *editor-spawn-color* (raylib:make-color :r 255 :g 140 :b 60 :a 210)) ;; Editor spawn marker color.
 
 (defclass character-class ()
   ;; Static player class data (CLOS keeps class metadata extensible).
@@ -149,7 +154,15 @@
 (defparameter +key-one+ (cffi:foreign-enum-value 'raylib:keyboard-key :one)) ;; Raylib keycode for the 1 key.
 (defparameter +key-two+ (cffi:foreign-enum-value 'raylib:keyboard-key :two)) ;; Raylib keycode for the 2 key.
 (defparameter +key-three+ (cffi:foreign-enum-value 'raylib:keyboard-key :three)) ;; Raylib keycode for the 3 key.
+(defparameter +key-four+ (cffi:foreign-enum-value 'raylib:keyboard-key :four)) ;; Raylib keycode for the 4 key.
 (defparameter +key-f5+ (cffi:foreign-enum-value 'raylib:keyboard-key :f5)) ;; Raylib keycode for the F5 key.
+(defparameter +key-f6+ (cffi:foreign-enum-value 'raylib:keyboard-key :f6)) ;; Raylib keycode for the F6 key.
+(defparameter +key-f7+ (cffi:foreign-enum-value 'raylib:keyboard-key :f7)) ;; Raylib keycode for the F7 key.
+(defparameter +key-f8+ (cffi:foreign-enum-value 'raylib:keyboard-key :f8)) ;; Raylib keycode for the F8 key.
+(defparameter +key-f9+ (cffi:foreign-enum-value 'raylib:keyboard-key :f9)) ;; Raylib keycode for the F9 key.
+(defparameter +key-f10+ (cffi:foreign-enum-value 'raylib:keyboard-key :f10)) ;; Raylib keycode for the F10 key.
+(defparameter +key-f11+ (cffi:foreign-enum-value 'raylib:keyboard-key :f11)) ;; Raylib keycode for the F11 key.
+(defparameter +key-f12+ (cffi:foreign-enum-value 'raylib:keyboard-key :f12)) ;; Raylib keycode for the F12 key.
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift)) ;; Raylib keycode for the Left Shift key.
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift)) ;; Raylib keycode for the Right Shift key.
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left)) ;; Raylib mouse button code for left click.

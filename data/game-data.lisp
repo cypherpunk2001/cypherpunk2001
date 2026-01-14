@@ -1,5 +1,9 @@
 (:tunables
  (:zone-path "data/zones/demo-zone.lisp")
+ (:zone-root "data/zones")
+ (:zone-default-width 64)
+ (:zone-default-height 64)
+ (:zone-default-chunk-size 8)
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
  (:npc-spawn-ids (:rat :goblin :orc))

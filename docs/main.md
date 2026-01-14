@@ -22,7 +22,7 @@ Key functions
 
 Walkthrough: one frame
 1) Read input and UI; write intent for player and NPCs.
-2) If editor mode is active, update editor camera/painting and skip gameplay.
+2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
 3) Otherwise update movement/combat; change positions, hit points, and cooldowns.
 4) Advance animation/effect timers.
 5) Render the frame (world -> entities -> HUD/menu/editor overlay).

@@ -13,12 +13,12 @@ Key structs
 - `player`, `npc`: runtime entities with an `intent` and animation/combat state.
 - `world`: zone metadata, wall-map data, collision bounds, and derived sizes.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state.
-- `editor`: editor mode state (camera, palette selections, export status).
+- `editor`: editor mode state (camera, palette selections, zone list, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
-- `make-npcs`: spawn a pool with data-driven archetypes and safe spacing.
+- `make-npcs`: spawn a pool using zone spawns when present, else grid spacing.
 - `world-spawn-center`: returns a center point inside world collision bounds.
 - `make-entities`: pack NPCs + player into a stable array.
 

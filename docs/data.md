@@ -18,7 +18,7 @@ Key responsibilities
 Key functions
 - `load-game-data`: entry point; clears registries, loads data, registers defaults.
 - `ensure-game-data`: guard that loads once when needed.
-- `get-animation-set`, `find-npc-archetype`: lookup helpers.
+- `get-animation-set`, `find-npc-archetype`, `npc-archetype-ids`: lookup helpers.
 
 Walkthrough: startup data load
 1) `load-game-data` reads `data/game-data.lisp` as plain data (single plist or
@@ -31,6 +31,8 @@ Common tunables
 - `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
 - `:collision-edge-epsilon` to control edge contact tolerance.
 - `:zone-path` to load a zone file from `data/`.
+- `:zone-root` for editor zone file discovery and creation.
+- `:zone-default-width`, `:zone-default-height`, `:zone-default-chunk-size` for new zones.
 - `:editor-object-root` and `:editor-export-path` to drive editor palettes/exports.
 - `:editor-tile-layer-id` and `:editor-collision-layer-id` to map editor brushes to layers.
 - `:editor-move-speed` to tune editor camera navigation.
