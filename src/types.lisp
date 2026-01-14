@@ -27,7 +27,7 @@
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
-  tile-size-f tile-dest-size floor-index zone
+  tile-size-f tile-dest-size floor-index zone zone-label world-graph
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
   wall-min-x wall-max-x wall-min-y wall-max-y)
@@ -88,9 +88,8 @@
   selected-tile tile-count
   tile-layer-id collision-layer-id
   object-catalog object-table object-index
-  zone-root zone-files zone-index zone-label
+  zone-root zone-files zone-index zone-label zone-history
   spawn-catalog spawn-index
-  selection-start-x selection-start-y selection-end-x selection-end-y
   mode-label tile-label object-label-text status-label status-timer
   export-path dirty)
 

@@ -9,6 +9,7 @@
                (:file "src/types")
                (:file "src/utils")
                (:file "src/zone")
+               (:file "src/world-graph")
                (:file "src/movement")
                (:file "src/input")
                (:file "src/combat")

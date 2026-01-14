@@ -85,6 +85,10 @@
              (speed-mult (update-running-state player dt moving
                                                (intent-run-toggle player-intent))))
         (update-player-position player player-intent world speed-mult dt))
+      (when (update-zone-transition game)
+        (setf npcs (game-npcs game)
+              entities (game-entities game))
+        (editor-sync-zone editor world))
       (when (and (not (ui-menu-open ui))
                  (intent-attack player-intent))
         (start-player-attack player player-intent)))

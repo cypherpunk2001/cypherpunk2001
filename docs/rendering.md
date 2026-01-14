@@ -13,7 +13,7 @@ Pipeline overview
 2) Draw world layers, zone objects, and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD, editor overlays, and menu overlays.
+5) Draw HUD (stamina + zone label), editor overlays, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -43,3 +43,4 @@ Design note
 - NPC AI debug text is only drawn when explicitly enabled, keeping the
   default render path clean and fast.
 - The camera target follows the editor camera when Editor Mode is active.
+- The HUD reads the world zone label so you always know which zone is active.

@@ -40,6 +40,7 @@
     (:zone-default-width . *zone-default-width*)
     (:zone-default-height . *zone-default-height*)
     (:zone-default-chunk-size . *zone-default-chunk-size*)
+    (:world-graph-path . *world-graph-path*)
     (:editor-object-root . *editor-object-root*)
     (:editor-export-path . *editor-export-path*)
     (:editor-tile-layer-id . *editor-tile-layer-id*)
@@ -382,6 +383,8 @@
     (clrhash *npc-archetypes*)
     (register-default-animation-sets)
     (let ((data (read-game-data path)))
+      (when (and data (listp data) (not (plist-form-p data)))
+        (setf data (parse-game-data-forms (list data))))
       (when data
         (apply-tunables (getf data :tunables))
         (load-animation-sets (getf data :animation-sets))

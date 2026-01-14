@@ -4,6 +4,7 @@
  (:zone-default-width 64)
  (:zone-default-height 64)
  (:zone-default-chunk-size 8)
+ (:world-graph-path "data/world-graph.lisp")
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
  (:npc-spawn-ids (:rat :goblin :orc))

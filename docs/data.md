@@ -33,6 +33,7 @@ Common tunables
 - `:zone-path` to load a zone file from `data/`.
 - `:zone-root` for editor zone file discovery and creation.
 - `:zone-default-width`, `:zone-default-height`, `:zone-default-chunk-size` for new zones.
+- `:world-graph-path` to load the world graph edges for zone transitions.
 - `:editor-object-root` and `:editor-export-path` to drive editor palettes/exports.
 - `:editor-tile-layer-id` and `:editor-collision-layer-id` to map editor brushes to layers.
 - `:editor-move-speed` to tune editor camera navigation.
@@ -53,3 +54,4 @@ Design note
   without forcing gameplay systems to parse files every frame.
 - Using multiple top-level sections keeps the data file readable while still
   supporting a single plist if you prefer that style.
+- The loader defensively re-parses single-form data so legacy layouts still load.

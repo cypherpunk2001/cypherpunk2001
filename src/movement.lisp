@@ -232,6 +232,174 @@
           (player-dx player) dx
           (player-dy player) dy)))
 
+(defun player-intent-direction (player)
+  ;; Return the intended movement direction for edge transitions.
+  (let* ((intent (player-intent player))
+         (dx (intent-move-dx intent))
+         (dy (intent-move-dy intent)))
+    (cond
+      ((or (not (zerop dx)) (not (zerop dy)))
+       (values dx dy))
+      ((intent-target-active intent)
+       (normalize-vector (- (intent-target-x intent) (player-x player))
+                         (- (intent-target-y intent) (player-y player))))
+      (t
+       (values 0.0 0.0)))))
+
+(defun edge-opposite (edge)
+  ;; Return the opposite world edge.
+  (ecase edge
+    (:north :south)
+    (:south :north)
+    (:east :west)
+    (:west :east)))
+
+(defun edge-preserve-axis (edge offset)
+  ;; Return which axis to preserve when transitioning.
+  (cond
+    ((eq offset :preserve-x) :x)
+    ((eq offset :preserve-y) :y)
+    ((eq offset :none) nil)
+    ((member edge '(:north :south)) :x)
+    (t :y)))
+
+(defun edge-offset-ratio (min-value max-value value)
+  ;; Convert VALUE into a 0..1 ratio inside MIN/MAX.
+  (let ((range (- max-value min-value)))
+    (if (<= range 0.0)
+        0.5
+        (clamp (/ (- value min-value) range) 0.0 1.0))))
+
+(defun edge-preserve-position (min-value max-value ratio)
+  ;; Return a position inside MIN/MAX based on RATIO.
+  (+ min-value (* (clamp ratio 0.0 1.0) (- max-value min-value))))
+
+(defun world-exit-edge (world player)
+  ;; Return the edge the player is pushing against, if any.
+  (multiple-value-bind (dx dy)
+      (player-intent-direction player)
+    (let ((edge nil)
+          (weight 0.0)
+          (x (player-x player))
+          (y (player-y player))
+          (min-x (world-wall-min-x world))
+          (max-x (world-wall-max-x world))
+          (min-y (world-wall-min-y world))
+          (max-y (world-wall-max-y world)))
+      (when (and (< dy 0.0) (<= y min-y))
+        (let ((w (abs dy)))
+          (when (> w weight)
+            (setf edge :north
+                  weight w))))
+      (when (and (> dy 0.0) (>= y max-y))
+        (let ((w (abs dy)))
+          (when (> w weight)
+            (setf edge :south
+                  weight w))))
+      (when (and (< dx 0.0) (<= x min-x))
+        (let ((w (abs dx)))
+          (when (> w weight)
+            (setf edge :west
+                  weight w))))
+      (when (and (> dx 0.0) (>= x max-x))
+        (let ((w (abs dx)))
+          (when (> w weight)
+            (setf edge :east
+                  weight w))))
+      edge)))
+
+(defun world-edge-exit (world edge)
+  ;; Return the exit spec for EDGE in the current zone.
+  (let* ((zone (world-zone world))
+         (zone-id (and zone (zone-id zone)))
+         (graph (world-world-graph world)))
+    (when (and edge zone-id graph)
+      (find edge (world-graph-exits graph zone-id)
+            :key (lambda (exit) (getf exit :edge))
+            :test #'eq))))
+
+(defun edge-spawn-position (world spawn-edge preserve-axis ratio)
+  ;; Return spawn coordinates for a target edge and optional offset.
+  (let* ((min-x (world-wall-min-x world))
+         (max-x (world-wall-max-x world))
+         (min-y (world-wall-min-y world))
+         (max-y (world-wall-max-y world))
+         (spawn-x (case spawn-edge
+                    (:west min-x)
+                    (:east max-x)
+                    (t nil)))
+         (spawn-y (case spawn-edge
+                    (:north min-y)
+                    (:south max-y)
+                    (t nil))))
+    (when (eq preserve-axis :x)
+      (setf spawn-x (edge-preserve-position min-x max-x ratio)))
+    (when (eq preserve-axis :y)
+      (setf spawn-y (edge-preserve-position min-y max-y ratio)))
+    (when (null spawn-x)
+      (setf spawn-x (edge-preserve-position min-x max-x 0.5)))
+    (when (null spawn-y)
+      (setf spawn-y (edge-preserve-position min-y max-y 0.5)))
+    (values spawn-x spawn-y)))
+
+(defun transition-zone (game exit edge)
+  ;; Apply a zone transition using EXIT metadata.
+  (let* ((world (game-world game))
+         (player (game-player game))
+         (graph (world-world-graph world))
+         (target-id (getf exit :to))
+         (target-path (and graph (world-graph-zone-path graph target-id))))
+    (when (and target-path (probe-file target-path))
+      (let* ((zone (load-zone target-path))
+             (spawn-edge (or (getf exit :spawn-edge)
+                             (getf exit :to-edge)
+                             (edge-opposite edge)))
+             (offset (getf exit :offset))
+             (preserve-axis (edge-preserve-axis edge offset))
+             (ratio (if preserve-axis
+                        (if (eq preserve-axis :x)
+                            (edge-offset-ratio (world-wall-min-x world)
+                                               (world-wall-max-x world)
+                                               (player-x player))
+                            (edge-offset-ratio (world-wall-min-y world)
+                                               (world-wall-max-y world)
+                                               (player-y player)))
+                        0.5)))
+        (when zone
+          (setf *zone-path* target-path)
+          (apply-zone-to-world world zone)
+          (setf (world-zone-label world) (zone-label zone))
+          (multiple-value-bind (raw-x raw-y)
+              (edge-spawn-position world spawn-edge preserve-axis ratio)
+            (multiple-value-bind (spawn-x spawn-y)
+                (world-open-position-for world raw-x raw-y
+                                         (world-collision-half-width world)
+                                         (world-collision-half-height world))
+              (setf (player-x player) spawn-x
+                    (player-y player) spawn-y
+                    (player-dx player) 0.0
+                    (player-dy player) 0.0)))
+          (let ((intent (player-intent player)))
+            (reset-frame-intent intent)
+            (clear-intent-target intent))
+          (setf (player-attacking player) nil
+                (player-attack-hit player) nil
+                (player-attack-timer player) 0.0)
+          (let ((npcs (make-npcs player world)))
+            (ensure-npcs-open-spawn npcs world)
+            (setf (game-npcs game) npcs
+                  (game-entities game) (make-entities player npcs)))
+          t)))))
+
+(defun update-zone-transition (game)
+  ;; Handle edge-based world graph transitions for the player.
+  (let* ((world (game-world game))
+         (player (game-player game))
+         (edge (and world (world-exit-edge world player)))
+         (exit (and edge (world-edge-exit world edge))))
+    (when exit
+      (transition-zone game exit edge))))
+
 (defun log-player-position (player world)
   ;; Emit verbose position and tile diagnostics for debugging.
   (let* ((x (player-x player))
@@ -254,6 +422,7 @@
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
   (let* ((zone (load-zone *zone-path*))
+         (graph (load-world-graph))
          (tile-size-f (float *tile-size* 1.0))
          (tile-dest-size (* tile-size-f *tile-scale*))
          (floor-index *floor-tile-index*)
@@ -278,6 +447,8 @@
                  :tile-dest-size tile-dest-size
                  :floor-index floor-index
                  :zone zone
+                 :zone-label (zone-label zone)
+                 :world-graph graph
                  :wall-map wall-map
                  :wall-map-width wall-map-width
                  :wall-map-height wall-map-height
@@ -309,6 +480,7 @@
                            tile-dest-size)
                         collision-half-height)))
     (setf (world-zone world) zone
+          (world-zone-label world) (zone-label zone)
           (world-wall-map world) wall-map
           (world-wall-map-width world) wall-map-width
           (world-wall-map-height world) wall-map-height
@@ -316,4 +488,8 @@
           (world-wall-max-x world) wall-max-x
           (world-wall-min-y world) wall-min-y
           (world-wall-max-y world) wall-max-y)
+    (let ((graph (world-world-graph world)))
+      (when graph
+        (setf (world-graph-zone-paths graph)
+              (build-zone-paths (resolve-zone-path *zone-root*)))))
     world))

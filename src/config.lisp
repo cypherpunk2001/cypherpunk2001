@@ -31,6 +31,7 @@
 (defparameter *zone-default-width* 64) ;; Default zone width in tiles for new zones.
 (defparameter *zone-default-height* 64) ;; Default zone height in tiles for new zones.
 (defparameter *zone-default-chunk-size* 8) ;; Default chunk size in tiles for new zones.
+(defparameter *world-graph-path* "data/world-graph.lisp") ;; World graph data path relative to repo.
 (defparameter *editor-object-root* "../assets/2 Dungeon Tileset/2 Objects") ;; Root directory for editor object palette.
 (defparameter *editor-export-path* "data/zones/editor-zone.lisp") ;; Default export path for editor zones.
 (defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.
@@ -90,7 +91,6 @@
 (defparameter *debug-npc-text-size* 12) ;; Debug text size for NPC AI overlay.
 (defparameter *debug-npc-text-offset* 18) ;; Extra vertical offset for NPC debug text.
 (defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
-(defparameter *editor-selection-color* (raylib:make-color :r 255 :g 215 :b 0 :a 200)) ;; Editor selection rectangle color.
 (defparameter *editor-cursor-color* (raylib:make-color :r 80 :g 220 :b 255 :a 200)) ;; Editor cursor highlight color.
 (defparameter *editor-spawn-color* (raylib:make-color :r 255 :g 140 :b 60 :a 210)) ;; Editor spawn marker color.
 
@@ -148,9 +148,6 @@
 (defparameter +key-e+ (cffi:foreign-enum-value 'raylib:keyboard-key :e)) ;; Raylib keycode for the E key.
 (defparameter +key-z+ (cffi:foreign-enum-value 'raylib:keyboard-key :z)) ;; Raylib keycode for the Z key.
 (defparameter +key-x+ (cffi:foreign-enum-value 'raylib:keyboard-key :x)) ;; Raylib keycode for the X key.
-(defparameter +key-c+ (cffi:foreign-enum-value 'raylib:keyboard-key :c)) ;; Raylib keycode for the C key.
-(defparameter +key-b+ (cffi:foreign-enum-value 'raylib:keyboard-key :b)) ;; Raylib keycode for the B key.
-(defparameter +key-n+ (cffi:foreign-enum-value 'raylib:keyboard-key :n)) ;; Raylib keycode for the N key.
 (defparameter +key-one+ (cffi:foreign-enum-value 'raylib:keyboard-key :one)) ;; Raylib keycode for the 1 key.
 (defparameter +key-two+ (cffi:foreign-enum-value 'raylib:keyboard-key :two)) ;; Raylib keycode for the 2 key.
 (defparameter +key-three+ (cffi:foreign-enum-value 'raylib:keyboard-key :three)) ;; Raylib keycode for the 3 key.

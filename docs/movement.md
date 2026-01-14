@@ -14,6 +14,7 @@ Key concepts
 - `attempt-move` applies per-axis movement with collision checks.
 - `make-world` derives bounds and collision sizes from map data.
 - `apply-zone-to-world` swaps the active zone and rebuilds world bounds.
+- `update-zone-transition` checks the world graph and swaps zones on edge exit.
 - `world-open-position` finds the nearest open tile that fits the player collider.
 - `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
 - `*collision-edge-epsilon*` avoids treating exact tile-edge contact as blocked.
@@ -23,7 +24,9 @@ Walkthrough: from intent to position
 2) If the player has a target, compute direction toward it.
 3) Call `attempt-move` which resolves collisions per axis.
 4) Clamp to world bounds.
-5) Store final position and velocity.
+5) If the player pushes against a world edge, consult the world graph and
+   transition zones (preserving edge offset).
+6) Store final position and velocity.
 
 Example: applying intent
 ```lisp
@@ -40,3 +43,4 @@ Design note
   layers are sparse or missing.
 - Spawning on open tiles prevents actors from getting stuck inside blocked
   collision layers.
+- Zone transitions only happen on edges defined in `data/world-graph.lisp`.

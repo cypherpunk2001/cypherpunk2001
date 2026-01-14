@@ -60,3 +60,5 @@ Design note
 - The wall map is derived once at load time to keep movement cheap.
 - Export helpers preserve the chunked format so later streaming is easy.
 - Spawns live alongside objects so zones can drive NPC placement without extra files.
+- Zone `:id` values are referenced by the world graph to connect travel edges.
+- Zone paths are resolved relative to the system root even when passed as relative pathnames.

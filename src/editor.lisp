@@ -29,6 +29,11 @@
   ;; Resolve the zone ROOT relative to the system source directory.
   (resolve-zone-path (uiop:ensure-directory-pathname root)))
 
+(defun normalize-zone-path (path)
+  ;; Return a resolved namestring for PATH, or nil.
+  (when path
+    (namestring (resolve-zone-path path))))
+
 (defun zone-root-prefix (root)
   ;; Return ROOT as a normalized string without a trailing slash.
   (string-right-trim "/"
@@ -107,17 +112,22 @@
 (defun editor-refresh-zone-files (editor)
   ;; Refresh the zone file list and active index.
   (let* ((root (editor-zone-root editor))
-         (files (collect-zone-files root))
-         (current (and *zone-path*
-                       (namestring (resolve-zone-path *zone-path*)))))
+         (files (coerce (collect-zone-files root) 'list))
+         (current (normalize-zone-path *zone-path*))
+         (extras (editor-zone-history editor)))
+    (dolist (extra extras)
+      (when (and extra (probe-file extra)
+                 (not (find extra files :test #'string=)))
+        (push extra files)))
     (when (and current (probe-file current)
                (not (find current files :test #'string=)))
-      (setf files (coerce (append (coerce files 'list)
-                                  (list current))
-                          'vector)))
-    (setf (editor-zone-files editor) files
-          (editor-zone-index editor)
-          (or (and current (position current files :test #'string=)) 0))))
+      (push current files))
+    (let ((vector-files (if files
+                            (coerce (sort files #'string<) 'vector)
+                            (make-array 0))))
+      (setf (editor-zone-files editor) vector-files
+            (editor-zone-index editor)
+            (or (and current (position current vector-files :test #'string=)) 0)))))
 
 (defun editor-current-zone-path (editor)
   ;; Return the active zone path for the editor, if any.
@@ -139,6 +149,21 @@
       (unless (probe-file path)
         (return path))
       (incf index))))
+
+(defun zone-path-under-root-p (path root)
+  ;; Return true when PATH is under ROOT.
+  (let* ((root-str (namestring (uiop:ensure-directory-pathname root)))
+         (full (normalize-zone-path path)))
+    (and full
+         (<= (length root-str) (length full))
+         (string= root-str full :end2 (length root-str)))))
+
+(defun editor-track-zone (editor path)
+  ;; Track PATH when it lives outside the editor zone root.
+  (let ((full (normalize-zone-path path)))
+    (when (and full (probe-file full)
+               (not (zone-path-under-root-p full (editor-zone-root editor))))
+      (pushnew full (editor-zone-history editor) :test #'string=))))
 
 (defun editor-reset-game-for-zone (editor game)
   ;; Reset player/NPC positions after a zone change.
@@ -168,16 +193,24 @@
 
 (defun editor-activate-zone (editor game zone path status)
   ;; Activate ZONE/PATH and refresh editor state.
-  (when path
-    (setf *zone-path* path
-          (editor-export-path editor) path))
-  (apply-zone-to-world (game-world game) zone)
-  (editor-refresh-zone-files editor)
-  (update-editor-zone-label editor zone)
-  (setf (editor-dirty editor) nil)
-  (editor-reset-game-for-zone editor game)
-  (when status
-    (editor-status editor status)))
+  (let* ((full-path (normalize-zone-path path))
+         (outside-root (and full-path
+                            (not (zone-path-under-root-p full-path (editor-zone-root editor)))))
+         (status (if (and status outside-root)
+                     (format nil "~a (outside zone-root, pinned)" status)
+                     status)))
+    (when path
+      (setf *zone-path* path
+            (editor-export-path editor) path))
+    (apply-zone-to-world (game-world game) zone)
+    (editor-track-zone editor path)
+    (editor-refresh-zone-files editor)
+    (update-editor-zone-label editor zone)
+    (setf (editor-dirty editor) nil)
+    (editor-reset-game-for-zone editor game)
+    (cond
+      (status (editor-status editor status))
+      (outside-root (editor-status editor "Zone outside zone-root, pinned")))))
 
 (defun editor-load-zone (editor game path)
   ;; Load a zone from PATH and activate it.
@@ -200,7 +233,7 @@
              (zone (make-empty-zone id width height :chunk-size chunk-size)))
         (write-zone zone path)
         (editor-activate-zone editor game zone path
-                              (format nil "Zone created: ~a" (basename path)))))))
+                              (format nil "Zone created: ~a" path))))))
 
 (defun editor-delete-zone (editor game)
   ;; Delete the current zone file and switch to another.
@@ -368,6 +401,18 @@
                       (if (> count 0) (1+ (mod (editor-zone-index editor) count)) 0)
                       count)))))
 
+(defun editor-sync-zone (editor world)
+  ;; Sync editor state after an external zone change.
+  (when editor
+    (editor-track-zone editor *zone-path*)
+    (editor-refresh-zone-files editor)
+    (update-editor-zone-label editor (world-zone world))
+    (setf (editor-export-path editor)
+          (or (editor-current-zone-path editor)
+              *zone-path*
+              (editor-export-path editor)))
+    (setf (editor-dirty editor) nil)))
+
 (defun make-editor (world assets player)
   ;; Build editor state with a tile palette and object catalog.
   (let* ((tile-count (tileset-tile-count (assets-tileset assets)))
@@ -391,12 +436,9 @@
                                :zone-files (make-array 0)
                                :zone-index 0
                                :zone-label nil
+                               :zone-history nil
                                :spawn-catalog spawns
                                :spawn-index 0
-                               :selection-start-x nil
-                               :selection-start-y nil
-                               :selection-end-x nil
-                               :selection-end-y nil
                                :status-label nil
                                :status-timer 0.0
                                :export-path nil
@@ -492,34 +534,6 @@
             (editor-camera-x editor) nx
             (editor-camera-y editor) ny))))
 
-(defun editor-update-selection (editor world camera)
-  ;; Capture selection region bounds via hotkeys.
-  (let ((zone (world-zone world)))
-    (when (raylib:is-key-pressed +key-b+)
-      (multiple-value-bind (tx ty)
-          (editor-mouse-tile editor world camera)
-        (when zone
-          (setf tx (clamp tx 0 (max 0 (1- (zone-width zone))))
-                ty (clamp ty 0 (max 0 (1- (zone-height zone))))))
-        (setf (editor-selection-start-x editor) tx
-              (editor-selection-start-y editor) ty)
-        (editor-status editor "Selection start set")))
-    (when (raylib:is-key-pressed +key-n+)
-      (multiple-value-bind (tx ty)
-          (editor-mouse-tile editor world camera)
-        (when zone
-          (setf tx (clamp tx 0 (max 0 (1- (zone-width zone))))
-                ty (clamp ty 0 (max 0 (1- (zone-height zone))))))
-        (setf (editor-selection-end-x editor) tx
-              (editor-selection-end-y editor) ty)
-        (editor-status editor "Selection end set"))))
-  (when (raylib:is-key-pressed +key-c+)
-    (setf (editor-selection-start-x editor) nil
-          (editor-selection-start-y editor) nil
-          (editor-selection-end-x editor) nil
-          (editor-selection-end-y editor) nil)
-    (editor-status editor "Selection cleared")))
-
 (defun editor-update-mode (editor)
   ;; Switch editor modes based on numeric keys.
   (when (raylib:is-key-pressed +key-one+)
@@ -582,24 +596,13 @@
                     (setf (editor-dirty editor) t)))))))))))
 
 (defun editor-export-zone (editor world)
-  ;; Export the current zone (or selection) to disk.
+  ;; Export the current zone to disk.
   (let* ((zone (world-zone world))
          (path (editor-export-path editor)))
     (when (and zone path)
-      (let* ((sx (editor-selection-start-x editor))
-             (sy (editor-selection-start-y editor))
-             (ex (editor-selection-end-x editor))
-             (ey (editor-selection-end-y editor))
-             (slice (if (and sx sy ex ey)
-                        (let* ((min-x (min sx ex))
-                               (min-y (min sy ey))
-                               (width (1+ (abs (- ex sx))))
-                               (height (1+ (abs (- ey sy)))))
-                          (zone-slice zone min-x min-y width height))
-                        zone)))
-        (write-zone slice path)
-        (setf (editor-dirty editor) nil)
-        (editor-status editor "Zone exported")))))
+      (write-zone zone path)
+      (setf (editor-dirty editor) nil)
+      (editor-status editor "Zone exported"))))
 
 (defun update-editor (editor game dt)
   ;; Update editor input, camera, and painting when active.
@@ -610,7 +613,6 @@
       (update-editor-status editor dt)
       (unless (ui-menu-open ui)
         (editor-update-mode editor)
-        (editor-update-selection editor world camera)
         (editor-handle-zone-actions editor game)
         (when (raylib:is-key-pressed +key-q+)
           (editor-adjust-selection editor -1))
@@ -628,24 +630,6 @@
           (editor-export-zone editor world))
         (editor-update-camera editor world dt)
         (editor-apply-paint editor world camera)))))
-
-(defun draw-editor-selection (editor world)
-  ;; Draw selection bounds in world space.
-  (let ((sx (editor-selection-start-x editor))
-        (sy (editor-selection-start-y editor))
-        (ex (editor-selection-end-x editor))
-        (ey (editor-selection-end-y editor)))
-    (when (and sx sy ex ey)
-      (let* ((tile-size (world-tile-dest-size world))
-             (min-x (min sx ex))
-             (min-y (min sy ey))
-             (width (+ 1 (abs (- ex sx))))
-             (height (+ 1 (abs (- ey sy))))
-             (x (round (* min-x tile-size)))
-             (y (round (* min-y tile-size)))
-             (w (round (* width tile-size)))
-             (h (round (* height tile-size))))
-        (raylib:draw-rectangle-lines x y w h *editor-selection-color*)))))
 
 (defun draw-editor-spawns (editor world)
   ;; Draw spawn markers in world space while editing.
@@ -682,7 +666,6 @@
 (defun draw-editor-world-overlay (editor world camera)
   ;; Draw editor overlays in world space.
   (when (editor-active editor)
-    (draw-editor-selection editor world)
     (draw-editor-spawns editor world)
     (draw-editor-cursor editor world camera)))
 
@@ -707,8 +690,7 @@
       (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle | F10/F11 resize | F12 rename"
                         x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "B start | N end | C clear selection | LMB paint | RMB erase" x y 16
-                        (ui-menu-text-color ui))
+      (raylib:draw-text "LMB paint | RMB erase" x y 16 (ui-menu-text-color ui))
       (when (editor-status-label editor)
         (incf y line)
         (raylib:draw-text (editor-status-label editor) x y 16

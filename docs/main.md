@@ -10,8 +10,9 @@ Why we do it this way
 Update flow (high level)
 1) Input/UI -> intent
 2) Movement/combat -> state updates
-3) Animation/effects -> visuals ready to render
-4) Editor mode (when enabled) overrides gameplay updates
+3) Zone transitions (edge exits) -> load new zone if needed
+4) Animation/effects -> visuals ready to render
+5) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.

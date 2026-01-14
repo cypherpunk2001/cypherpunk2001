@@ -13,6 +13,13 @@
   ;; Zone metadata with layered chunked tiles.
   id chunk-size width height layers collision-tiles objects spawns)
 
+(defun zone-label (zone)
+  ;; Return a display label for ZONE.
+  (let ((id (and zone (zone-id zone))))
+    (if id
+        (string-upcase (string id))
+        "NONE")))
+
 (defun zone-chunk-key (x y)
   ;; Pack chunk coordinates into a single integer key.
   (logior (ash (logand x #xffffffff) 32)
@@ -350,9 +357,10 @@
 
 (defun resolve-zone-path (path)
   ;; Resolve PATH relative to the system root if needed.
-  (if (and path (not (pathnamep path)))
-      (merge-pathnames path (asdf:system-source-directory :mmorpg))
-      path))
+  (cond
+    ((null path) nil)
+    ((and (pathnamep path) (uiop:absolute-pathname-p path)) path)
+    (t (merge-pathnames path (asdf:system-source-directory :mmorpg)))))
 
 (defun write-zone (zone path)
   ;; Write ZONE data to PATH, ensuring the destination directory exists.

@@ -12,6 +12,7 @@ Why we do it this way
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Sprite, tileset, zone, world layout, and audio defaults.
+- World graph file path for zone-to-zone transitions.
 - Editor defaults (palette root, export path, layer IDs, overlay colors).
 - Zone defaults and editor zone root for creating new zones.
 - Movement, combat, NPC behavior, and animation timings.
@@ -37,6 +38,11 @@ Walkthrough: load a zone file
 1) Set `:zone-path` in `data/game-data.lisp`.
 2) `load-zone` builds collision tiles from chunked layers.
 3) The world uses the zone's collision data for blocking tiles.
+
+Walkthrough: configure the world graph
+1) Set `:world-graph-path` in `data/game-data.lisp`.
+2) `load-world-graph` reads edge links for zone transitions.
+3) Movement consults the graph when the player exits a zone edge.
 
 Walkthrough: configure default zone sizing
 1) Set `:zone-default-width`, `:zone-default-height`, and `:zone-default-chunk-size`.

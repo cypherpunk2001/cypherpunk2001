@@ -455,15 +455,20 @@
 (defmethod draw-entity ((entity player) assets render)
   (draw-player entity assets render))
 
-(defun draw-hud (player ui)
-  ;; Draw stamina HUD using precomputed labels.
+(defun draw-hud (player ui world)
+  ;; Draw stamina HUD and zone label.
   (let* ((labels (ui-stamina-labels ui))
          (max-index (1- (length labels)))
          (run-seconds (max 0 (min (truncate (player-run-stamina player))
                                   max-index)))
-         (run-text (aref labels run-seconds)))
+         (run-text (aref labels run-seconds))
+         (zone-label (or (world-zone-label world) "NONE"))
+         (zone-width (+ 60 (* 10 (length zone-label)))))
     (raylib:draw-rectangle 6 6 110 24 (ui-hud-bg-color ui))
-    (raylib:draw-text run-text 10 10 20 raylib:+white+)))
+    (raylib:draw-text run-text 10 10 20 raylib:+white+)
+    (raylib:draw-rectangle 122 6 zone-width 24 (ui-hud-bg-color ui))
+    (raylib:draw-text "Zone" 128 10 20 raylib:+white+)
+    (raylib:draw-text zone-label 176 10 20 raylib:+white+)))
 
 (defun draw-menu (ui audio editor)
   ;; Render the pause menu and hover states.
@@ -700,7 +705,7 @@
             (loop :for entity :across entities
                   :do (draw-entity entity assets render))
             (draw-editor-world-overlay editor world camera))))
-      (draw-hud player ui)
+      (draw-hud player ui world)
       (draw-editor-ui-overlay editor ui)
       (when (ui-menu-open ui)
         (draw-menu ui audio editor)))))

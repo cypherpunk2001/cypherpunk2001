@@ -12,8 +12,8 @@ Core UX
 - Toggle Editor Mode from the Escape menu.
 - Move the editor camera freely to inspect tiles.
 - Paint tiles, paint collision, place objects, or place spawn points.
-- Export the current selection (or full zone) to `data/`.
- - Create, delete, cycle, rename, and resize zones from hotkeys.
+- Export the full zone to `data/`.
+- Create, delete, cycle, rename, and resize zones from hotkeys.
 
 Quick start (recommended flow)
 1) Esc -> toggle Editor Mode.
@@ -23,11 +23,10 @@ Quick start (recommended flow)
 5) Spawn mode (`4`) to place NPC spawns (LMB add, RMB remove).
 6) Press `F5` to export the full zone to `data/`.
 
-Selection export (optional)
-1) Hover a tile, press `B` to set selection start.
-2) Hover another tile, press `N` to set selection end.
-3) Press `F5` to export just the selection.
-4) Press `C` to clear the selection.
+Zone files and cycling
+- `F6` creates zones under `*zone-root*` and shows the full path in the status line.
+- `F8/F9` cycle all zones under `*zone-root*` plus any recently loaded zones
+  that live outside the root (they get pinned automatically).
 
 What the on-screen text means
 - `Zone` = current zone name, index, and size.
@@ -40,8 +39,7 @@ Controls (default)
 - `Q`/`E` cycle tiles, `Z`/`X` cycle objects or spawns.
 - `WASD`/arrows move the editor camera.
 - `LMB` paint, `RMB` erase.
-- `B` set selection start, `N` set selection end, `C` clear selection.
-- `F5` export the selection (or full zone).
+- `F5` export the full zone.
 - `F6` create zone, `F7` delete zone, `F8`/`F9` cycle zones.
 - `F10` shrink zone, `F11` grow zone, `F12` rename zone.
 
@@ -64,6 +62,5 @@ Key responsibilities
 
 Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.
-- Selection export is chunk-aware, so we can evolve to streaming later.
 - Export defaults to `*editor-export-path*` unless a zone path is already set.
 - Spawn mode writes `:spawns` into the zone file so runtime NPC placement can be data-driven.

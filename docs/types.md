@@ -11,9 +11,9 @@ Why we do it this way
 
 Key structs
 - `player`, `npc`: runtime entities with an `intent` and animation/combat state.
-- `world`: zone metadata, wall-map data, collision bounds, and derived sizes.
+- `world`: zone metadata, world graph, wall-map data, collision bounds, and derived sizes.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state.
-- `editor`: editor mode state (camera, palette selections, zone list, spawn palette).
+- `editor`: editor mode state (camera, palette selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors
@@ -36,3 +36,4 @@ Walkthrough: entity lifecycle
 Design note
 - Arrays are used for entity collections to keep iteration fast and predictable.
 - Spawn spacing accounts for collider sizes so entities don't overlap at start.
+- `world-zone-label` is cached for HUD display and updates on zone swaps.

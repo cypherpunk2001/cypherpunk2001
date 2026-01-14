@@ -37,38 +37,55 @@ mmorpg/
 
 **Remember to run `make checkparens` often while generating code. This tool will help you and is faster and more reliable than using python to analyze for missing parentheses.**
 
+Proposed model
 
-1) Build an interactive map editor that exports to our custom map format.
-   This is to be an interactive in-game map editor (Minecraft-like) that exports our custom map format (accessible from ESC), and saves the custom maps to the data/ location.
-   (we can lock it down so players cant modify maps later on.)
-Intent:
-- This is a *playable* editor mode where you move around the world camera/player and paint tiles/objects live.
-- The editor should require no authoring tools beyond an assets folder of PNGs.
-Core UX:
-- Enter “Editor Mode” in-game.
-- Navigate around the world freely (Minecraft-ish: pan/scroll/wasd, zoom optional).
-- Select a tile from our PNG tile palette and “paint” it onto the world.
-- Place and remove objects (e.g., houses, props) from an object palette.
-- Changes are visible immediately in the running game.
-- When satisfied, export to our Common Lisp metadata format.
-Assets-driven authoring:
-- Tiles and placeable objects are discovered from the assets folder (PNG-based).
-- No external map files, no hand-written metadata required to start building.
-- Each tile/object corresponds to an asset identifier (derived from filename or manifest).
-World / Zones model:
-- Treat the edit space as one large conceptual world you can roam around.
-- Persistence/export is done in *zones* (and/or chunks) rather than one monolithic file.
-- The editor supports selecting a zone region and exporting it as a zone file.
-- Runtime loads zones (and their chunked tile + collision layers) as the player enters them.
-Export format requirement:
-- Export output is our custom Lisp data format for zones/chunks.
-- Zone files contain chunked tile layers + collision layers + object placements.
-- Loading the game loads the current zone(s); editing updates the zone data and can be re-exported.
-Immediate priorities:
-- Make zones larger by default and allow configurable zone sizing (shared size is OK).
-- Add editor workflows to create new zones and delete existing zones.
-- Add editor placement for NPC/monster spawn regions or points.
-- Document editor asset paths so new sprites can be added without code edits.
+Zone remains the unit of edit/save/load (zone-1.lisp, zone-2.lisp, ...).
+Add a “world graph” layer that defines connections between zones.
+Each connection is an exit with:
+from-zone id
+edge or region (e.g., :north, or a rectangular boundary/portal)
+to-zone id
+spawn rule (where to place the player in the target zone)
+Two flavors of exits (pick one, or mix)
+
+Edge‑based transitions (simple, Runescape‑like)
+You walk off the north edge of zone‑1, you load zone‑2 and spawn at its south edge.
+Data: (:from :zone-1 :edge :north :to :zone-2 :spawn-edge :south :offset :preserve-x)
+Portal/region transitions (for gates, doors, caves)
+You define a rectangular region in zone‑1 that triggers a transition.
+Data: (:from :zone-1 :rect (x y w h) :to :zone-2 :spawn (x y))
+Runtime flow
+
+On movement update, check if the player crosses any defined exit trigger.
+If so:
+Save dirty zone (optional auto‑save or explicit).
+Load target zone.
+Place player using the target spawn rule.
+Update world bounds/collision.
+Where to store the graph
+
+Separate file world-graph.lisp for clarity, or embed in each zone under :exits (I’d lean separate so zones stay simple and reusable).
+Editor could eventually place exits visually (future roadmap).
+Questions to refine
+
+Do you want transitions only on the four edges, or also explicit portals?
+
+- Why don't we only make zone transitions on the 4 edges North, South, East, West, and then we can add portals later (they are def planned.)?
+
+Should edges preserve the player’s X/Y offset (so it feels continuous), or always spawn at a fixed point?
+
+- Yes, preserve. It should feel continuous when loading from one zone region in to another. One thing that might help also is if the HUD showed what zone we are currently in while walking (since we have not designed a minimap yet)
+
+Do you want a single “world map” file, or per‑zone exits embedded in each zone?
+
+- I am not certain, I do want it feel like Runescape while walking though from zone to zone, hopefully this will scale since we can kind of chunk it while walking? I will let you make the engineer decision on this.
+
+Should transitions auto‑save dirty zones, or require a manual save?
+
+- Likewise I am not sure yet, you decide please.
+
+If you answer those, I can propose a concrete data schema and runtime checks that match your intent.
+
 
 ---
 
