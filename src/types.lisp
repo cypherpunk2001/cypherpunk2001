@@ -91,8 +91,8 @@
   active mode
   camera-x camera-y move-speed
   selected-tile tile-count
-  tile-layer-id collision-layer-id
-  object-catalog object-table object-index
+  tileset-catalog tileset-index tileset-label-text
+  tile-layer-id collision-layer-id object-layer-id
   zone-root zone-files zone-index zone-label zone-history
   spawn-catalog spawn-index
   mode-label tile-label object-label-text status-label status-timer

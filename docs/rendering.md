@@ -9,26 +9,25 @@ Why we do it this way
 - The draw pipeline is tile-based so we can add chunk culling and caching later.
 
 Pipeline overview
-1) Load textures in `load-assets`.
-2) Draw world layers, zone objects, and debug overlays in `draw-world`.
+1) Load textures in `load-assets` (tileset columns derive from texture width).
+2) Draw world layers and debug overlays in `draw-world`.
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays, and menu overlays.
+5) Draw HUD (stamina + zone label), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
-- `draw-world`, `draw-zone-objects`.
+- `draw-world`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
-- `draw-hud`, `draw-minimap`, `draw-menu`, `draw-game`.
+- `draw-hud`, `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
 - `draw-loading-overlay` for zone swap feedback.
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
 2) Draw floor tiles, zone layers, and wall map tiles.
-3) Draw placed zone objects inside the view bounds.
-4) If debug is enabled, overlay collision/bounds grid.
-5) Draw player and NPCs in world space.
-6) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
+3) If debug is enabled, overlay collision/bounds grid.
+4) Draw player and NPCs in world space.
+5) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
 
 Example: draw flow
 ```lisp

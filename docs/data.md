@@ -37,8 +37,14 @@ Common tunables
 - `:zone-loading-seconds` to control how long the loading overlay displays.
 - `:minimap-width`, `:minimap-height`, `:minimap-padding`, `:minimap-point-size`,
   `:minimap-preview-edge-tiles` for minimap layout and preview distance.
-- `:editor-object-root` and `:editor-export-path` to drive editor palettes/exports.
-- `:editor-tile-layer-id` and `:editor-collision-layer-id` to map editor brushes to layers.
+- `:editor-export-path` for editor exports.
+- `:editor-start-enabled` to toggle editor mode at startup.
+- `:tileset-path` and `:tileset-columns` for the active tileset atlas.
+- `:floor-tile-index` for the base floor fill (use `0` for no fill).
+- `:editor-tileset-paths` or `:editor-tileset-root` to build the editor tileset catalog.
+- `:editor-tileset-preview-padding`, `:editor-tileset-preview-max-width`,
+  `:editor-tileset-preview-max-height` for the tileset preview layout.
+- `:editor-tile-layer-id`, `:editor-collision-layer-id`, and `:editor-object-layer-id` to map editor brushes to layers.
 - `:editor-move-speed` to tune editor camera navigation.
 
 Example: new animation set

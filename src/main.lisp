@@ -20,6 +20,8 @@
            (assets (load-assets world))
            (camera (make-camera))
            (editor (make-editor world assets player)))
+      (when *editor-start-enabled*
+        (toggle-editor-mode editor player))
       (setf (world-minimap-spawns world)
             (build-adjacent-minimap-spawns world player))
       (ensure-npcs-open-spawn npcs world)
@@ -47,7 +49,7 @@
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
   (shutdown-audio (game-audio game))
-  (unload-editor-objects (game-editor game))
+  (unload-editor-tilesets (game-editor game) (game-assets game))
   (unload-assets (game-assets game)))
 
 (defun update-game (game dt)

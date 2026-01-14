@@ -1,9 +1,9 @@
 ;; NOTE: If you change behavior here, update docs/editor.md :)
 (in-package #:mmorpg)
 
-(defstruct (editor-object (:constructor %make-editor-object))
-  ;; Object metadata for editor palette entries.
-  id label path texture width height)
+(defstruct (editor-tileset (:constructor %make-editor-tileset))
+  ;; Tileset metadata for editor tile selection.
+  id label path texture columns rows tile-count)
 
 (defun strip-extension (name)
   ;; Return NAME without a trailing extension.
@@ -63,44 +63,100 @@
                  pngs)))
       (walk root))))
 
-(defun editor-object-from-path (path root)
-  ;; Build an editor object entry from PATH.
-  (let* ((relative (relative-path-from-root path root))
+(defun normalize-tileset-path (path)
+  ;; Return PATH as a normalized namestring if it exists.
+  (when path
+    (let ((probe (probe-file path)))
+      (cond
+        (probe (namestring probe))
+        ((pathnamep path) (namestring path))
+        (t path)))))
+
+(defun editor-tileset-from-path (path root)
+  ;; Build a tileset entry from PATH with an optional ROOT for labels.
+  (let* ((path (if (pathnamep path) path (pathname path)))
+         (relative (if root
+                       (relative-path-from-root path root)
+                       (basename path)))
          (base (strip-extension relative))
          (id (sanitize-identifier base))
          (label base)
-         (texture (raylib:load-texture (namestring path)))
-         (width (raylib:texture-width texture))
-         (height (raylib:texture-height texture)))
-    (%make-editor-object :id id
-                         :label label
-                         :path relative
-                         :texture texture
-                         :width width
-                         :height height)))
+         (full-path (or (normalize-tileset-path path) (namestring path))))
+    (%make-editor-tileset :id id
+                          :label label
+                          :path full-path
+                          :texture nil
+                          :columns 0
+                          :rows 0
+                          :tile-count 0)))
 
-(defun load-editor-objects ()
-  ;; Load object palette entries from the configured assets root.
-  (if (not *editor-object-root*)
-      (make-array 0)
-      (let* ((root (resolve-editor-root *editor-object-root*))
-             (paths (when (probe-file root)
-                      (collect-png-files root)))
-             (objects (when paths
-                        (mapcar (lambda (path)
-                                  (editor-object-from-path path root))
-                                (nreverse paths)))))
-        (if objects
-            (coerce objects 'vector)
-            (make-array 0)))))
+(defun collect-editor-tileset-paths ()
+  ;; Collect tileset sheet paths from explicit paths or a root directory.
+  (cond
+    ((and *editor-tileset-paths*
+          (> (length (coerce *editor-tileset-paths* 'list)) 0))
+     (remove nil
+             (mapcar #'normalize-tileset-path
+                     (coerce *editor-tileset-paths* 'list))))
+    (*editor-tileset-root*
+     (let* ((root (resolve-editor-root *editor-tileset-root*))
+            (paths (when (probe-file root)
+                     (collect-png-files root))))
+       (when paths
+         (mapcar #'normalize-tileset-path
+                 (sort paths #'string< :key #'namestring)))))
+    (t
+     (let ((fallback (normalize-tileset-path *tileset-path*)))
+       (when fallback
+         (list fallback))))))
 
-(defun build-editor-object-table (objects)
-  ;; Build a lookup table for editor objects keyed by ID.
-  (let ((table (make-hash-table :test 'eq)))
-    (when objects
-      (loop :for obj :across objects
-            :do (setf (gethash (editor-object-id obj) table) obj)))
-    table))
+(defun load-editor-tilesets ()
+  ;; Build a tileset catalog from configured paths or root.
+  (let* ((paths (collect-editor-tileset-paths))
+         (root (when (and (null *editor-tileset-paths*) *editor-tileset-root*)
+                 (resolve-editor-root *editor-tileset-root*))))
+    (if (and paths (> (length paths) 0))
+        (coerce (mapcar (lambda (path)
+                          (editor-tileset-from-path path root))
+                        paths)
+                'vector)
+        (make-array 0))))
+
+(defun editor-tileset-index-for-path (tilesets path)
+  ;; Return the index of PATH inside TILESETS, or 0 when missing.
+  (let ((normalized (normalize-tileset-path path)))
+    (if (and normalized tilesets (> (length tilesets) 0))
+        (or (position normalized tilesets
+                      :test #'string=
+                      :key #'editor-tileset-path)
+            0)
+        0)))
+
+(defun editor-ensure-tileset-metrics (tileset)
+  ;; Refresh tileset grid metrics from its texture.
+  (let ((texture (editor-tileset-texture tileset)))
+    (when texture
+      (let* ((tile-size (max 1 *tile-size*))
+             (columns (max 1 (truncate (/ (raylib:texture-width texture) tile-size))))
+             (rows (max 1 (truncate (/ (raylib:texture-height texture) tile-size)))))
+        (setf (editor-tileset-columns tileset) columns
+              (editor-tileset-rows tileset) rows
+              (editor-tileset-tile-count tileset) (* columns rows))))
+  tileset))
+
+(defun editor-load-tileset-texture (tileset)
+  ;; Ensure TILESET has a loaded texture and computed metrics.
+  (unless (editor-tileset-texture tileset)
+    (setf (editor-tileset-texture tileset)
+          (raylib:load-texture (editor-tileset-path tileset))))
+  (editor-ensure-tileset-metrics tileset))
+
+(defun editor-current-tileset (editor)
+  ;; Return the active tileset entry for the editor.
+  (let ((tilesets (editor-tileset-catalog editor)))
+    (when (and tilesets (> (length tilesets) 0))
+      (aref tilesets (mod (editor-tileset-index editor) (length tilesets))))))
+
 
 (defun load-editor-spawns ()
   ;; Build the spawn palette from loaded NPC archetypes.
@@ -258,34 +314,6 @@
             (editor-activate-zone editor game zone path
                                   "Zone reset (last zone)"))))))
 
-(defun editor-rename-zone (editor game)
-  ;; Rename the current zone file using the next available name.
-  (let* ((path (editor-current-zone-path editor))
-         (zone (and path (world-zone (game-world game)))))
-    (when (and path zone)
-      (let* ((new-path (editor-next-zone-path editor))
-             (new-id (editor-zone-id-from-path new-path)))
-        (setf (zone-id zone) new-id)
-        (write-zone zone new-path)
-        (ignore-errors (delete-file path))
-        (editor-activate-zone editor game zone new-path
-                              (format nil "Zone renamed: ~a" (basename new-path)))))))
-
-(defun editor-resize-zone (editor game delta)
-  ;; Resize the current zone by DELTA chunks.
-  (let* ((world (game-world game))
-         (zone (world-zone world)))
-    (when zone
-      (let* ((chunk-size (max 1 (zone-chunk-size zone)))
-             (step (* delta chunk-size))
-             (width (max chunk-size (+ (zone-width zone) step)))
-             (height (max chunk-size (+ (zone-height zone) step)))
-             (resized (zone-resize zone width height)))
-        (apply-zone-to-world world resized)
-        (setf (editor-dirty editor) t)
-        (update-editor-zone-label editor resized)
-        (editor-status editor (format nil "Zone resized: ~dx~d" width height))))))
-
 (defun editor-cycle-zone (editor game delta)
   ;; Switch to the next/previous zone in the list.
   (let* ((files (editor-zone-files editor))
@@ -304,35 +332,24 @@
   (when (raylib:is-key-pressed +key-f8+)
     (editor-cycle-zone editor game -1))
   (when (raylib:is-key-pressed +key-f9+)
-    (editor-cycle-zone editor game 1))
-  (when (raylib:is-key-pressed +key-f10+)
-    (editor-resize-zone editor game -1))
-  (when (raylib:is-key-pressed +key-f11+)
-    (editor-resize-zone editor game 1))
-  (when (raylib:is-key-pressed +key-f12+)
-    (editor-rename-zone editor game)))
+    (editor-cycle-zone editor game 1)))
 
-(defun unload-editor-objects (editor)
-  ;; Unload object textures used by the editor.
-  (let ((objects (editor-object-catalog editor)))
-    (when objects
-      (loop :for obj :across objects
-            :do (when (editor-object-texture obj)
-                  (raylib:unload-texture (editor-object-texture obj)))))))
+(defun unload-editor-tilesets (editor assets)
+  ;; Unload tileset textures used by the editor.
+  (let ((tilesets (editor-tileset-catalog editor))
+        (active (and assets (assets-tileset assets))))
+    (when tilesets
+      (loop :for tileset :across tilesets
+            :for texture = (editor-tileset-texture tileset)
+            :do (when (and texture (not (eq texture active)))
+                  (raylib:unload-texture texture))))))
 
 (defun tileset-tile-count (tileset)
   ;; Calculate the total number of tiles in the tileset texture.
-  (let* ((columns (max 1 *tileset-columns*))
-         (rows (max 1 (truncate (/ (raylib:texture-height tileset)
-                                   (max 1 *tile-size*))))))
+  (let* ((tile-size (max 1 *tile-size*))
+         (columns (max 1 (truncate (/ (raylib:texture-width tileset) tile-size))))
+         (rows (max 1 (truncate (/ (raylib:texture-height tileset) tile-size)))))
     (* columns rows)))
-
-(defun editor-current-object (editor)
-  ;; Return the currently selected editor object, if any.
-  (let ((objects (editor-object-catalog editor)))
-    (when (and objects (> (length objects) 0))
-      (let ((index (mod (editor-object-index editor) (length objects))))
-        (aref objects index)))))
 
 (defun editor-current-spawn-id (editor)
   ;; Return the currently selected spawn archetype ID.
@@ -340,16 +357,6 @@
     (when (and spawns (> (length spawns) 0))
       (let ((index (mod (editor-spawn-index editor) (length spawns))))
         (aref spawns index)))))
-
-(defun editor-object-by-id (editor id)
-  ;; Return the editor object matching ID.
-  (when (and editor id)
-    (let ((key (cond
-                 ((keywordp id) id)
-                 ((symbolp id) (intern (symbol-name id) :keyword))
-                 ((stringp id) (sanitize-identifier id))
-                 (t id))))
-      (gethash key (editor-object-table editor)))))
 
 (defun editor-mode-label-text (mode)
   ;; Convert editor mode into a display label.
@@ -363,6 +370,15 @@
   ;; Refresh cached editor labels after selection changes.
   (setf (editor-mode-label editor)
         (editor-mode-label-text (editor-mode editor)))
+  (let* ((tilesets (editor-tileset-catalog editor))
+         (count (if tilesets (length tilesets) 0))
+         (index (if (> count 0) (1+ (mod (editor-tileset-index editor) count)) 0))
+         (tileset (editor-current-tileset editor))
+         (label (if tileset (editor-tileset-label tileset) "none")))
+    (setf (editor-tileset-label-text editor)
+          (if (> count 0)
+              (format nil "Sheet: ~a (~d/~d)" label index count)
+              "Sheet: none")))
   (setf (editor-tile-label editor)
         (format nil "Tile: ~d/~d"
                 (editor-selected-tile editor)
@@ -378,11 +394,13 @@
                (if label
                    (format nil "Spawn: ~a" label)
                    "Spawn: none")))
-            (t
-             (let ((obj (editor-current-object editor)))
-               (if obj
-                   (format nil "Object: ~a" (editor-object-label obj))
-                   "Object: none")))))))
+            ((eq mode :tile)
+             (format nil "Layer: ~a" (editor-tile-layer-id editor)))
+            ((eq mode :collision)
+             (format nil "Layer: ~a" (editor-collision-layer-id editor)))
+            ((eq mode :object)
+             (format nil "Layer: ~a" (editor-object-layer-id editor)))
+            (t "Layer: none")))))
 
 (defun update-editor-zone-label (editor zone)
   ;; Refresh the cached zone label for the editor overlay.
@@ -416,10 +434,10 @@
     (setf (editor-dirty editor) nil)))
 
 (defun make-editor (world assets player)
-  ;; Build editor state with a tile palette and object catalog.
-  (let* ((tile-count (tileset-tile-count (assets-tileset assets)))
-         (objects (load-editor-objects))
-         (object-table (build-editor-object-table objects))
+  ;; Build editor state with tile palette and layer selections.
+  (let* ((tilesets (load-editor-tilesets))
+         (tileset-index (editor-tileset-index-for-path tilesets *tileset-path*))
+         (tile-count (tileset-tile-count (assets-tileset assets)))
          (zone-root (resolve-zone-root *zone-root*))
          (spawns (load-editor-spawns))
          (editor (%make-editor :active nil
@@ -428,12 +446,13 @@
                                :camera-y (player-y player)
                                :move-speed *editor-move-speed*
                                :selected-tile *floor-tile-index*
-                               :tile-count tile-count
+                               :tile-count (max 1 tile-count)
+                               :tileset-catalog tilesets
+                               :tileset-index tileset-index
+                               :tileset-label-text nil
                                :tile-layer-id *editor-tile-layer-id*
                                :collision-layer-id *editor-collision-layer-id*
-                               :object-catalog objects
-                               :object-table object-table
-                               :object-index 0
+                               :object-layer-id *editor-object-layer-id*
                                :zone-root zone-root
                                :zone-files (make-array 0)
                                :zone-index 0
@@ -445,6 +464,8 @@
                                :status-timer 0.0
                                :export-path nil
                                :dirty nil)))
+    (editor-set-active-tileset editor nil assets tileset-index nil)
+    (editor-clamp-floor-index editor world)
     (editor-refresh-zone-files editor)
     (setf (editor-export-path editor)
           (or (editor-current-zone-path editor)
@@ -491,13 +512,52 @@
     (setf (editor-selected-tile editor) next)
     (update-editor-labels editor)))
 
-(defun editor-adjust-object (editor delta)
-  ;; Move the selected object index by DELTA.
-  (let ((objects (editor-object-catalog editor)))
-    (when (and objects (> (length objects) 0))
-      (setf (editor-object-index editor)
-            (mod (+ (editor-object-index editor) delta) (length objects)))
-      (update-editor-labels editor))))
+(defun editor-clamp-floor-index (editor world)
+  ;; Clamp the world's floor index to the active tileset size.
+  (let ((tileset (editor-current-tileset editor)))
+    (when (and world tileset)
+      (let* ((count (editor-tileset-tile-count tileset))
+             (floor (world-floor-index world)))
+        (setf (world-floor-index world)
+              (if (and (numberp floor) (> count 0))
+                  (mod floor count)
+                  0))))))
+
+(defun editor-set-active-tileset (editor game assets index &optional (show-status t))
+  ;; Select the tileset at INDEX and sync it to rendering and labels.
+  (let ((tilesets (editor-tileset-catalog editor)))
+    (when (and tilesets (> (length tilesets) 0))
+      (setf (editor-tileset-index editor)
+            (mod index (length tilesets)))
+      (let* ((tileset (editor-current-tileset editor))
+             (active-path (normalize-tileset-path *tileset-path*)))
+        (when tileset
+          (when (and assets (assets-tileset assets)
+                     (null (editor-tileset-texture tileset))
+                     active-path
+                     (string= active-path (editor-tileset-path tileset)))
+            (setf (editor-tileset-texture tileset) (assets-tileset assets)))
+          (editor-load-tileset-texture tileset)
+          (when assets
+            (setf (assets-tileset assets) (editor-tileset-texture tileset)))
+          (setf *tileset-columns* (max 1 (editor-tileset-columns tileset))
+                *tileset-path* (editor-tileset-path tileset))
+          (setf (editor-tile-count editor)
+                (max 1 (editor-tileset-tile-count tileset)))
+          (setf (editor-selected-tile editor)
+                (mod (editor-selected-tile editor) (editor-tile-count editor)))
+          (editor-clamp-floor-index editor (and game (game-world game)))
+          (update-editor-labels editor)
+          (when show-status
+            (editor-status editor (format nil "Tileset: ~a"
+                                          (editor-tileset-label tileset)))))))))
+
+(defun editor-adjust-tileset (editor game assets delta)
+  ;; Move the selected tileset by DELTA.
+  (let ((tilesets (editor-tileset-catalog editor)))
+    (when (and tilesets (> (length tilesets) 0))
+      (editor-set-active-tileset editor game assets
+                                 (+ (editor-tileset-index editor) delta)))))
 
 (defun editor-adjust-spawn (editor delta)
   ;; Move the selected spawn index by DELTA.
@@ -506,6 +566,65 @@
       (setf (editor-spawn-index editor)
             (mod (+ (editor-spawn-index editor) delta) (length spawns)))
       (update-editor-labels editor))))
+
+(defun editor-tileset-preview-layout (editor)
+  ;; Return preview panel layout for the active tileset.
+  (let* ((tileset (editor-current-tileset editor))
+         (texture (and tileset (editor-tileset-texture tileset))))
+    (when (and texture (member (editor-mode editor) '(:tile :collision :object)))
+      (let* ((tex-w (raylib:texture-width texture))
+             (tex-h (raylib:texture-height texture))
+             (padding (float *editor-tileset-preview-padding* 1.0))
+             (max-w (max 0.0 (- (min (float *editor-tileset-preview-max-width* 1.0)
+                                     (float *window-width* 1.0))
+                                (* 2.0 padding))))
+             (max-h (max 0.0 (- (min (float *editor-tileset-preview-max-height* 1.0)
+                                     (float *window-height* 1.0))
+                                (* 2.0 padding))))
+             (tex-w-f (float tex-w 1.0))
+             (tex-h-f (float tex-h 1.0)))
+        (when (and (> tex-w 0) (> tex-h 0) (> max-w 0.0) (> max-h 0.0))
+          (let* ((scale (min 1.0 (min (/ max-w tex-w-f) (/ max-h tex-h-f))))
+                 (dest-w (* tex-w-f scale))
+                 (dest-h (* tex-h-f scale))
+                 (dest-x (- (float *window-width* 1.0) padding dest-w))
+                 (dest-y padding))
+            (values dest-x dest-y dest-w dest-h scale tileset)))))))
+
+(defun editor-mouse-over-tileset-preview-p (editor)
+  ;; Return true when the mouse is over the tileset preview panel.
+  (multiple-value-bind (x y w h _scale _tileset)
+      (editor-tileset-preview-layout editor)
+    (declare (ignore _scale _tileset))
+    (and x
+         (point-in-rect-p (raylib:get-mouse-x)
+                          (raylib:get-mouse-y)
+                          x y w h))))
+
+(defun editor-handle-tileset-picker (editor)
+  ;; Update tile selection from the tileset preview panel.
+  (when (and (member (editor-mode editor) '(:tile :collision :object))
+             (raylib:is-mouse-button-pressed +mouse-left+))
+    (multiple-value-bind (x y w h scale tileset)
+        (editor-tileset-preview-layout editor)
+      (when (and x tileset
+                 (point-in-rect-p (raylib:get-mouse-x)
+                                  (raylib:get-mouse-y)
+                                  x y w h))
+        (let* ((tile-size (* (max 1.0 (float *tile-size* 1.0)) scale))
+               (local-x (- (raylib:get-mouse-x) x))
+               (local-y (- (raylib:get-mouse-y) y))
+               (tx (floor local-x tile-size))
+               (ty (floor local-y tile-size))
+               (columns (max 1 (editor-tileset-columns tileset)))
+               (rows (max 1 (editor-tileset-rows tileset))))
+          (when (and (> tile-size 0.0)
+                     (<= 0 tx) (< tx columns)
+                     (<= 0 ty) (< ty rows))
+            (setf (editor-selected-tile editor)
+                  (+ tx (* ty columns)))
+            (update-editor-labels editor)
+            t))))))
 
 (defun editor-mouse-tile (editor world camera)
   ;; Return the tile coordinate under the mouse pointer.
@@ -552,10 +671,13 @@
     (update-editor-labels editor)))
 
 (defun editor-apply-paint (editor world camera)
-  ;; Paint tiles or objects under the mouse.
+  ;; Paint tiles, layers, or spawns under the mouse.
   (let* ((zone (world-zone world))
          (left-down (raylib:is-mouse-button-down +mouse-left+))
          (right-down (raylib:is-mouse-button-down +mouse-right+)))
+    (when (and (member (editor-mode editor) '(:tile :collision :object))
+               (editor-mouse-over-tileset-preview-p editor))
+      (return-from editor-apply-paint))
     (when (and zone (or left-down right-down))
       (multiple-value-bind (tx ty)
           (editor-mouse-tile editor world camera)
@@ -569,22 +691,16 @@
             (:collision
              (let* ((layer (ensure-zone-layer zone (editor-collision-layer-id editor)
                                               :collision-p t))
-                    (value (if right-down 0 1)))
+                    (value (if right-down 0 (editor-selected-tile editor))))
                (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
                (zone-set-collision-tile zone tx ty value)
                (set-world-blocked-tile world tx ty value)
                (setf (editor-dirty editor) t)))
             (:object
-             (if right-down
-                 (progn
-                   (zone-remove-object-at zone tx ty)
-                   (setf (editor-dirty editor) t))
-                 (let ((obj (editor-current-object editor)))
-                   (when obj
-                     (zone-add-object zone (list :id (editor-object-id obj)
-                                                 :x tx
-                                                 :y ty))
-                     (setf (editor-dirty editor) t)))))
+             (let* ((layer (ensure-zone-layer zone (editor-object-layer-id editor)))
+                    (value (if right-down 0 (editor-selected-tile editor))))
+               (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
+               (setf (editor-dirty editor) t)))
             (:spawn
              (if right-down
                  (progn
@@ -610,24 +726,24 @@
   ;; Update editor input, camera, and painting when active.
   (let* ((world (game-world game))
          (camera (game-camera game))
-         (ui (game-ui game)))
+         (ui (game-ui game))
+         (assets (game-assets game)))
     (when (editor-active editor)
       (update-editor-status editor dt)
       (unless (ui-menu-open ui)
         (editor-update-mode editor)
         (editor-handle-zone-actions editor game)
         (when (raylib:is-key-pressed +key-q+)
-          (editor-adjust-selection editor -1))
-        (when (raylib:is-key-pressed +key-e+)
-          (editor-adjust-selection editor 1))
-        (when (raylib:is-key-pressed +key-z+)
           (if (eq (editor-mode editor) :spawn)
               (editor-adjust-spawn editor -1)
-              (editor-adjust-object editor -1)))
-        (when (raylib:is-key-pressed +key-x+)
+              (when (member (editor-mode editor) '(:tile :collision :object))
+                (editor-adjust-tileset editor game assets -1))))
+        (when (raylib:is-key-pressed +key-e+)
           (if (eq (editor-mode editor) :spawn)
               (editor-adjust-spawn editor 1)
-              (editor-adjust-object editor 1)))
+              (when (member (editor-mode editor) '(:tile :collision :object))
+                (editor-adjust-tileset editor game assets 1))))
+        (editor-handle-tileset-picker editor)
         (when (raylib:is-key-pressed +key-f5+)
           (editor-export-zone editor world))
         (editor-update-camera editor world dt)
@@ -682,14 +798,16 @@
         (incf y line))
       (raylib:draw-text (editor-mode-label editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
+      (raylib:draw-text (editor-tileset-label-text editor) x y 16 (ui-menu-text-color ui))
+      (incf y line)
       (raylib:draw-text (editor-tile-label editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text (editor-object-label-text editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "1/2/3/4 mode | Q/E tile | Z/X object/spawn | F5 export" x y 16
+      (raylib:draw-text "1/2/3/4 mode | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | F5 export" x y 16
                         (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle | F10/F11 resize | F12 rename"
+      (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle"
                         x y 16 (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text "LMB paint | RMB erase" x y 16 (ui-menu-text-color ui))

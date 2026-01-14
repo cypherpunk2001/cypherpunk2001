@@ -20,6 +20,8 @@ Key functions
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
+- `shutdown-game`: unloads editor tilesets and rendering assets.
+- Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
 - `update-game`: orchestrates system updates.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 

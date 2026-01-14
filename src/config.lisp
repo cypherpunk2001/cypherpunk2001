@@ -17,6 +17,7 @@
 (defparameter *run-stamina-max* 10.0) ;; Seconds of run stamina when full.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 (defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
+(defparameter *editor-start-enabled* nil) ;; When true, editor mode starts enabled.
 (defparameter *minimap-width* 220) ;; Minimap width in pixels.
 (defparameter *minimap-height* 220) ;; Minimap height in pixels.
 (defparameter *minimap-padding* 12) ;; Padding from screen edges for minimap placement.
@@ -30,7 +31,7 @@
 (defparameter *sprite-scale* 4.0) ;; Scale factor applied when drawing sprites.
 (defparameter *player-animation-set-id* :player) ;; Animation set ID used for the player sprite set.
 
-(defparameter *tileset-path* "../assets/2 Dungeon Tileset/1 Tiles/Tileset.png") ;; Atlas image used for floor tiles.
+(defparameter *tileset-path* "../assets/Zelda-like/Overworld.png") ;; Atlas image used for floor tiles.
 (defparameter *zone-path* nil) ;; Zone data path relative to repo (nil uses wall map).
 (defparameter *zone-root* "data/zones") ;; Directory that holds zone files for the editor.
 (defparameter *zone-default-width* 64) ;; Default zone width in tiles for new zones.
@@ -38,10 +39,12 @@
 (defparameter *zone-default-chunk-size* 8) ;; Default chunk size in tiles for new zones.
 (defparameter *world-graph-path* "data/world-graph.lisp") ;; World graph data path relative to repo.
 (defparameter *zone-loading-seconds* 0.35) ;; Seconds to show the zone loading overlay after transitions.
-(defparameter *editor-object-root* "../assets/2 Dungeon Tileset/2 Objects") ;; Root directory for editor object palette.
+(defparameter *editor-tileset-paths* nil) ;; Optional list of tileset sheets to use in the editor.
+(defparameter *editor-tileset-root* "../assets/Zelda-like") ;; Directory that holds editor tileset sheets.
 (defparameter *editor-export-path* "data/zones/editor-zone.lisp") ;; Default export path for editor zones.
 (defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.
 (defparameter *editor-collision-layer-id* :walls) ;; Zone layer ID used for collision painting.
+(defparameter *editor-object-layer-id* :objects) ;; Zone layer ID used for object painting.
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector
@@ -59,8 +62,8 @@
    "Ending"))
 (defparameter *tile-size* 16) ;; Source tile size in the atlas, in pixels.
 (defparameter *tile-scale* 4.0) ;; Scale factor for drawing tiles to the screen.
-(defparameter *tileset-columns* 19) ;; Number of columns in the atlas grid.
-(defparameter *floor-tile-index* 40) ;; Which atlas tile index to use for the floor fill.
+(defparameter *tileset-columns* 40) ;; Number of columns in the atlas grid.
+(defparameter *floor-tile-index* 0) ;; Which atlas tile index to use for the floor fill (0 disables fill).
 (defparameter *wall-map-width* 40) ;; Width of the test wall map in tiles.
 (defparameter *wall-map-height* 24) ;; Height of the test wall map in tiles.
 (defparameter *wall-origin-x* 0) ;; World tile X where the wall map starts.
@@ -99,6 +102,12 @@
 (defparameter *debug-npc-text-color* (raylib:make-color :r 255 :g 240 :b 160 :a 230)) ;; NPC AI debug text color.
 (defparameter *editor-cursor-color* (raylib:make-color :r 80 :g 220 :b 255 :a 200)) ;; Editor cursor highlight color.
 (defparameter *editor-spawn-color* (raylib:make-color :r 255 :g 140 :b 60 :a 210)) ;; Editor spawn marker color.
+(defparameter *editor-tileset-preview-padding* 12) ;; Padding for the tileset preview panel.
+(defparameter *editor-tileset-preview-max-width* 480) ;; Max width for the tileset preview panel.
+(defparameter *editor-tileset-preview-max-height* 360) ;; Max height for the tileset preview panel.
+(defparameter *editor-tileset-preview-bg-color* (raylib:make-color :r 10 :g 12 :b 18 :a 220)) ;; Tileset preview background color.
+(defparameter *editor-tileset-preview-border-color* (raylib:make-color :r 180 :g 180 :b 180 :a 200)) ;; Tileset preview border color.
+(defparameter *editor-tileset-preview-highlight-color* (raylib:make-color :r 255 :g 220 :b 120 :a 220)) ;; Tileset preview selection color.
 (defparameter *minimap-bg-color* (raylib:make-color :r 8 :g 12 :b 18 :a 190)) ;; Minimap background color.
 (defparameter *minimap-border-color* (raylib:make-color :r 220 :g 220 :b 220 :a 200)) ;; Minimap border color.
 (defparameter *minimap-player-color* (raylib:make-color :r 80 :g 220 :b 255 :a 220)) ;; Minimap player marker color.

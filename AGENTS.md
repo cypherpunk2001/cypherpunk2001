@@ -35,19 +35,15 @@ mmorpg/
 
 ## Current Task
 
-Currently when I cross from Zone 1 to zone 2 i dont see the preview dots on the minimap so the enemies kind of surprise me as I cross over. You're a new agent so ingest the codebase as well before beginning. Thanks and welcome to the team.
+- Currently the sprite sheets used by the characters and npcs are fine, for now, but we will be moving away from the other sprites in use currently. We are moving to using 16x16 everywhere (I am not sure if we are using 32x32 anywhere but just stating for certainty.) Particuarly we have new 16x16 assets in "assets/Zelda-like" that need to be integrated in to the world zone editor mode. These are all 16x16 sprite sheets of various sizes (feel free to use imagemagick and other cli tools to determine more information about them as needed)
+
+- One thing I would really like is instead of having to press q|e to cycle through tiles one by one, is just a way to cycle through the various sprite sheets (q|e for that would be fine) but then it literally opens up the entire sheet and allows me to preview them all together so that I can click on the one I want to paint with directly. This would allow me to see the entire context of the various tiles available in my sprite sheets.
+
+- Also I'm not sure what we need z/x for the docs say "Z/X cycle objects or spawns." But we already have 1,2,3,4 I think which should be enough for this? The docs state "1 tile mode, 2 collision mode, 3 object mode, 4 spawn mode." So clean this up or clarify.
 
 ---
 
 ## Future Tasks / Roadmap
-
-2) Add zone lifecycle tools: create, delete, rename, resize, and list zones.
-
-3) Add spawn tables: editor placements for NPC/monster spawns, and runtime consumption.
-
-4) Add a world graph (town nodes + path edges) that references zone files.
-
-5) Cache static chunks into render textures for large-world rendering performance.
 
 ---
 

@@ -55,6 +55,8 @@
          (npc-ids (npc-animation-set-ids))
          (npc-animations (make-hash-table :test 'eq))
          (tileset (raylib:load-texture *tileset-path*))
+         (tileset-columns (max 1 (truncate (/ (raylib:texture-width tileset)
+                                              (max 1 *tile-size*)))))
          (down-idle (raylib:load-texture (animation-path player-set :down-idle)))
          (down-walk (raylib:load-texture (animation-path player-set :down-walk)))
          (down-attack (raylib:load-texture (animation-path player-set :down-attack)))
@@ -74,6 +76,7 @@
                :down-idle (raylib:load-texture (animation-path set :down-idle))
                :up-idle (raylib:load-texture (animation-path set :up-idle))
                :side-idle (raylib:load-texture (animation-path set :side-idle))))))
+    (setf *tileset-columns* tileset-columns)
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk
@@ -187,8 +190,6 @@
                                                      origin
                                                      0.0
                                                      raylib:+white+)))))
-    (draw-zone-objects zone editor render tile-source tile-dest origin
-                       tile-dest-size start-col end-col start-row end-row)
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row
@@ -232,32 +233,6 @@
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui)))))))
   )
-
-(defun draw-zone-objects (zone editor render tile-source tile-dest origin
-                          tile-dest-size start-col end-col start-row end-row)
-  ;; Draw placed zone objects inside the current view bounds.
-  (when (and zone editor)
-    (dolist (obj (zone-objects zone))
-      (let ((tx (getf obj :x))
-            (ty (getf obj :y))
-            (entry (editor-object-by-id editor (getf obj :id))))
-        (when (and entry
-                   (<= start-col tx) (<= tx end-col)
-                   (<= start-row ty) (<= ty end-row))
-          (let* ((src-w (editor-object-width entry))
-                 (src-h (editor-object-height entry))
-                 (dest-x (* tx tile-dest-size))
-                 (dest-y (* ty tile-dest-size))
-                 (dest-w (* src-w *tile-scale*))
-                 (dest-h (* src-h *tile-scale*)))
-            (set-rectangle tile-source 0.0 0.0 src-w src-h)
-            (set-rectangle tile-dest dest-x dest-y dest-w dest-h)
-            (raylib:draw-texture-pro (editor-object-texture entry)
-                                     tile-source
-                                     tile-dest
-                                     origin
-                                     0.0
-                                     raylib:+white+)))))))
 
 (defun npc-textures-for (npc assets)
   ;; Select the NPC texture set based on archetype.
@@ -567,6 +542,40 @@
       (raylib:draw-text label text-x text-y font-size
                         (ui-menu-text-color ui)))))
 
+(defun draw-editor-tileset-preview (editor render)
+  ;; Draw the active tileset sheet in screen space for tile picking.
+  (when (and editor (editor-active editor))
+    (multiple-value-bind (x y w h scale tileset)
+        (editor-tileset-preview-layout editor)
+      (when (and x tileset)
+        (let* ((texture (editor-tileset-texture tileset))
+               (source (render-tile-source render))
+               (dest (render-tile-dest render))
+               (origin (render-origin render)))
+          (raylib:draw-rectangle (round x) (round y) (round w) (round h)
+                                 *editor-tileset-preview-bg-color*)
+          (set-rectangle source 0.0 0.0
+                         (float (raylib:texture-width texture) 1.0)
+                         (float (raylib:texture-height texture) 1.0))
+          (set-rectangle dest x y w h)
+          (raylib:draw-texture-pro texture source dest origin 0.0 raylib:+white+)
+          (raylib:draw-rectangle-lines (round x) (round y) (round w) (round h)
+                                       *editor-tileset-preview-border-color*)
+          (let* ((tile-size (* (max 1.0 (float *tile-size* 1.0)) scale))
+                 (columns (max 1 (editor-tileset-columns tileset)))
+                 (rows (max 1 (editor-tileset-rows tileset)))
+                 (tile-index (editor-selected-tile editor))
+                 (tx (mod tile-index columns))
+                 (ty (floor tile-index columns)))
+            (when (and (> tile-size 0.0)
+                       (<= 0 tx) (< tx columns)
+                       (<= 0 ty) (< ty rows))
+              (let ((sel-x (+ x (* tx tile-size)))
+                    (sel-y (+ y (* ty tile-size))))
+                (raylib:draw-rectangle-lines (round sel-x) (round sel-y)
+                                             (round tile-size) (round tile-size)
+                                             *editor-tileset-preview-highlight-color*)))))))))
+
 (defun draw-menu (ui audio editor)
   ;; Render the pause menu and hover states.
   (let* ((mouse-x (raylib:get-mouse-x))
@@ -806,5 +815,6 @@
       (draw-minimap world player npcs ui)
       (draw-loading-overlay ui)
       (draw-editor-ui-overlay editor ui)
+      (draw-editor-tileset-preview editor render)
       (when (ui-menu-open ui)
         (draw-menu ui audio editor)))))

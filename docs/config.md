@@ -12,8 +12,9 @@ Why we do it this way
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Sprite, tileset, zone, world layout, and audio defaults.
+- Floor fill tile index for the base map; set to `0` to skip drawing a fill tile.
 - World graph file path for zone-to-zone transitions.
-- Editor defaults (palette root, export path, layer IDs, overlay colors).
+- Editor defaults (tileset sheets, export path, layer IDs, overlay colors, startup enable flag).
 - Zone defaults and editor zone root for creating new zones.
 - Loading overlay duration for zone transitions.
 - Minimap sizing, placement, preview edge distance, and minimap color defaults.
@@ -67,6 +68,14 @@ Walkthrough: customize editor export
 Walkthrough: change zone root
 1) Set `:zone-root` in `data/game-data.lisp`.
 2) Editor zone create/delete/list operations use the new folder.
+
+Walkthrough: configure editor tileset sheets
+1) Set `:editor-tileset-paths` (explicit list) or `:editor-tileset-root` in `data/game-data.lisp`.
+2) Editor Mode builds the tileset catalog at startup and `Q/E` cycles sheets.
+
+Walkthrough: start in editor mode
+1) Set `:editor-start-enabled` in `data/game-data.lisp`.
+2) The game boots with editor mode enabled for quick iteration.
 
 Example: tuning player speed
 ```lisp
