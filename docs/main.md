@@ -9,11 +9,11 @@ Why we do it this way
 
 Update flow (high level)
 1) Input/UI -> intent
-2) Movement/combat -> state updates
+2) Fixed-tick simulation -> movement/combat/AI state updates
 3) Zone transitions (edge exits) -> load new zone if needed
-4) UI timers (loading overlay, menus) -> update per frame
 4) Animation/effects -> visuals ready to render
-5) Editor mode (when enabled) overrides gameplay updates
+5) UI timers (loading overlay, menus) -> update per frame
+6) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.
@@ -22,23 +22,27 @@ Key functions
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
 - `shutdown-game`: unloads editor tilesets and rendering assets.
 - Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
-- `update-game`: orchestrates system updates.
+- `update-client-input`: reads raylib input and writes player intent.
+- `update-sim`: runs one fixed-tick simulation step from intent and feeds UI combat logging.
+- `update-game`: orchestrates fixed-step simulation and returns the accumulator.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 
 Walkthrough: one frame
 1) Read input and UI; write intent for player and NPCs.
 2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
-3) Otherwise update movement/combat; change positions, hit points, and cooldowns.
-4) Advance animation/effect timers.
+3) Otherwise, run as many fixed-tick simulation steps as the accumulator allows.
+4) Advance animation/effect timers during simulation ticks.
 5) Update UI timers for loading overlays.
 6) Render the frame (world -> entities -> HUD/loading/menu/editor overlay).
 
 Example: core loop
 ```lisp
-(loop :until (or (raylib:window-should-close)
+(loop :with sim-accumulator = 0.0
+      :until (or (raylib:window-should-close)
                  (ui-exit-requested (game-ui game)))
       :do (let ((dt (raylib:get-frame-time)))
-            (update-game game dt)
+            (setf sim-accumulator
+                  (update-game game dt sim-accumulator))
             (draw-game game)))
 ```
 

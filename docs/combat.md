@@ -11,6 +11,8 @@ What it does
 - Defines combatant generics for position, health, collisions, and hits.
 - Creates a directional attack hitbox for the player.
 - Applies hits once per attack window.
+- Rolls hit/miss and damage based on attack/strength/defense stats.
+- Emits combat log lines (hit/miss + chance) when debug overlay is enabled.
 - Runs attack cooldowns and hit effect animations.
 - Emits NPC hit logs when `*debug-npc-logs*` is enabled.
 
@@ -22,8 +24,9 @@ Key functions
 Walkthrough: player melee hit
 1) Player input requests an attack intent.
 2) Combat starts the attack animation and sets a hit window.
-3) `apply-melee-hit` checks hitbox overlap once per attack.
-4) Target health is reduced and a hit effect starts.
+3) `apply-melee-hit` checks hitbox overlap and rolls a hit/miss.
+4) On hit, damage is rolled and health is reduced.
+5) XP and loot are awarded on successful hits and kills, and debug log lines are queued.
 
 Hit detection note
 - The AABB overlap treats touching edges as a hit so adjacent contact lands.
@@ -41,3 +44,4 @@ Example: applying a melee hit
 
 Design note
 - Damage is applied by systems, not by rendering or input.
+- Stats are used for hit chance and max hit, keeping combat data-driven.

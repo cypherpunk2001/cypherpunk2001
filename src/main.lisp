@@ -11,8 +11,10 @@
         (world-spawn-center world)
       (multiple-value-setq (spawn-x spawn-y)
         (world-open-position world center-x center-y)))
-    (let* ((player (make-player spawn-x spawn-y))
-           (npcs (make-npcs player world))
+    (let* ((id-source (make-id-source))
+           (player (make-player spawn-x spawn-y
+                                :id (allocate-entity-id id-source)))
+           (npcs (make-npcs player world :id-source id-source))
            (entities (make-entities player npcs))
            (audio (make-audio))
            (ui (make-ui))
@@ -39,6 +41,7 @@
                   :player player
                   :npcs npcs
                   :entities entities
+                  :id-source id-source
                   :audio audio
                   :ui ui
                   :render render
@@ -52,11 +55,9 @@
   (unload-editor-tilesets (game-editor game) (game-assets game))
   (unload-assets (game-assets game)))
 
-(defun update-game (game dt)
-  ;; Run one frame of input, audio, movement, and animation updates.
+(defun update-client-input (game dt)
+  ;; Read raylib input and update UI/audio state; writes player intent.
   (let* ((player (game-player game))
-         (npcs (game-npcs game))
-         (entities (game-entities game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -73,8 +74,6 @@
         (toggle-editor-mode editor player)
         (setf (ui-menu-open ui) nil)))
     (reset-frame-intent player-intent)
-    (loop :for npc :across npcs
-          :do (reset-frame-intent (npc-intent npc)))
     (unless (or (ui-menu-open ui)
                 (editor-active editor))
       (let ((minimap-handled (update-target-from-minimap player player-intent ui world
@@ -85,37 +84,88 @@
       (update-input-direction player player-intent mouse-clicked))
     (unless (or (ui-menu-open ui)
                 (editor-active editor))
-      (update-input-actions player-intent (not mouse-clicked)))
-    (unless (editor-active editor)
+      (update-input-actions player-intent (not mouse-clicked))
+      (update-training-mode player))))
+
+(defun reset-npc-frame-intents (npcs)
+  ;; Clear per-tick intent signals for NPCs.
+  (loop :for npc :across npcs
+        :do (reset-frame-intent (npc-intent npc))))
+
+(defun handle-zone-transition (game)
+  ;; Sync client-facing state after a zone change.
+  (let ((ui (game-ui game))
+        (editor (game-editor game))
+        (world (game-world game)))
+    (ui-trigger-loading ui)
+    (editor-sync-zone editor world)))
+
+(defun update-sim (game dt &optional (allow-player-control t))
+  ;; Run one fixed-tick simulation step. Returns true on zone transition.
+  (let* ((player (game-player game))
+         (npcs (game-npcs game))
+         (entities (game-entities game))
+         (world (game-world game))
+         (ui (game-ui game))
+         (player-intent (player-intent player)))
+    (reset-npc-frame-intents npcs)
+    (when allow-player-control
       (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
                          (not (zerop (intent-move-dy player-intent)))
                          (intent-target-active player-intent)))
              (speed-mult (update-running-state player dt moving
                                                (intent-run-toggle player-intent))))
-        (update-player-position player player-intent world speed-mult dt))
-      (when (update-zone-transition game)
+        (update-player-position player player-intent world speed-mult dt)))
+    (let ((transitioned (and allow-player-control
+                             (update-zone-transition game))))
+      (when transitioned
         (setf npcs (game-npcs game)
               entities (game-entities game))
-        (ui-trigger-loading ui)
-        (editor-sync-zone editor world))
-      (when (and (not (ui-menu-open ui))
+        (reset-npc-frame-intents npcs))
+      (when (and allow-player-control
                  (intent-attack player-intent))
-        (start-player-attack player player-intent)))
-    (when *verbose-logs*
-      (log-player-position player world))
-    (update-editor editor game dt)
-    (unless (editor-active editor)
+        (start-player-attack player player-intent))
+      (when *verbose-logs*
+        (log-player-position player world))
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))
       (loop :for npc :across npcs
-            :do (apply-melee-hit player npc world))
+            :do (apply-melee-hit player npc world ui))
       (loop :for npc :across npcs
             :do (update-npc-behavior npc player world)
                 (update-npc-intent npc player world dt)
                 (update-npc-movement npc world dt)
-                (update-npc-attack npc player world dt))
+                (update-npc-attack npc player world dt ui))
       (loop :for entity :across entities
-            :do (combatant-update-hit-effect entity dt)))))
+            :do (combatant-update-hit-effect entity dt))
+      (consume-intent-actions player-intent)
+      transitioned)))
+
+(defun update-game (game dt accumulator)
+  ;; Run one frame of input/audio and fixed-tick simulation updates.
+  (update-client-input game dt)
+  (let* ((ui (game-ui game))
+         (editor (game-editor game))
+         (allow-player-control (and (not (ui-menu-open ui))
+                                    (not (editor-active editor))))
+         (step *sim-tick-seconds*)
+         (max-steps (max 1 *sim-max-steps-per-frame*)))
+    (if (editor-active editor)
+        (setf accumulator 0.0)
+        (when (> step 0.0)
+          (incf accumulator dt)
+          (let ((max-accum (* step max-steps)))
+            (when (> accumulator max-accum)
+              (setf accumulator max-accum)))
+          (loop :with steps = 0
+                :while (and (>= accumulator step)
+                            (< steps max-steps))
+                :do (when (update-sim game step allow-player-control)
+                      (handle-zone-transition game))
+                    (decf accumulator step)
+                    (incf steps)))))
+  (update-editor (game-editor game) game dt)
+  accumulator)
 
 (defun run (&key (max-seconds 0.0) (max-frames 0))
   ;; Entry point that initializes game state and drives the main loop.
@@ -127,6 +177,7 @@
       (unwind-protect
            (loop :with elapsed = 0.0
                  :with frames = 0
+                 :with sim-accumulator = 0.0
                  :until (or (raylib:window-should-close)
                             (ui-exit-requested (game-ui game))
                             (and (> max-seconds 0.0)
@@ -136,7 +187,8 @@
                  :do (let ((dt (raylib:get-frame-time)))
                        (incf elapsed dt)
                        (incf frames)
-                       (update-game game dt)
+                       (setf sim-accumulator
+                             (update-game game dt sim-accumulator))
                        (draw-game game)))
         (shutdown-game game)
         (raylib:close-audio-device)))))

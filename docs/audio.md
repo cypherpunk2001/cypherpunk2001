@@ -9,6 +9,7 @@ Why we do it this way
 
 What it does
 - Loads music streams on startup.
+- Sets the initial volume from config defaults before playback.
 - Keeps display labels for the menu.
 - Updates the current track and auto-advances when a track ends.
 

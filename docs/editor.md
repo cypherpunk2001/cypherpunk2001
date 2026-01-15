@@ -66,6 +66,7 @@ Key responsibilities
 - Update the world wall-map so collisions update live.
 - Export zones with `zone-to-plist` and `zone-slice`.
 - Reset player/NPC spawns and refresh minimap previews when the active zone changes.
+- NPC respawns use the shared ID source so entities keep stable IDs.
 
 Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.

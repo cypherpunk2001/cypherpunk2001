@@ -13,11 +13,13 @@ What it does
 - Converts mouse clicks into a target intent (click-to-move).
 - Converts minimap clicks into a target intent (minimap click-to-move).
 - Emits action intents for running and attacking.
+- Updates training mode hotkeys for combat progression.
+- Flags the HUD stats cache to refresh when training mode changes.
 - Updates camera zoom from the mouse wheel.
 
 Key functions
 - `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,
-  `update-input-actions`.
+  `update-input-actions`, `update-training-mode`.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.
@@ -28,6 +30,9 @@ Walkthrough: minimap click to target
 1) Check if the click lands inside the minimap rectangle.
 2) Convert minimap screen coordinates into world coordinates using a view centered on the player.
 3) Write `intent-target-x/y` and mark the target active.
+
+Training hotkeys (default)
+- `1` attack, `2` strength, `3` defense, `4` hitpoints, `Z` balanced.
 
 Example flow
 ```lisp

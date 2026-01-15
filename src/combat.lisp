@@ -22,17 +22,12 @@
   (npc-collision-half world))
 
 (defmethod combatant-health ((combatant player))
-  (let ((class (player-class combatant)))
-    (values (player-hp combatant)
-            (if class
-                (character-class-max-hp class)
-                (player-hp combatant)))))
+  (values (player-hp combatant)
+          (combatant-max-hp combatant)))
 
 (defmethod combatant-health ((combatant npc))
   (values (npc-hits-left combatant)
-          (if (npc-archetype combatant)
-              (npc-archetype-max-hits (npc-archetype combatant))
-              *npc-max-hits*)))
+          (combatant-max-hp combatant)))
 
 (defmethod combatant-apply-hit ((combatant player) &optional amount)
   (let* ((damage (if amount amount 1))
@@ -41,31 +36,32 @@
 
 (defmethod combatant-apply-hit ((combatant npc) &optional amount)
   (let* ((damage (if amount amount 1))
-         (archetype (npc-archetype combatant))
-         (max-hits (if archetype
-                       (npc-archetype-max-hits archetype)
-                       *npc-max-hits*))
+         (max-hits (combatant-max-hp combatant))
          (before (npc-hits-left combatant)))
     (when (and max-hits (> (npc-hits-left combatant) max-hits))
       (setf (npc-hits-left combatant) max-hits))
     (decf (npc-hits-left combatant) damage)
     (setf (npc-provoked combatant) t)
-    (when (<= (npc-hits-left combatant) 0)
-      (setf (npc-hits-left combatant) 0
-            (npc-alive combatant) nil))
-    (when *debug-npc-logs*
-      (let* ((name (if archetype (npc-archetype-name archetype) "NPC"))
-             (flee-at (if archetype
-                          (npc-archetype-flee-at-hits archetype)
-                          0)))
-        (format t "~&NPC-HIT ~a hits-left=~d->~d flee-at=~d alive=~a state=~a~%"
-                name
-                before
-                (npc-hits-left combatant)
-                flee-at
-                (npc-alive combatant)
-                (npc-behavior-state combatant))
-        (finish-output)))))
+    (let ((killed nil))
+      (when (<= (npc-hits-left combatant) 0)
+        (setf (npc-hits-left combatant) 0
+              (npc-alive combatant) nil
+              killed t))
+      (when *debug-npc-logs*
+        (let* ((archetype (npc-archetype combatant))
+               (name (if archetype (npc-archetype-name archetype) "NPC"))
+               (flee-at (if archetype
+                            (npc-archetype-flee-at-hits archetype)
+                            0)))
+          (format t "~&NPC-HIT ~a hits-left=~d->~d flee-at=~d alive=~a state=~a~%"
+                  name
+                  before
+                  (npc-hits-left combatant)
+                  flee-at
+                  (npc-alive combatant)
+                  (npc-behavior-state combatant))
+          (finish-output)))
+      killed)))
 
 (defmethod combatant-trigger-hit-effect ((combatant player))
   (setf (player-hit-active combatant) t
@@ -110,6 +106,35 @@
         (setf (npc-hit-active combatant) nil
               (npc-hit-timer combatant) 0.0
               (npc-hit-frame combatant) 0)))))
+
+(defun combatant-display-name (combatant)
+  ;; Return a short display name for combat logs.
+  (typecase combatant
+    (player "Player")
+    (npc (let ((archetype (npc-archetype combatant)))
+           (if archetype
+               (npc-archetype-name archetype)
+               "NPC")))
+    (t "Entity")))
+
+(defun format-combat-log (attacker defender hit chance &key damage killed)
+  ;; Build a combat log line for a hit or miss.
+  (let ((pct (round (* chance 100.0))))
+    (if hit
+        (format nil "~a -> ~a: hit ~d (~d%%)~@[ KILL~]"
+                attacker defender damage pct killed)
+        (format nil "~a -> ~a: miss (~d%%)" attacker defender pct))))
+
+(defun push-combat-log (ui attacker defender hit chance &key damage killed)
+  ;; Push a combat log line to the UI buffer when debug is enabled.
+  (when (and ui *debug-collision-overlay*)
+    (ui-push-combat-log ui
+                        (format-combat-log
+                         (combatant-display-name attacker)
+                         (combatant-display-name defender)
+                         hit chance
+                         :damage damage
+                         :killed killed))))
 
 (defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
   ;; Return true when two axis-aligned boxes overlap (center + half sizes).
@@ -189,7 +214,7 @@
           (player-attack-timer player) 0.0
           (player-attack-hit player) nil)))
 
-(defun apply-melee-hit (player target world)
+(defun apply-melee-hit (player target world ui)
   ;; Apply melee damage once per attack if the hitbox overlaps the target.
   (when (and (player-attacking player)
              (not (player-attack-hit player))
@@ -202,9 +227,21 @@
             (combatant-position target)
           (when (aabb-overlap-p ax ay ahw ahh
                                 tx ty thw thh)
-            (combatant-apply-hit target)
-            (combatant-trigger-hit-effect target)
-            (setf (player-attack-hit player) t)))))))
+            (setf (player-attack-hit player) t)
+            (multiple-value-bind (hit chance)
+                (roll-melee-hit player target)
+              (if hit
+                  (let* ((damage (roll-melee-damage player))
+                         (killed (combatant-apply-hit target damage)))
+                    (combatant-trigger-hit-effect target)
+                    (award-combat-xp player (* damage *xp-per-damage*))
+                    (when killed
+                      (award-combat-xp player (npc-kill-xp target))
+                      (award-npc-loot player target))
+                    (push-combat-log ui player target t chance
+                                     :damage damage
+                                     :killed killed))
+                  (push-combat-log ui player target nil chance)))))))))
 
 (defun update-player-animation (player dt)
   ;; Advance animation timers and set facing/state.
@@ -261,7 +298,7 @@
         (setf (player-frame-index player) frame-index
               (player-frame-timer player) frame-timer)))))
 
-(defun update-npc-attack (npc player world dt)
+(defun update-npc-attack (npc player world dt ui)
   ;; Handle NPC melee attacks and cooldowns.
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
@@ -278,8 +315,14 @@
                (dy (- (player-y player) (npc-y npc)))
                (dist-sq (+ (* dx dx) (* dy dy))))
           (when (<= dist-sq attack-range-sq)
-            (combatant-apply-hit player (npc-attack-damage npc))
-            (combatant-trigger-hit-effect player)
+            (multiple-value-bind (hit chance)
+                (roll-melee-hit npc player)
+              (if hit
+                  (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
+                    (combatant-apply-hit player damage)
+                    (combatant-trigger-hit-effect player)
+                    (push-combat-log ui npc player t chance :damage damage))
+                  (push-combat-log ui npc player nil chance)))
             (setf (npc-attack-timer npc) (npc-attack-cooldown npc))))))))
 
 (defun update-npc-animation (npc dt)

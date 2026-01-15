@@ -471,20 +471,60 @@
 (defmethod draw-entity ((entity player) assets render)
   (draw-player entity assets render))
 
+(defun draw-combat-log (ui start-x start-y)
+  ;; Draw combat log lines when debug overlay is enabled.
+  (let* ((buffer (ui-combat-log-buffer ui))
+         (count (ui-combat-log-count ui))
+         (cap (length buffer))
+         (text-size (ui-combat-log-text-size ui))
+         (line-height (+ text-size (ui-combat-log-line-gap ui))))
+    (when (and (> cap 0) (> count 0))
+      (let ((start (mod (- (ui-combat-log-index ui) count) cap)))
+        (loop :for i :from 0 :below count
+              :for index = (mod (+ start i) cap)
+              :for text = (aref buffer index)
+              :when (and text (not (string= text "")))
+                :do (raylib:draw-text text
+                                      start-x
+                                      (+ start-y (* i line-height))
+                                      text-size
+                                      *debug-npc-text-color*))))))
+
 (defun draw-hud (player ui world)
-  ;; Draw stamina HUD and zone label.
+  ;; Draw stamina HUD, zone label, and player stats.
   (let* ((labels (ui-stamina-labels ui))
          (max-index (1- (length labels)))
          (run-seconds (max 0 (min (truncate (player-run-stamina player))
                                   max-index)))
          (run-text (aref labels run-seconds))
          (zone-label (or (world-zone-label world) "NONE"))
-         (zone-width (+ 60 (* 10 (length zone-label)))))
+         (zone-width (+ 60 (* 10 (length zone-label))))
+         (hud-x 10)
+         (hud-y 10)
+         (stats-x hud-x)
+         (stats-y 38))
     (raylib:draw-rectangle 6 6 110 24 (ui-hud-bg-color ui))
-    (raylib:draw-text run-text 10 10 20 raylib:+white+)
+    (raylib:draw-text run-text hud-x hud-y 20 raylib:+white+)
     (raylib:draw-rectangle 122 6 zone-width 24 (ui-hud-bg-color ui))
-    (raylib:draw-text "Zone" 128 10 20 raylib:+white+)
-    (raylib:draw-text zone-label 176 10 20 raylib:+white+)))
+    (raylib:draw-text "Zone" 128 hud-y 20 raylib:+white+)
+    (raylib:draw-text zone-label 176 hud-y 20 raylib:+white+)
+    (ensure-player-hud-stats player)
+    (let* ((lines (player-hud-stats-lines player))
+           (count (player-hud-stats-count player))
+           (text-size (ui-hud-stats-text-size ui))
+           (line-height (+ text-size (ui-hud-stats-line-gap ui))))
+      (when lines
+        (loop :for i :from 0 :below count
+              :for text = (aref lines i)
+              :do (raylib:draw-text text
+                                    stats-x
+                                    (+ stats-y (* i line-height))
+                                    text-size
+                                    raylib:+white+))
+        (when *debug-collision-overlay*
+          (draw-combat-log ui
+                           stats-x
+                           (+ stats-y (* count line-height) 6)))))))
 
 (defun minimap-world-to-screen (ui world player world-x world-y)
   ;; Convert world coordinates into minimap screen space.

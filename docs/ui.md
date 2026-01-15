@@ -13,10 +13,12 @@ What it does
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
+- Caches combat log lines for the debug overlay and HUD text sizing for stats.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.
 - `update-ui-input`, `handle-menu-click` (returns menu actions like editor toggle).
+- `ui-push-combat-log` for debug overlay logging.
 - `ui-trigger-loading`, `update-ui-loading` for zone transition overlays.
 
 Walkthrough: debug toggle

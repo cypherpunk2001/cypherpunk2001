@@ -30,6 +30,11 @@
         (intent-attack intent) nil
         (intent-run-toggle intent) nil))
 
+(defun consume-intent-actions (intent)
+  ;; Clear one-shot actions after a simulation tick.
+  (setf (intent-attack intent) nil
+        (intent-run-toggle intent) nil))
+
 (defun set-intent-face (intent dx dy)
   ;; Update facing intent when input supplies a non-zero direction.
   (when (or (not (zerop dx)) (not (zerop dy)))

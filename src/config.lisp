@@ -4,6 +4,8 @@
 (defparameter *verbose-logs* nil) ;; When true, logs player position and collider info per frame.
 (defparameter *debug-collision-overlay* nil) ;; Draws debug grid and collision overlays.
 (defparameter *debug-npc-logs* nil) ;; Logs NPC AI/combat events and enables AI debug text overlay.
+(defparameter *sim-tick-seconds* (/ 1.0 60.0)) ;; Fixed simulation tick length in seconds.
+(defparameter *sim-max-steps-per-frame* 5) ;; Max sim ticks per frame to avoid spiral of death.
 
 (defparameter *window-width* 1280) ;; Window width in pixels.
 (defparameter *window-height* 720) ;; Window height in pixels.
@@ -15,6 +17,16 @@
 (defparameter *camera-zoom-step* 0.1) ;; Zoom step per mouse wheel tick.
 (defparameter *run-speed-mult* 2.0) ;; Movement speed multiplier while running.
 (defparameter *run-stamina-max* 10.0) ;; Seconds of run stamina when full.
+(defparameter *player-base-attack* 1) ;; Base attack level for new players.
+(defparameter *player-base-strength* 1) ;; Base strength level for new players.
+(defparameter *player-base-defense* 1) ;; Base defense level for new players.
+(defparameter *player-base-hitpoints* 10) ;; Base hitpoints level for new players.
+(defparameter *player-training-mode* :balanced) ;; Training focus (:attack/:strength/:defense/:hitpoints/:balanced).
+(defparameter *stat-xp-per-level* 100) ;; XP needed for each quadratic level step.
+(defparameter *stat-max-level* 99) ;; Maximum attainable level per stat.
+(defparameter *xp-per-damage* 4) ;; XP awarded per point of damage dealt.
+(defparameter *combat-hitpoints-xp-multiplier* 0.33) ;; HP XP multiplier applied to focused combat XP.
+(defparameter *inventory-size* 20) ;; Player inventory slots.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 (defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
 (defparameter *editor-start-enabled* nil) ;; When true, editor mode starts enabled.
@@ -45,6 +57,8 @@
 (defparameter *editor-tile-layer-id* :floor) ;; Zone layer ID used for tile painting.
 (defparameter *editor-collision-layer-id* :walls) ;; Zone layer ID used for collision painting.
 (defparameter *editor-object-layer-id* :objects) ;; Zone layer ID used for object painting.
+(defparameter *music-volume-steps* 10) ;; Number of volume steps for music controls.
+(defparameter *music-default-volume-level* 1) ;; Default music volume step (0 mutes).
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack") ;; Directory that holds soundtrack files.
 (defparameter *soundtrack-tracks* ;; Vector of soundtrack file paths.
   (vector
@@ -88,6 +102,7 @@
 (defparameter *npc-spawn-gap-tiles* 2.0) ;; Spacing between NPC spawns in tiles.
 (defparameter *npc-default-archetype-id* :rat) ;; Default NPC archetype ID to spawn.
 (defparameter *npc-spawn-ids* nil) ;; Optional list of archetype IDs to cycle when spawning.
+(defparameter *npc-default-loot-table-id* nil) ;; Fallback loot table when NPC archetypes omit one.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
 (defparameter *blood-frame-count* 4) ;; Frames in each blood animation row.
@@ -126,6 +141,13 @@
   ;; Static NPC archetype data (durability, temperament, perception).
   ((name :initarg :name :reader npc-archetype-name)
    (max-hits :initarg :max-hits :reader npc-archetype-max-hits)
+   (attack-level :initarg :attack-level :initform 1 :reader npc-archetype-attack-level)
+   (strength-level :initarg :strength-level :initform 1 :reader npc-archetype-strength-level)
+   (defense-level :initarg :defense-level :initform 1 :reader npc-archetype-defense-level)
+   (hitpoints-level :initarg :hitpoints-level :initform *npc-max-hits*
+                    :reader npc-archetype-hitpoints-level)
+   (combat-xp :initarg :combat-xp :initform 0 :reader npc-archetype-combat-xp)
+   (loot-table-id :initarg :loot-table-id :initform nil :reader npc-archetype-loot-table-id)
    (move-speed :initarg :move-speed :initform *npc-walk-speed* :reader npc-archetype-move-speed)
    (attack-range-tiles :initarg :attack-range-tiles :initform *npc-attack-range-tiles*
                        :reader npc-archetype-attack-range-tiles)

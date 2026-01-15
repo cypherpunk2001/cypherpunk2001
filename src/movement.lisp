@@ -764,7 +764,9 @@
                 (build-adjacent-minimap-spawns world player))
           (let* ((target-zone-id (and zone (zone-id zone)))
                  (cached (cached-zone-npcs world target-zone-id))
-                 (npcs (or cached (make-npcs player world)))
+                 (npcs (or cached
+                           (make-npcs player world
+                                      :id-source (game-id-source game))))
                  (carried (reposition-transition-npcs carry player world)))
             (ensure-npcs-open-spawn npcs world)
             (let ((merged (merge-npc-vectors npcs carried)))

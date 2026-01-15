@@ -3,7 +3,7 @@
 
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
-  x y dx dy intent
+  id x y dx dy intent stats inventory
   anim-state facing
   facing-sign class hp
   frame-index frame-timer
@@ -11,11 +11,12 @@
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
   running run-stamina
   auto-right auto-left auto-down auto-up
-  mouse-hold-timer)
+  mouse-hold-timer
+  hud-stats-lines hud-stats-count hud-stats-dirty)
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
-  x y intent
+  id x y intent stats
   anim-state facing
   archetype behavior-state provoked
   home-x home-y
@@ -24,6 +25,34 @@
   frame-index frame-timer
   hits-left alive
   hit-active hit-timer hit-frame hit-facing hit-facing-sign)
+
+(defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
+  ;; Skill state tracking level and xp.
+  level xp)
+
+(defstruct (stat-modifiers (:constructor make-stat-modifiers
+                              (&key (attack 0) (strength 0) (defense 0) (hitpoints 0))))
+  ;; Additive stat bonuses from equipment or buffs.
+  attack strength defense hitpoints)
+
+(defstruct (stat-block (:constructor make-stat-block))
+  ;; Combat stats and training mode for a combatant.
+  attack strength defense hitpoints training-mode modifiers)
+
+(defstruct (inventory-slot (:constructor make-inventory-slot
+                              (&key item-id (count 0))))
+  ;; Single inventory slot holding stackable items.
+  item-id count)
+
+(defstruct (inventory (:constructor %make-inventory))
+  ;; Inventory slots for a player.
+  slots)
+
+(defparameter *player-hud-lines* 6) ;; Number of cached HUD lines for player stats.
+
+(defstruct (id-source (:constructor make-id-source (&optional (next-id 1))))
+  ;; Monotonic IDs for entities inside a simulation.
+  next-id)
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
@@ -62,7 +91,10 @@
   minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
   minimap-collision-color
   debug-grid-color debug-wall-color debug-collision-color debug-collider-color
-  stamina-labels)
+  stamina-labels
+  hud-stats-text-size hud-stats-line-gap
+  combat-log-text-size combat-log-line-gap
+  combat-log-lines combat-log-index combat-log-count combat-log-buffer)
 
 (defstruct (render (:constructor %make-render))
   ;; Reusable render rectangles and vectors to avoid consing.
@@ -100,7 +132,13 @@
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player npcs entities audio ui render assets camera editor)
+  world player npcs entities id-source audio ui render assets camera editor)
+
+(defun allocate-entity-id (id-source)
+  ;; Return the next entity id and advance the counter.
+  (let ((next (id-source-next-id id-source)))
+    (setf (id-source-next-id id-source) (1+ next))
+    next))
 
 (defun world-spawn-center (world)
   ;; Return a spawn center inside the collision bounds.
@@ -108,21 +146,80 @@
         (y (/ (+ (world-wall-min-y world) (world-wall-max-y world)) 2.0)))
     (values x y)))
 
-(defun make-player (start-x start-y &optional (class *wizard-class*))
+(defun make-player-stats (&key (attack *player-base-attack*)
+                               (strength *player-base-strength*)
+                               (defense *player-base-defense*)
+                               (hitpoints *player-base-hitpoints*)
+                               (training-mode *player-training-mode*))
+  ;; Build the player's base stats with empty modifiers.
+  (make-stat-block :attack (make-skill-from-level attack)
+                   :strength (make-skill-from-level strength)
+                   :defense (make-skill-from-level defense)
+                   :hitpoints (make-skill-from-level hitpoints)
+                   :training-mode training-mode
+                   :modifiers (make-stat-modifiers)))
+
+(defun skill-xp-for-level (level)
+  ;; Return the minimum XP required to reach LEVEL.
+  (let* ((level (max 1 level))
+         (per-level (max 1 *stat-xp-per-level*))
+         (base (1- level)))
+    (* per-level base base)))
+
+(defun make-skill-from-level (level)
+  ;; Create a skill with XP seeded to match LEVEL.
+  (make-skill :level level :xp (skill-xp-for-level level)))
+
+(defun make-npc-stats (archetype)
+  ;; Build NPC stats from the archetype or safe defaults.
+  (let ((attack (or (and archetype (npc-archetype-attack-level archetype)) 1))
+        (strength (or (and archetype (npc-archetype-strength-level archetype)) 1))
+        (defense (or (and archetype (npc-archetype-defense-level archetype)) 1))
+        (hitpoints (or (and archetype (npc-archetype-hitpoints-level archetype))
+                       (and archetype (npc-archetype-max-hits archetype))
+                       *npc-max-hits*)))
+    (make-stat-block :attack (make-skill-from-level attack)
+                     :strength (make-skill-from-level strength)
+                     :defense (make-skill-from-level defense)
+                     :hitpoints (make-skill-from-level hitpoints)
+                     :training-mode nil
+                     :modifiers (make-stat-modifiers))))
+
+(defun stat-block-base-level (stats stat-id)
+  ;; Return the base (unmodified) level for STAT-ID.
+  (ecase stat-id
+    (:attack (skill-level (stat-block-attack stats)))
+    (:strength (skill-level (stat-block-strength stats)))
+    (:defense (skill-level (stat-block-defense stats)))
+    (:hitpoints (skill-level (stat-block-hitpoints stats)))))
+
+(defun make-inventory (&optional (size *inventory-size*))
+  ;; Build an inventory with SIZE empty slots.
+  (let ((slots (make-array (max 0 size))))
+    (dotimes (i (length slots))
+      (setf (aref slots i) (make-inventory-slot)))
+    (%make-inventory :slots slots)))
+
+(defun make-player (start-x start-y &key (class *wizard-class*) id)
   ;; Construct a player state struct at the given start position.
-  (let ((intent (make-intent :target-x start-x :target-y start-y)))
-    (%make-player :x start-x
+  (let* ((intent (make-intent :target-x start-x :target-y start-y))
+         (stats (make-player-stats))
+         (max-hp (stat-block-base-level stats :hitpoints))
+         (hud-lines (make-array (max 1 *player-hud-lines*)
+                                :initial-element "")))
+    (%make-player :id (or id 0)
+                  :x start-x
                   :y start-y
                   :dx 0.0
                   :dy 0.0
                   :intent intent
+                  :stats stats
+                  :inventory (make-inventory)
                   :anim-state :idle
                   :facing :down
                   :facing-sign 1.0
                   :class class
-                  :hp (if class
-                          (character-class-max-hp class)
-                          1)
+                  :hp max-hp
                   :frame-index 0
                   :frame-timer 0.0
                   :attacking nil
@@ -139,17 +236,24 @@
                   :auto-left nil
                   :auto-down nil
                   :auto-up nil
-                  :mouse-hold-timer 0.0)))
+                  :mouse-hold-timer 0.0
+                  :hud-stats-lines hud-lines
+                  :hud-stats-count 0
+                  :hud-stats-dirty t)))
 
-(defun make-npc (start-x start-y &optional archetype)
+(defun make-npc (start-x start-y &key archetype id)
   ;; Construct an NPC state struct at the given start position.
   (let ((sx (float start-x 1.0f0))
         (sy (float start-y 1.0f0))
         (archetype (or archetype (default-npc-archetype)))
         (intent (make-intent)))
-    (%make-npc :x sx
+    (let* ((stats (make-npc-stats archetype))
+           (max-hp (stat-block-base-level stats :hitpoints)))
+      (%make-npc :id (or id 0)
+               :x sx
                :y sy
                :intent intent
+               :stats stats
                :anim-state :idle
                :facing :down
                :archetype archetype
@@ -163,17 +267,15 @@
                :attack-timer 0.0
                :frame-index 0
                :frame-timer 0.0
-               :hits-left (if archetype
-                              (npc-archetype-max-hits archetype)
-                              *npc-max-hits*)
+               :hits-left max-hp
                :alive t
                :hit-active nil
                :hit-timer 0.0
                :hit-frame 0
                :hit-facing :down
-               :hit-facing-sign 1.0)))
+               :hit-facing-sign 1.0))))
 
-(defun make-npcs (player world &optional (count *npc-count*))
+(defun make-npcs (player world &key (count *npc-count*) id-source)
   ;; Construct a fixed NPC pool placed in a simple grid near the zone center.
   (let* ((zone (world-zone world))
          (spawns (and zone (zone-spawns zone))))
@@ -195,7 +297,10 @@
                           (tile-center-position tile-size (or tx 0) (or ty 0))
                         (loop :repeat spawn-count
                               :do (setf (aref npcs index)
-                                        (make-npc x y archetype))
+                                        (make-npc x y
+                                                  :archetype archetype
+                                                  :id (when id-source
+                                                        (allocate-entity-id id-source))))
                                   (incf index)))))
           npcs)
         (let* ((npc-count (max 0 count))
@@ -217,7 +322,11 @@
                   :for archetype = (if (> spawn-count 0)
                                        (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
                                        nil)
-                  :do (setf (aref npcs i) (make-npc x y archetype))))
+                  :do (setf (aref npcs i)
+                            (make-npc x y
+                                      :archetype archetype
+                                      :id (when id-source
+                                            (allocate-entity-id id-source))))))
           npcs))))
 
 (defun make-entities (player npcs)
@@ -228,6 +337,24 @@
           :do (setf (aref entities i) (aref npcs i)))
     (setf (aref entities npc-count) player)
     entities))
+
+(defgeneric entity-id (entity)
+  (:documentation "Return the stable id for ENTITY."))
+
+(defmethod entity-id ((entity player))
+  (player-id entity))
+
+(defmethod entity-id ((entity npc))
+  (npc-id entity))
+
+(defgeneric combatant-stats (combatant)
+  (:documentation "Return the stat-block for COMBATANT."))
+
+(defmethod combatant-stats ((combatant player))
+  (player-stats combatant))
+
+(defmethod combatant-stats ((combatant npc))
+  (npc-stats combatant))
 
 (defgeneric combatant-position (combatant)
   (:documentation "Return combatant center position as two values."))

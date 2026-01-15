@@ -13,11 +13,12 @@ The goal is to help you learn the reasoning, not just the API.
 Start with the game loop, then follow the data flow:
 1) `docs/main.md` (orchestration)
 2) `docs/types.md` and `docs/intent.md` (data layout and action layer)
-3) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
-4) `docs/zone.md`, `docs/world-graph.md`, `docs/rendering.md`, `docs/editor.md` (world data + travel + draw pipeline + editor)
-5) `docs/ui.md` and `docs/audio.md` (player-facing polish)
-6) `docs/data.md` and `docs/config.md` (tuning and data-driven behavior)
-7) `docs/utils.md` and `docs/package.md` (supporting helpers)
+3) `docs/progression.md` (stats + XP + loot)
+4) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
+5) `docs/zone.md`, `docs/world-graph.md`, `docs/rendering.md`, `docs/editor.md` (world data + travel + draw pipeline + editor)
+6) `docs/ui.md` and `docs/audio.md` (player-facing polish)
+7) `docs/data.md` and `docs/config.md` (tuning and data-driven behavior)
+8) `docs/utils.md` and `docs/package.md` (supporting helpers)
 
 ## Design Principles Used Here
 - Behavior lives in systems, not in the main loop.
@@ -70,6 +71,7 @@ Engine files
 - [zone.md](zone.md)
 - [world-graph.md](world-graph.md)
 - [intent.md](intent.md)
+- [progression.md](progression.md)
 - [types.md](types.md)
 - [utils.md](utils.md)
 - [input.md](input.md)

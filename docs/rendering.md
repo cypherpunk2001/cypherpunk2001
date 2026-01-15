@@ -13,13 +13,13 @@ Pipeline overview
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), and menu overlays.
+5) Draw HUD (stamina + zone label + stats), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
 - `draw-world`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
-- `draw-hud`, `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
+- `draw-hud`, `draw-combat-log`, `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
 - `draw-loading-overlay` for zone swap feedback.
 
 Walkthrough: world rendering

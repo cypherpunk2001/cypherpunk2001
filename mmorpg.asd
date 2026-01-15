@@ -7,6 +7,7 @@
                (:file "src/data")
                (:file "src/intent")
                (:file "src/types")
+               (:file "src/progression")
                (:file "src/utils")
                (:file "src/zone")
                (:file "src/world-graph")

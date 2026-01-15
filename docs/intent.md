@@ -18,6 +18,7 @@ What an intent contains
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
+- `consume-intent-actions`: clears one-shot actions after a sim tick.
 - `set-intent-move`, `set-intent-face`: standardize motion signals.
 - `set-intent-target`, `clear-intent-target`: manage click-to-move.
 - `request-intent-attack`, `request-intent-run-toggle`.
@@ -34,6 +35,7 @@ Example flow
 (update-input-direction player player-intent mouse-clicked)
 (update-input-actions player-intent (not mouse-clicked))
 (update-player-position player player-intent world speed-mult dt)
+(consume-intent-actions player-intent)
 ```
 
 Design note

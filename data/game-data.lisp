@@ -10,7 +10,9 @@
  (:minimap-height 220)
  (:minimap-padding 12)
  (:minimap-point-size 4)
- (:editor-start-enabled t)
+ (:editor-start-enabled nil)
+ (:music-volume-steps 10)
+ (:music-default-volume-level 1)
  (:tileset-path "../assets/Zelda-like/Overworld.png")
  (:tileset-columns 40)
  (:floor-tile-index 0)
@@ -28,6 +30,16 @@
  (:collision-edge-epsilon 0.05)
  (:run-speed-mult 2.0)
  (:run-stamina-max 10.0)
+ (:player-base-attack 1)
+ (:player-base-strength 1)
+ (:player-base-defense 1)
+ (:player-base-hitpoints 10)
+ (:player-training-mode :balanced)
+ (:stat-xp-per-level 100)
+ (:stat-max-level 99)
+ (:xp-per-damage 4)
+ (:combat-hitpoints-xp-multiplier 0.33)
+ (:inventory-size 20)
  (:idle-frame-count 4)
  (:walk-frame-count 6)
  (:attack-frame-count 4)
@@ -97,11 +109,59 @@
    :up "U_Blood.png"
    :side "S_Blood.png"))
 
+:items
+ (:coins
+  (:name "Coins"
+   :stack-size 9999
+   :value 1))
+ (:bones
+  (:name "Bones"
+   :stack-size 1
+   :value 5))
+ (:rat-tail
+  (:name "Rat Tail"
+   :stack-size 1
+   :value 2))
+ (:goblin-ear
+  (:name "Goblin Ear"
+   :stack-size 1
+   :value 4))
+
+:loot-tables
+ (:rat
+  (:rolls 1
+   :entries
+   ((:coins 10 1 5)
+    (:bones 2 1 1)
+    (:rat-tail 1 1 1))))
+ (:goblin
+  (:rolls 1
+   :entries
+   ((:coins 10 2 8)
+    (:bones 2 1 1)
+    (:goblin-ear 1 1 1))))
+ (:orc
+  (:rolls 1
+   :entries
+   ((:coins 10 3 12)
+    (:bones 2 1 1))))
+ (:witch-doctor
+  (:rolls 1
+   :entries
+   ((:coins 10 4 16)
+    (:bones 3 1 2))))
+
 :npc-archetypes
  (:rat
   (:name "Dungeon Rat"
    :animation-set-id :npc-rat
    :max-hits 3
+   :attack-level 1
+   :strength-level 1
+   :defense-level 1
+   :hitpoints-level 3
+   :combat-xp 2
+   :loot-table-id :rat
    :move-speed 120.0
    :attack-range-tiles 0.85
    :attack-cooldown 0.9
@@ -117,6 +177,12 @@
   (:name "Goblin"
    :animation-set-id :npc-goblin
    :max-hits 4
+   :attack-level 3
+   :strength-level 3
+   :defense-level 2
+   :hitpoints-level 4
+   :combat-xp 4
+   :loot-table-id :goblin
    :move-speed 140.0
    :attack-range-tiles 0.9
    :attack-cooldown 0.8
@@ -132,6 +198,12 @@
   (:name "Orc"
    :animation-set-id :npc-orc
    :max-hits 6
+   :attack-level 5
+   :strength-level 5
+   :defense-level 4
+   :hitpoints-level 6
+   :combat-xp 6
+   :loot-table-id :orc
    :move-speed 120.0
    :attack-range-tiles 0.95
    :attack-cooldown 1.1
@@ -147,6 +219,12 @@
   (:name "Witch Doctor"
    :animation-set-id :npc-witch-doctor
    :max-hits 5
+   :attack-level 4
+   :strength-level 4
+   :defense-level 3
+   :hitpoints-level 5
+   :combat-xp 5
+   :loot-table-id :witch-doctor
    :move-speed 110.0
    :attack-range-tiles 1.1
    :attack-cooldown 1.0

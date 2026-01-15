@@ -10,9 +10,12 @@ Why we do it this way
   without forcing an inheritance-heavy object model.
 
 Key structs
-- `player`, `npc`: runtime entities with an `intent` and animation/combat state.
+- `player`, `npc`: runtime entities with an `id`, `intent`, stats, animation/combat state, and cached HUD stats lines.
+- `skill`, `stat-block`, `stat-modifiers`: reusable stat containers for combat progression.
+- `inventory`, `inventory-slot`: simple inventory storage for stackable items.
+- `id-source`: monotonic ID generator used for stable entity IDs.
 - `world`: zone metadata, world graph, per-zone NPC cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
-- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer and minimap layout/colors).
+- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, minimap layout/colors, and a combat log ring buffer).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
@@ -24,6 +27,8 @@ Key constructors
 
 Key generics
 - Combat: `combatant-position`, `combatant-health`, `combatant-apply-hit`.
+- Identity: `entity-id`.
+- Stats: `combatant-stats`.
 - Rendering: `draw-entity`.
 - Animation/effects: `update-entity-animation`, `combatant-update-hit-effect`.
 
@@ -37,3 +42,4 @@ Design note
 - Arrays are used for entity collections to keep iteration fast and predictable.
 - Spawn spacing accounts for collider sizes so entities don't overlap at start.
 - `world-zone-label` is cached for HUD display and updates on zone swaps.
+- Stable entity IDs keep snapshot serialization and future networking deterministic.

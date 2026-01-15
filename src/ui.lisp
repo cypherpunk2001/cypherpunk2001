@@ -92,7 +92,16 @@
          (debug-wall-color (raylib:make-color :r 80 :g 160 :b 255 :a 90))
          (debug-collision-color (raylib:make-color :r 255 :g 0 :b 0 :a 90))
          (debug-collider-color (raylib:make-color :r 0 :g 255 :b 0 :a 180))
-         (stamina-labels (make-stamina-labels)))
+         (stamina-labels (make-stamina-labels))
+         (hud-stats-text-size 16)
+         (hud-stats-line-gap 4)
+         (combat-log-text-size 14)
+         (combat-log-line-gap 2)
+         (combat-log-lines 6)
+         (combat-log-buffer (make-array (max 1 combat-log-lines)
+                                         :initial-element ""))
+         (combat-log-index 0)
+         (combat-log-count 0))
     (%make-ui :menu-open menu-open
               :exit-requested exit-requested
               :loading-label loading-label
@@ -168,7 +177,27 @@
               :debug-wall-color debug-wall-color
               :debug-collision-color debug-collision-color
               :debug-collider-color debug-collider-color
-              :stamina-labels stamina-labels)))
+              :stamina-labels stamina-labels
+              :hud-stats-text-size hud-stats-text-size
+              :hud-stats-line-gap hud-stats-line-gap
+              :combat-log-text-size combat-log-text-size
+              :combat-log-line-gap combat-log-line-gap
+              :combat-log-lines combat-log-lines
+              :combat-log-index combat-log-index
+              :combat-log-count combat-log-count
+              :combat-log-buffer combat-log-buffer)))
+
+(defun ui-push-combat-log (ui text)
+  ;; Append TEXT to the UI combat log ring buffer.
+  (when (and ui text)
+    (let* ((buffer (ui-combat-log-buffer ui))
+           (cap (length buffer)))
+      (when (> cap 0)
+        (let ((index (ui-combat-log-index ui)))
+          (setf (aref buffer index) text
+                (ui-combat-log-index ui) (mod (1+ index) cap)
+                (ui-combat-log-count ui) (min cap (1+ (ui-combat-log-count ui))))))))
+  ui)
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
   ;; Process menu clicks for quit, music, volume, and toggles.

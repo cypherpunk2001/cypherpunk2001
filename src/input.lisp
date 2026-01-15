@@ -176,6 +176,25 @@
   (when (raylib:is-key-pressed +key-space+)
     (request-intent-attack intent)))
 
+(defun update-training-mode (player)
+  ;; Update training mode selection from hotkeys.
+  (let* ((stats (player-stats player))
+         (before (and stats (stat-block-training-mode stats))))
+    (when stats
+      (cond
+        ((raylib:is-key-pressed +key-one+)
+         (set-training-mode stats :attack))
+        ((raylib:is-key-pressed +key-two+)
+         (set-training-mode stats :strength))
+        ((raylib:is-key-pressed +key-three+)
+         (set-training-mode stats :defense))
+        ((raylib:is-key-pressed +key-four+)
+         (set-training-mode stats :hitpoints))
+        ((raylib:is-key-pressed +key-z+)
+         (set-training-mode stats :balanced))))
+    (when (and stats (not (eq before (stat-block-training-mode stats))))
+      (mark-player-hud-stats-dirty player))))
+
 (defun make-camera ()
   ;; Initialize camera offset and zoom settings.
   (%make-camera :offset (raylib:make-vector2 :x (/ *window-width* 2.0)

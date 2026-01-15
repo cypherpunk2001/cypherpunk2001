@@ -11,7 +11,10 @@ Why we do it this way
 
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
+- Fixed simulation timing (tick length and max catch-up steps).
+- Player stat defaults, XP tuning (including hitpoints share), and inventory sizing.
 - Sprite, tileset, zone, world layout, and audio defaults.
+- Music volume steps and the default startup level.
 - Floor fill tile index for the base map; set to `0` to skip drawing a fill tile.
 - World graph file path for zone-to-zone transitions.
 - Editor defaults (tileset sheets, export path, layer IDs, overlay colors, startup enable flag).

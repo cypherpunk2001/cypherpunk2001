@@ -9,8 +9,22 @@
   side-idle side-walk side-attack
   down up side)
 
+(defstruct (item-archetype (:constructor %make-item-archetype))
+  ;; Static item data for inventory and loot.
+  id name stack-size value)
+
+(defstruct (loot-entry (:constructor %make-loot-entry))
+  ;; Single weighted loot entry.
+  item-id weight min-count max-count)
+
+(defstruct (loot-table (:constructor %make-loot-table))
+  ;; Loot table with weighted entries and roll count.
+  id rolls entries)
+
 (defparameter *animation-sets* (make-hash-table :test 'eq))
 (defparameter *npc-archetypes* (make-hash-table :test 'eq))
+(defparameter *item-archetypes* (make-hash-table :test 'eq))
+(defparameter *loot-tables* (make-hash-table :test 'eq))
 (defparameter *game-data-loaded-p* nil)
 
 (defparameter *game-data-path*
@@ -19,6 +33,8 @@
 
 (defparameter *tunable-keys*
   '((:player-speed . *player-speed*)
+    (:sim-tick-seconds . *sim-tick-seconds*)
+    (:sim-max-steps-per-frame . *sim-max-steps-per-frame*)
     (:auto-walk-enabled . *auto-walk-enabled*)
     (:camera-zoom-default . *camera-zoom-default*)
     (:camera-zoom-min . *camera-zoom-min*)
@@ -26,6 +42,16 @@
     (:camera-zoom-step . *camera-zoom-step*)
     (:run-speed-mult . *run-speed-mult*)
     (:run-stamina-max . *run-stamina-max*)
+    (:player-base-attack . *player-base-attack*)
+    (:player-base-strength . *player-base-strength*)
+    (:player-base-defense . *player-base-defense*)
+    (:player-base-hitpoints . *player-base-hitpoints*)
+    (:player-training-mode . *player-training-mode*)
+    (:stat-xp-per-level . *stat-xp-per-level*)
+    (:stat-max-level . *stat-max-level*)
+    (:xp-per-damage . *xp-per-damage*)
+    (:combat-hitpoints-xp-multiplier . *combat-hitpoints-xp-multiplier*)
+    (:inventory-size . *inventory-size*)
     (:mouse-hold-repeat-seconds . *mouse-hold-repeat-seconds*)
     (:editor-move-speed . *editor-move-speed*)
     (:editor-start-enabled . *editor-start-enabled*)
@@ -58,6 +84,8 @@
     (:editor-tile-layer-id . *editor-tile-layer-id*)
     (:editor-collision-layer-id . *editor-collision-layer-id*)
     (:editor-object-layer-id . *editor-object-layer-id*)
+    (:music-volume-steps . *music-volume-steps*)
+    (:music-default-volume-level . *music-default-volume-level*)
     (:floor-tile-index . *floor-tile-index*)
     (:wall-map-width . *wall-map-width*)
     (:wall-map-height . *wall-map-height*)
@@ -82,6 +110,7 @@
     (:npc-spawn-gap-tiles . *npc-spawn-gap-tiles*)
     (:npc-default-archetype-id . *npc-default-archetype-id*)
     (:npc-spawn-ids . *npc-spawn-ids*)
+    (:npc-default-loot-table-id . *npc-default-loot-table-id*)
     (:attack-hitbox-scale . *attack-hitbox-scale*)
     (:blood-frame-count . *blood-frame-count*)
     (:blood-frame-time . *blood-frame-time*)
@@ -93,6 +122,52 @@
     (:idle-frame-time . *idle-frame-time*)
     (:walk-frame-time . *walk-frame-time*)
     (:attack-frame-time . *attack-frame-time*)))
+
+(defun item-archetype-from-plist (id plist)
+  ;; Build an item-archetype from plist values.
+  (let ((name (or (getf plist :name)
+                  (string-capitalize (string id))))
+        (stack-size (getf plist :stack-size 1))
+        (value (getf plist :value 0)))
+    (%make-item-archetype :id id
+                          :name name
+                          :stack-size (max 1 stack-size)
+                          :value value)))
+
+(defun register-item-archetype (id item)
+  ;; Store ITEM under ID.
+  (setf (gethash id *item-archetypes*) item))
+
+(defun find-item-archetype (id)
+  ;; Lookup item archetype by ID.
+  (gethash id *item-archetypes*))
+
+(defun loot-entry-from-spec (spec)
+  ;; Parse a loot entry spec of (item-id weight min max).
+  (destructuring-bind (item-id weight &optional (min-count 1) (max-count 1))
+      spec
+    (%make-loot-entry :item-id item-id
+                      :weight (max 0 weight)
+                      :min-count (max 0 min-count)
+                      :max-count (max min-count max-count))))
+
+(defun loot-table-from-plist (id plist)
+  ;; Build a loot-table from plist values.
+  (let* ((rolls (getf plist :rolls 1))
+         (entries (getf plist :entries))
+         (parsed (loop :for entry :in entries
+                       :collect (loot-entry-from-spec entry))))
+    (%make-loot-table :id id
+                      :rolls (max 0 rolls)
+                      :entries parsed)))
+
+(defun register-loot-table (id table)
+  ;; Store TABLE under ID.
+  (setf (gethash id *loot-tables*) table))
+
+(defun find-loot-table (id)
+  ;; Lookup loot table by ID.
+  (gethash id *loot-tables*))
 
 (defun normalize-pairs (data)
   ;; Normalize either a plist or list of pairs into a list of (key value).
@@ -292,6 +367,13 @@
     (make-instance 'npc-archetype
                    :name (getf-or :name "NPC")
                    :max-hits (getf-or :max-hits *npc-max-hits*)
+                   :attack-level (getf-or :attack-level 1)
+                   :strength-level (getf-or :strength-level 1)
+                   :defense-level (getf-or :defense-level 1)
+                   :hitpoints-level (getf-or :hitpoints-level
+                                             (getf-or :max-hits *npc-max-hits*))
+                   :combat-xp (getf-or :combat-xp 0)
+                   :loot-table-id (getf-or :loot-table-id *npc-default-loot-table-id*)
                    :move-speed (getf-or :move-speed *npc-walk-speed*)
                    :attack-range-tiles (getf-or :attack-range-tiles *npc-attack-range-tiles*)
                    :attack-cooldown (getf-or :attack-cooldown *npc-attack-cooldown*)
@@ -361,6 +443,12 @@
      (make-instance 'npc-archetype
                     :name "Default NPC"
                     :max-hits *npc-max-hits*
+                    :attack-level 1
+                    :strength-level 1
+                    :defense-level 1
+                    :hitpoints-level *npc-max-hits*
+                    :combat-xp 0
+                    :loot-table-id *npc-default-loot-table-id*
                     :move-speed *npc-walk-speed*
                     :attack-range-tiles *npc-attack-range-tiles*
                     :attack-cooldown *npc-attack-cooldown*
@@ -389,11 +477,36 @@
       (when id
         (register-npc-archetype id (make-npc-archetype-from-plist plist))))))
 
+(defun load-items (specs)
+  ;; Load item archetypes from data specs.
+  (dolist (pair (normalize-pairs specs))
+    (let ((id (first pair))
+          (plist (second pair)))
+      (when id
+        (register-item-archetype id (item-archetype-from-plist id plist))))))
+
+(defun load-loot-tables (specs)
+  ;; Load loot tables from data specs.
+  (dolist (pair (normalize-pairs specs))
+    (let ((id (first pair))
+          (plist (second pair)))
+      (when id
+        (register-loot-table id (loot-table-from-plist id plist))))))
+
+(defun ensure-default-items ()
+  ;; Install a fallback item when none are loaded.
+  (when (zerop (hash-table-count *item-archetypes*))
+    (register-item-archetype
+     :coins
+     (%make-item-archetype :id :coins :name "Coins" :stack-size 9999 :value 1))))
+
 (defun load-game-data (&optional (path *game-data-path*))
   ;; Load tunables, animation sets, and archetypes from disk once.
   (unless *game-data-loaded-p*
     (clrhash *animation-sets*)
     (clrhash *npc-archetypes*)
+    (clrhash *item-archetypes*)
+    (clrhash *loot-tables*)
     (register-default-animation-sets)
     (let ((data (read-game-data path)))
       (when (and data (listp data) (not (plist-form-p data)))
@@ -401,8 +514,11 @@
       (when data
         (apply-tunables (getf data :tunables))
         (load-animation-sets (getf data :animation-sets))
-        (load-npc-archetypes (getf data :npc-archetypes))))
+        (load-npc-archetypes (getf data :npc-archetypes))
+        (load-items (getf data :items))
+        (load-loot-tables (getf data :loot-tables))))
     (ensure-default-npc-archetype)
+    (ensure-default-items)
     (setf *game-data-loaded-p* t)))
 
 (defun ensure-game-data ()

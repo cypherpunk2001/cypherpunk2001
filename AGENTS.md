@@ -10,34 +10,61 @@ mmorpg/
   mmorpg.asd
   assets/*
     ...
-  data/
+  data/*
     game-data.lisp
-  src/
-    package.lisp
-    config.lisp
-    types.lisp
-    utils.lisp
-    zone.lisp
-    input.lisp
-    movement.lisp
-    combat.lisp
-    ai.lisp
-    audio.lisp
-    ui.lisp
-    rendering.lisp
+    ...
+  src/*
     main.lisp
-  docs/
+    ...
+  docs/*
     raylib_cheatsheet.md
     claw-raylib-readme.org
+    ...
 ```
 
 ---
 
 ## Current Task
 
+Define the next milestone and sequence the work so the core gameplay loop
+(move -> fight -> loot -> progress) is data-driven and reusable.
+
+1) Simulation boundary: pure state + intents, fixed-tick update, stable entity IDs
+2) Stats + modifiers system (base stats, buffs/debuffs, derived values)
+
 ---
 
 ## Future Tasks / Roadmap
+
+### Near-term (foundation, priority order)
+3) Inventory/equipment/loot + XP progression (data-driven archetypes)
+4) Ability/skill system built on intent (cooldowns, cast times, resource costs)
+5) Save/load + snapshot serialization (no rendering dependency)
+6) NPC spawn/respawn tables, simple faction/aggro rules, tuning via data
+
+### Mid-term (world + UX)
+- Headless server loop in-process (client sends intents, server updates state)
+- Pathfinding/nav graph for NPCs; steering that reuses movement system
+- Zone streaming + chunked rendering cache; stricter culling
+- Combat effects pipeline (projectiles, hitboxes, damage types)
+- UI: inventory, character sheet, hotbar, chat, settings
+
+### Long-term (MMO readiness)
+- Real client/server split (server-authoritative simulation, snapshot sync)
+- Prediction + interpolation for smooth client UX
+- Persistent world storage and migrations
+- Editor upgrades for world-graph, spawns, and content validation
+- Asset pipeline for animation sets, atlases, and build-time validation
+
+---
+
+## Client/Server Timing Guidance
+
+- Do not do the full network split yet; enforce server-authoritative boundaries now.
+- Keep all gameplay in pure state updates driven by intents; rendering reads only.
+- Add save/load + snapshot serialization early; it becomes the future net format.
+- Prove a local headless "server loop" before committing to real networking.
+- Add real networking only after core progression systems are stable.
 
 ---
 
