@@ -33,13 +33,14 @@ What the on-screen text means
 - `Zone` = current zone name, index, and size.
 - `Mode` = current brush (tile/collision/object/spawn).
 - `Sheet` = active tileset sheet and its index in the catalog.
-- `Tile` = current tile index out of the tileset sheet.
+- `Tile` = current tile index out of the tileset sheet (shows brush size when >1x1).
 - `Layer` = layer ID used by the active paint mode.
 - `Spawn` = current NPC archetype selection.
 
 Controls (default)
 - `1` tile mode (base), `2` collision mode (blocking + top), `3` object mode (top), `4` spawn mode.
 - `Q`/`E` cycle tileset sheets (tile/collision/object modes), click a tile to select it.
+- `Shift` + `LMB` in the sheet selects a rectangular brush for multi-tile painting.
 - `Q`/`E` cycle spawns (spawn mode).
 - `WASD`/arrows move the editor camera.
 - `LMB` paint, `RMB` erase.

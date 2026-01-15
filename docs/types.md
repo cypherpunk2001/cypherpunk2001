@@ -13,7 +13,7 @@ Key structs
 - `player`, `npc`: runtime entities with an `intent` and animation/combat state.
 - `world`: zone metadata, world graph, per-zone NPC cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer and minimap layout/colors).
-- `editor`: editor mode state (camera, tileset catalog/selection, layer selections, zone list/history, spawn palette).
+- `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors

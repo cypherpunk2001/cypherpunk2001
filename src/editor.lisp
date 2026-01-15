@@ -402,10 +402,17 @@
           (if (> count 0)
               (format nil "Sheet: ~a (~d/~d)" label index count)
               "Sheet: none")))
-  (setf (editor-tile-label editor)
-        (format nil "Tile: ~d/~d"
-                (editor-selected-tile editor)
-                (max 1 (editor-tile-count editor))))
+  (let ((sel-w (max 1 (editor-selection-width editor)))
+        (sel-h (max 1 (editor-selection-height editor))))
+    (setf (editor-tile-label editor)
+          (if (and (= sel-w 1) (= sel-h 1))
+              (format nil "Tile: ~d/~d"
+                      (editor-selected-tile editor)
+                      (max 1 (editor-tile-count editor)))
+              (format nil "Tile: ~d/~d (~dx~d)"
+                      (editor-selected-tile editor)
+                      (max 1 (editor-tile-count editor))
+                      sel-w sel-h))))
   (let ((mode (editor-mode editor)))
     (setf (editor-object-label-text editor)
           (cond
@@ -423,7 +430,8 @@
              (format nil "Layer: Collision (~a)" (editor-collision-layer-id editor)))
             ((eq mode :object)
              (format nil "Layer: Top (~a)" (editor-object-layer-id editor)))
-            (t "Layer: none")))))
+            (t "Layer: none"))))
+  )
 
 (defun update-editor-zone-label (editor zone)
   ;; Refresh the cached zone label for the editor overlay.
@@ -479,6 +487,9 @@
                                :camera-y (player-y player)
                                :move-speed *editor-move-speed*
                                :selected-tile *floor-tile-index*
+                               :selection-width 1
+                               :selection-height 1
+                               :selection-anchor *floor-tile-index*
                                :tile-count (max 1 tile-count)
                                :tileset-catalog tilesets
                                :tileset-index tileset-index
@@ -539,12 +550,40 @@
     (when (<= (editor-status-timer editor) 0.0)
       (setf (editor-status-label editor) nil))))
 
+(defun editor-shift-held-p ()
+  ;; Return true when either shift key is held.
+  (or (raylib:is-key-down +key-left-shift+)
+      (raylib:is-key-down +key-right-shift+)))
+
 (defun editor-adjust-selection (editor delta)
   ;; Move the selected tile index by DELTA.
   (let* ((count (max 1 (editor-tile-count editor)))
          (next (mod (+ (editor-selected-tile editor) delta) count)))
-    (setf (editor-selected-tile editor) next)
+    (setf (editor-selected-tile editor) next
+          (editor-selection-width editor) 1
+          (editor-selection-height editor) 1
+          (editor-selection-anchor editor) next)
     (update-editor-labels editor)))
+
+(defun editor-clamp-selection (editor tileset)
+  ;; Clamp selection bounds to the current tileset dimensions.
+  (when tileset
+    (let* ((count (max 1 (editor-tileset-tile-count tileset)))
+           (columns (max 1 (editor-tileset-columns tileset)))
+           (rows (max 1 (editor-tileset-rows tileset)))
+           (tile-index (mod (editor-selected-tile editor) count)))
+      (setf (editor-selected-tile editor) tile-index)
+      (let* ((tx (mod tile-index columns))
+             (ty (floor tile-index columns))
+             (sel-w (max 1 (editor-selection-width editor)))
+             (sel-h (max 1 (editor-selection-height editor)))
+             (max-w (max 1 (- columns tx)))
+             (max-h (max 1 (- rows ty))))
+        (setf (editor-selection-width editor) (min sel-w max-w)
+              (editor-selection-height editor) (min sel-h max-h)))
+      (let ((anchor (editor-selection-anchor editor)))
+        (when (or (null anchor) (< anchor 0) (>= anchor count))
+          (setf (editor-selection-anchor editor) tile-index))))))
 
 (defun editor-clamp-floor-index (editor world)
   ;; Clamp the world's floor index to the active tileset size.
@@ -576,6 +615,7 @@
                 (max 1 (editor-tileset-tile-count tileset)))
           (setf (editor-selected-tile editor)
                 (mod (editor-selected-tile editor) (editor-tile-count editor)))
+          (editor-clamp-selection editor tileset)
           (editor-clamp-floor-index editor (and game (game-world game)))
           (update-editor-labels editor)
           (when show-status
@@ -631,6 +671,31 @@
                           (raylib:get-mouse-y)
                           x y w h))))
 
+(defun editor-update-tileset-selection (editor tileset tx ty shift-held)
+  ;; Update the selection in the tileset preview.
+  (let* ((columns (max 1 (editor-tileset-columns tileset)))
+         (rows (max 1 (editor-tileset-rows tileset)))
+         (tile-index (+ tx (* ty columns))))
+    (if shift-held
+        (let* ((anchor (or (editor-selection-anchor editor) tile-index))
+               (ax (mod anchor columns))
+               (ay (floor anchor columns))
+               (min-x (min ax tx))
+               (max-x (max ax tx))
+               (min-y (min ay ty))
+               (max-y (max ay ty))
+               (width (max 1 (1+ (- max-x min-x))))
+               (height (max 1 (1+ (- max-y min-y)))))
+          (setf (editor-selection-anchor editor) anchor
+                (editor-selected-tile editor) (+ min-x (* min-y columns))
+                (editor-selection-width editor) (min width (- columns min-x))
+                (editor-selection-height editor) (min height (- rows min-y))))
+        (setf (editor-selected-tile editor) tile-index
+              (editor-selection-width editor) 1
+              (editor-selection-height editor) 1
+              (editor-selection-anchor editor) tile-index))
+    (editor-clamp-selection editor tileset)))
+
 (defun editor-handle-tileset-picker (editor)
   ;; Update tile selection from the tileset preview panel.
   (when (and (member (editor-mode editor) '(:tile :collision :object))
@@ -651,8 +716,8 @@
           (when (and (> tile-size 0.0)
                      (<= 0 tx) (< tx columns)
                      (<= 0 ty) (< ty rows))
-            (setf (editor-selected-tile editor)
-                  (+ tx (* ty columns)))
+            (editor-update-tileset-selection editor tileset tx ty
+                                             (editor-shift-held-p))
             (update-editor-labels editor)
             t))))))
 
@@ -709,6 +774,14 @@
     (setf (editor-mode editor) :spawn)
     (update-editor-labels editor)))
 
+(defun editor-selection-origin (editor tileset)
+  ;; Return selection origin (tile coords) and column count.
+  (let* ((columns (max 1 (if tileset (editor-tileset-columns tileset) 1)))
+         (tile-index (editor-selected-tile editor)))
+    (values (mod tile-index columns)
+            (floor tile-index columns)
+            columns)))
+
 (defun editor-apply-paint (editor world camera)
   ;; Paint tiles, layers, or spawns under the mouse.
   (let* ((zone (world-zone world))
@@ -724,40 +797,97 @@
           (ecase (editor-mode editor)
             (:tile
              (let* ((tileset-id (editor-current-tileset-id editor))
+                    (tileset (editor-current-tileset editor))
                     (layer (ensure-zone-layer zone (editor-tile-layer-id editor)
                                               :tileset-id tileset-id))
-                    (value (if right-down 0 (editor-selected-tile editor))))
-               (when tileset-id
-                 (editor-clear-layer-tiles zone (editor-tile-layer-id editor)
-                                           tileset-id (zone-chunk-size zone)
-                                           tx ty))
-               (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
-               (setf (editor-dirty editor) t)))
+                    (brush-w (max 1 (editor-selection-width editor)))
+                    (brush-h (max 1 (editor-selection-height editor)))
+                    (chunk-size (zone-chunk-size zone))
+                    (painted nil))
+               (multiple-value-bind (origin-x origin-y columns)
+                   (editor-selection-origin editor tileset)
+                 (loop :for dy :from 0 :below brush-h
+                       :for world-y = (+ ty dy)
+                       :do (loop :for dx :from 0 :below brush-w
+                                 :for world-x = (+ tx dx)
+                                 :do (when (zone-tile-in-bounds-p zone world-x world-y)
+                                       (let ((value (if right-down
+                                                        0
+                                                        (+ (+ origin-x dx)
+                                                           (* (+ origin-y dy) columns)))))
+                                         (when tileset-id
+                                           (editor-clear-layer-tiles zone
+                                                                     (editor-tile-layer-id editor)
+                                                                     tileset-id
+                                                                     chunk-size
+                                                                     world-x world-y))
+                                         (zone-layer-set-tile layer chunk-size world-x world-y value)
+                                         (setf painted t))))))
+               (when painted
+                 (setf (editor-dirty editor) t))))
             (:collision
              (let* ((tileset-id (editor-current-tileset-id editor))
+                    (tileset (editor-current-tileset editor))
                     (layer (ensure-zone-layer zone (editor-collision-layer-id editor)
                                               :collision-p t
                                               :tileset-id tileset-id))
-                    (value (if right-down 0 (editor-selected-tile editor))))
-               (when tileset-id
-                 (editor-clear-layer-tiles zone (editor-collision-layer-id editor)
-                                           tileset-id (zone-chunk-size zone)
-                                           tx ty))
-               (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
-               (zone-set-collision-tile zone tx ty value)
-               (set-world-blocked-tile world tx ty value)
-               (setf (editor-dirty editor) t)))
+                    (brush-w (max 1 (editor-selection-width editor)))
+                    (brush-h (max 1 (editor-selection-height editor)))
+                    (chunk-size (zone-chunk-size zone))
+                    (painted nil))
+               (multiple-value-bind (origin-x origin-y columns)
+                   (editor-selection-origin editor tileset)
+                 (loop :for dy :from 0 :below brush-h
+                       :for world-y = (+ ty dy)
+                       :do (loop :for dx :from 0 :below brush-w
+                                 :for world-x = (+ tx dx)
+                                 :do (when (zone-tile-in-bounds-p zone world-x world-y)
+                                       (let ((value (if right-down
+                                                        0
+                                                        (+ (+ origin-x dx)
+                                                           (* (+ origin-y dy) columns)))))
+                                         (when tileset-id
+                                           (editor-clear-layer-tiles zone
+                                                                     (editor-collision-layer-id editor)
+                                                                     tileset-id
+                                                                     chunk-size
+                                                                     world-x world-y))
+                                         (zone-layer-set-tile layer chunk-size world-x world-y value)
+                                         (zone-set-collision-tile zone world-x world-y value)
+                                         (set-world-blocked-tile world world-x world-y value)
+                                         (setf painted t))))))
+               (when painted
+                 (setf (editor-dirty editor) t))))
             (:object
              (let* ((tileset-id (editor-current-tileset-id editor))
+                    (tileset (editor-current-tileset editor))
                     (layer (ensure-zone-layer zone (editor-object-layer-id editor)
                                               :tileset-id tileset-id))
-                    (value (if right-down 0 (editor-selected-tile editor))))
-               (when tileset-id
-                 (editor-clear-layer-tiles zone (editor-object-layer-id editor)
-                                           tileset-id (zone-chunk-size zone)
-                                           tx ty))
-               (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
-               (setf (editor-dirty editor) t)))
+                    (brush-w (max 1 (editor-selection-width editor)))
+                    (brush-h (max 1 (editor-selection-height editor)))
+                    (chunk-size (zone-chunk-size zone))
+                    (painted nil))
+               (multiple-value-bind (origin-x origin-y columns)
+                   (editor-selection-origin editor tileset)
+                 (loop :for dy :from 0 :below brush-h
+                       :for world-y = (+ ty dy)
+                       :do (loop :for dx :from 0 :below brush-w
+                                 :for world-x = (+ tx dx)
+                                 :do (when (zone-tile-in-bounds-p zone world-x world-y)
+                                       (let ((value (if right-down
+                                                        0
+                                                        (+ (+ origin-x dx)
+                                                           (* (+ origin-y dy) columns)))))
+                                         (when tileset-id
+                                           (editor-clear-layer-tiles zone
+                                                                     (editor-object-layer-id editor)
+                                                                     tileset-id
+                                                                     chunk-size
+                                                                     world-x world-y))
+                                         (zone-layer-set-tile layer chunk-size world-x world-y value)
+                                         (setf painted t))))))
+               (when painted
+                 (setf (editor-dirty editor) t))))
             (:spawn
              (if right-down
                  (progn
@@ -768,7 +898,7 @@
                      (zone-add-spawn zone (list :id spawn-id
                                                 :x tx
                                                 :y ty))
-                    (setf (editor-dirty editor) t)))))))))))
+                     (setf (editor-dirty editor) t)))))))))))
 
 (defun editor-export-zone (editor world)
   ;; Export the current zone to disk.
@@ -832,10 +962,17 @@
     (when (and (world-zone world)
                (zone-tile-in-bounds-p (world-zone world) tx ty))
       (let* ((tile-size (world-tile-dest-size world))
+             (brush-w (if (member (editor-mode editor) '(:tile :collision :object))
+                          (max 1 (editor-selection-width editor))
+                          1))
+             (brush-h (if (member (editor-mode editor) '(:tile :collision :object))
+                          (max 1 (editor-selection-height editor))
+                          1))
              (x (round (* tx tile-size)))
              (y (round (* ty tile-size)))
-             (size (round tile-size)))
-        (raylib:draw-rectangle-lines x y size size
+             (width (round (* tile-size brush-w)))
+             (height (round (* tile-size brush-h))))
+        (raylib:draw-rectangle-lines x y width height
                                      *editor-cursor-color*)))))
 
 (defun draw-editor-world-overlay (editor world camera)
@@ -861,7 +998,7 @@
       (incf y line)
       (raylib:draw-text (editor-object-label-text editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "1 tiles | 2 collision | 3 objects | 4 npcs | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | F5 export" x y 16
+      (raylib:draw-text "1 tiles | 2 collision | 3 objects | 4 npcs | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | shift+click block | F5 export" x y 16
                         (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle"

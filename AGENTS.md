@@ -35,8 +35,6 @@ mmorpg/
 
 ## Current Task
 
-Perfect. Currently when painting, the base floor is black, now lets say i paint a basic green grass in an area, and put a water fountain sprite down in the middle of the grass. The water fountain may have some transparency in its sprite sheet. The result is what looks like a black void around the edges of the fountain, where you naturally think there should be grass, but the grass was lost when we painted over it. I think this is probably because painting has only 1 layer at the moment? We might need to give me a way to choose if I am painting on a base layer (for grass or something), and then to toggle to top layer (for object painting on top of the base layer). Can you implement this?
-
 ---
 
 ## Future Tasks / Roadmap

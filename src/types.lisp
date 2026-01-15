@@ -90,7 +90,7 @@
   ;; Editor state for in-game map editing.
   active mode
   camera-x camera-y move-speed
-  selected-tile tile-count
+  selected-tile selection-width selection-height selection-anchor tile-count
   tileset-catalog tileset-index tileset-label-text
   tile-layer-id collision-layer-id object-layer-id
   zone-root zone-files zone-index zone-label zone-history
