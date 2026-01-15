@@ -10,7 +10,7 @@ Why we do it this way
 
 Pipeline overview
 1) Load textures in `load-assets` (tileset columns derive from texture width).
-2) Draw world layers and debug overlays in `draw-world`.
+2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
 5) Draw HUD (stamina + zone label), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), and menu overlays.
@@ -42,6 +42,7 @@ Design note
   validate that collision and visuals are aligned.
 - NPC AI debug text is only drawn when explicitly enabled, keeping the
   default render path clean and fast.
+- Zone layers can reference specific tilesets so multi-sheet maps render correctly.
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
 - The minimap recenters on the player, so you can always click ahead to set a target.

@@ -70,3 +70,5 @@ Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.
 - Export defaults to `*editor-export-path*` unless a zone path is already set.
 - Spawn mode writes `:spawns` into the zone file so runtime NPC placement can be data-driven.
+- Tile/object layers remember the tileset ID used for each layer, so switching sheets
+  does not reinterpret existing tiles.

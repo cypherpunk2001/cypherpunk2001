@@ -22,10 +22,11 @@
         (raylib:rectangle-height rect) height)
   rect)
 
-(defun set-tile-source-rect (rect tile-index tile-size-f)
+(defun set-tile-source-rect (rect tile-index tile-size-f &optional (columns *tileset-columns*))
   ;; Set the atlas source rectangle for a given tile index.
-  (let* ((col (mod tile-index *tileset-columns*))
-         (row (floor tile-index *tileset-columns*)))
+  (let* ((cols (max 1 columns))
+         (col (mod tile-index cols))
+         (row (floor tile-index cols)))
     (set-rectangle rect
                    (* col tile-size-f)
                    (* row tile-size-f)
@@ -120,6 +121,19 @@
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
 
+(defun layer-tileset-context (layer editor assets)
+  ;; Resolve the tileset texture and columns for a layer.
+  (let ((tileset-id (zone-layer-tileset-id layer)))
+    (cond
+      ((and tileset-id editor)
+       (let ((entry (editor-tileset-by-id editor tileset-id)))
+         (when entry
+           (editor-load-tileset-texture entry)
+           (values (editor-tileset-texture entry)
+                   (editor-tileset-columns entry)))))
+      (t
+       (values (assets-tileset assets) *tileset-columns*)))))
+
 (defun draw-world (world render assets camera player npcs ui editor)
   ;; Render floor, map layers, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
@@ -150,46 +164,63 @@
          (end-col (ceiling view-right tile-dest-size))
          (start-row (floor view-top tile-dest-size))
          (end-row (ceiling view-bottom tile-dest-size)))
-    (loop :for row :from start-row :to end-row
-          :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-          :do (loop :for col :from start-col :to end-col
-                    :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                    :for tile-index = (floor-tile-at col row floor-index)
-                    :do (set-rectangle tile-dest dest-x dest-y
-                                       tile-dest-size tile-dest-size)
-                        (when (not (zerop tile-index))
-                          (set-tile-source-rect tile-source tile-index tile-size-f)
-                          (raylib:draw-texture-pro tileset
-                                                   tile-source
-                                                   tile-dest
-                                                   origin
-                                                   0.0
-                                                   raylib:+white+))
-                        (when zone-layers
-                          (loop :for layer :across zone-layers
-                                :unless (zone-layer-collision-p layer)
-                                  :do (let ((layer-index (zone-layer-tile-at layer
-                                                                             chunk-size
-                                                                             col row)))
-                                        (when (not (zerop layer-index))
-                                          (set-tile-source-rect tile-source
-                                                                layer-index
-                                                                tile-size-f)
-                                          (raylib:draw-texture-pro tileset
-                                                                   tile-source
-                                                                   tile-dest
-                                                                   origin
-                                                                   0.0
-                                                                   raylib:+white+)))))
-                        (let ((wall-index (wall-tile-at wall-map col row)))
-                          (when (not (zerop wall-index))
-                            (set-tile-source-rect tile-source wall-index tile-size-f)
+    (when (not (zerop floor-index))
+      (loop :for row :from start-row :to end-row
+            :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+            :do (loop :for col :from start-col :to end-col
+                      :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                      :for tile-index = (floor-tile-at col row floor-index)
+                      :do (set-rectangle tile-dest dest-x dest-y
+                                         tile-dest-size tile-dest-size)
+                          (when (not (zerop tile-index))
+                            (set-tile-source-rect tile-source tile-index tile-size-f)
                             (raylib:draw-texture-pro tileset
                                                      tile-source
                                                      tile-dest
                                                      origin
                                                      0.0
                                                      raylib:+white+)))))
+    (when zone-layers
+      (loop :for layer :across zone-layers
+            :unless (zone-layer-collision-p layer)
+              :do (multiple-value-bind (layer-tileset layer-columns)
+                      (layer-tileset-context layer editor assets)
+                    (when (and layer-tileset layer-columns)
+                      (loop :for row :from start-row :to end-row
+                            :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+                            :do (loop :for col :from start-col :to end-col
+                                      :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                                      :for layer-index = (zone-layer-tile-at layer
+                                                                             chunk-size
+                                                                             col row)
+                                      :do (set-rectangle tile-dest dest-x dest-y
+                                                         tile-dest-size tile-dest-size)
+                                          (when (not (zerop layer-index))
+                                            (set-tile-source-rect tile-source
+                                                                  layer-index
+                                                                  tile-size-f
+                                                                  layer-columns)
+                                            (raylib:draw-texture-pro layer-tileset
+                                                                     tile-source
+                                                                     tile-dest
+                                                                     origin
+                                                                     0.0
+                                                                     raylib:+white+))))))))
+    (loop :for row :from start-row :to end-row
+          :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+          :do (loop :for col :from start-col :to end-col
+                    :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                    :for wall-index = (wall-tile-at wall-map col row)
+                    :do (set-rectangle tile-dest dest-x dest-y
+                                       tile-dest-size tile-dest-size)
+                        (when (not (zerop wall-index))
+                          (set-tile-source-rect tile-source wall-index tile-size-f)
+                          (raylib:draw-texture-pro tileset
+                                                   tile-source
+                                                   tile-dest
+                                                   origin
+                                                   0.0
+                                                   raylib:+white+))))
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row

@@ -7,7 +7,7 @@
 
 (defstruct (zone-layer (:constructor %make-zone-layer))
   ;; Layer of chunked tiles with an optional collision flag.
-  id collision-p chunks)
+  id tileset-id collision-p chunks)
 
 (defstruct (zone (:constructor %make-zone))
   ;; Zone metadata with layered chunked tiles.
@@ -95,6 +95,7 @@
 (defun zone-layer-from-spec (spec chunk-size)
   ;; Build a zone layer from a plist spec.
   (let* ((id (getf spec :id))
+         (tileset-id (getf spec :tileset nil))
          (collision-p (getf spec :collision nil))
          (chunks (make-hash-table :test 'eql))
          (chunk-specs (getf spec :chunks nil)))
@@ -103,6 +104,7 @@
              (key (zone-chunk-key (zone-chunk-x chunk) (zone-chunk-y chunk))))
         (setf (gethash key chunks) chunk)))
     (%make-zone-layer :id id
+                      :tileset-id tileset-id
                       :collision-p collision-p
                       :chunks chunks)))
 
@@ -166,11 +168,14 @@
        (<= 0 ty)
        (< ty (zone-height zone))))
 
-(defun zone-layer-by-id (zone id)
-  ;; Find a layer by ID or return nil.
+(defun zone-layer-by-id (zone id &optional tileset-id)
+  ;; Find a layer by ID (and optional TILESET-ID) or return nil.
   (when zone
     (loop :for layer :across (zone-layers zone)
-          :when (eql (zone-layer-id layer) id)
+          :when (and (eql (zone-layer-id layer) id)
+                     (if tileset-id
+                         (eql (zone-layer-tileset-id layer) tileset-id)
+                         t))
             :do (return layer))))
 
 (defun append-zone-layer (zone layer)
@@ -183,16 +188,34 @@
           (zone-layers zone) next)
     layer))
 
-(defun ensure-zone-layer (zone id &key (collision-p nil))
+(defun ensure-zone-layer (zone id &key (collision-p nil) tileset-id)
   ;; Find or create a layer with ID, ensuring collision flag if provided.
-  (let ((layer (zone-layer-by-id zone id)))
-    (if layer
-        layer
-        (append-zone-layer
-         zone
-         (%make-zone-layer :id id
-                           :collision-p collision-p
-                           :chunks (make-hash-table :test 'eql))))))
+  (let ((layer (zone-layer-by-id zone id tileset-id)))
+    (cond
+      (layer
+       layer)
+      (tileset-id
+       (let ((fallback (loop :for layer :across (zone-layers zone)
+                             :when (and (eql (zone-layer-id layer) id)
+                                        (null (zone-layer-tileset-id layer)))
+                               :do (return layer))))
+         (if fallback
+             (progn
+               (setf (zone-layer-tileset-id fallback) tileset-id)
+               fallback)
+             (append-zone-layer
+              zone
+              (%make-zone-layer :id id
+                                :tileset-id tileset-id
+                                :collision-p collision-p
+                                :chunks (make-hash-table :test 'eql))))))
+      (t
+       (append-zone-layer
+        zone
+        (%make-zone-layer :id id
+                          :tileset-id tileset-id
+                          :collision-p collision-p
+                          :chunks (make-hash-table :test 'eql)))))))
 
 (defun zone-layer-ensure-chunk (layer chunk-size cx cy)
   ;; Find or create a chunk in LAYER at chunk coordinates CX/CY.
@@ -267,14 +290,20 @@
 
 (defun zone-layer-spec (layer chunk-size)
   ;; Serialize a layer into a plist spec.
-  (let ((chunk-specs nil))
+  (let ((chunk-specs nil)
+        (tileset-id (zone-layer-tileset-id layer)))
     (maphash (lambda (_key chunk)
                (declare (ignore _key))
                (push (zone-chunk-spec chunk chunk-size) chunk-specs))
              (zone-layer-chunks layer))
-    (list :id (zone-layer-id layer)
-          :collision (zone-layer-collision-p layer)
-          :chunks (nreverse chunk-specs))))
+    (if tileset-id
+        (list :id (zone-layer-id layer)
+              :tileset tileset-id
+              :collision (zone-layer-collision-p layer)
+              :chunks (nreverse chunk-specs))
+        (list :id (zone-layer-id layer)
+              :collision (zone-layer-collision-p layer)
+              :chunks (nreverse chunk-specs)))))
 
 (defun zone-to-plist (zone)
   ;; Serialize a zone into a plist suitable for writing.
@@ -301,6 +330,7 @@
           :for layer :across (zone-layers zone)
           :do (let ((new-layer (%make-zone-layer
                                 :id (zone-layer-id layer)
+                                :tileset-id (zone-layer-tileset-id layer)
                                 :collision-p (zone-layer-collision-p layer)
                                 :chunks (make-hash-table :test 'eql))))
                 (loop :for ty :from min-y :to max-y

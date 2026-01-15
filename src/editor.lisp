@@ -157,6 +157,28 @@
     (when (and tilesets (> (length tilesets) 0))
       (aref tilesets (mod (editor-tileset-index editor) (length tilesets))))))
 
+(defun editor-current-tileset-id (editor)
+  ;; Return the active tileset ID, if any.
+  (let ((tileset (editor-current-tileset editor)))
+    (when tileset
+      (editor-tileset-id tileset))))
+
+(defun editor-tileset-by-id (editor tileset-id)
+  ;; Return the tileset entry matching TILESET-ID.
+  (let ((tilesets (editor-tileset-catalog editor)))
+    (when (and tilesets tileset-id)
+      (loop :for tileset :across tilesets
+            :when (eql (editor-tileset-id tileset) tileset-id)
+              :do (return tileset)))))
+
+(defun editor-default-tileset-id (editor)
+  ;; Return the tileset ID for the configured default tileset path.
+  (let ((tilesets (editor-tileset-catalog editor)))
+    (when (and tilesets (> (length tilesets) 0))
+      (let* ((index (editor-tileset-index-for-path tilesets *tileset-path*))
+             (tileset (aref tilesets (mod index (length tilesets)))))
+        (editor-tileset-id tileset)))))
+
 
 (defun load-editor-spawns ()
   ;; Build the spawn palette from loaded NPC archetypes.
@@ -261,6 +283,7 @@
       (setf *zone-path* path
             (editor-export-path editor) path))
     (apply-zone-to-world (game-world game) zone)
+    (editor-assign-default-layer-tilesets editor zone)
     (editor-track-zone editor path)
     (editor-refresh-zone-files editor)
     (update-editor-zone-label editor zone)
@@ -427,11 +450,21 @@
     (editor-track-zone editor *zone-path*)
     (editor-refresh-zone-files editor)
     (update-editor-zone-label editor (world-zone world))
+    (editor-assign-default-layer-tilesets editor (world-zone world))
     (setf (editor-export-path editor)
           (or (editor-current-zone-path editor)
               *zone-path*
               (editor-export-path editor)))
     (setf (editor-dirty editor) nil)))
+
+(defun editor-assign-default-layer-tilesets (editor zone)
+  ;; Ensure non-collision layers have a default tileset ID.
+  (let ((tileset-id (editor-default-tileset-id editor)))
+    (when (and zone tileset-id)
+      (loop :for layer :across (zone-layers zone)
+            :unless (zone-layer-collision-p layer)
+              :when (null (zone-layer-tileset-id layer))
+                :do (setf (zone-layer-tileset-id layer) tileset-id)))))
 
 (defun make-editor (world assets player)
   ;; Build editor state with tile palette and layer selections.
@@ -467,6 +500,7 @@
     (editor-set-active-tileset editor nil assets tileset-index nil)
     (editor-clamp-floor-index editor world)
     (editor-refresh-zone-files editor)
+    (editor-assign-default-layer-tilesets editor (world-zone world))
     (setf (editor-export-path editor)
           (or (editor-current-zone-path editor)
               *zone-path*
@@ -538,10 +572,6 @@
                      (string= active-path (editor-tileset-path tileset)))
             (setf (editor-tileset-texture tileset) (assets-tileset assets)))
           (editor-load-tileset-texture tileset)
-          (when assets
-            (setf (assets-tileset assets) (editor-tileset-texture tileset)))
-          (setf *tileset-columns* (max 1 (editor-tileset-columns tileset))
-                *tileset-path* (editor-tileset-path tileset))
           (setf (editor-tile-count editor)
                 (max 1 (editor-tileset-tile-count tileset)))
           (setf (editor-selected-tile editor)
@@ -640,6 +670,15 @@
               (floor wy tile-size)
               wx wy))))
 
+(defun editor-clear-layer-tiles (zone base-id tileset-id chunk-size tx ty)
+  ;; Clear tiles at TX/TY from layers sharing BASE-ID but a different tileset.
+  (let ((layers (zone-layers zone)))
+    (when layers
+      (loop :for layer :across layers
+            :when (and (eql (zone-layer-id layer) base-id)
+                       (not (eql (zone-layer-tileset-id layer) tileset-id)))
+              :do (zone-layer-set-tile layer chunk-size tx ty 0)))))
+
 (defun editor-update-camera (editor world dt)
   ;; Update editor camera position using WASD/arrow keys.
   (multiple-value-bind (dx dy)
@@ -684,8 +723,14 @@
         (when (zone-tile-in-bounds-p zone tx ty)
           (ecase (editor-mode editor)
             (:tile
-             (let* ((layer (ensure-zone-layer zone (editor-tile-layer-id editor)))
+             (let* ((tileset-id (editor-current-tileset-id editor))
+                    (layer (ensure-zone-layer zone (editor-tile-layer-id editor)
+                                              :tileset-id tileset-id))
                     (value (if right-down 0 (editor-selected-tile editor))))
+               (when tileset-id
+                 (editor-clear-layer-tiles zone (editor-tile-layer-id editor)
+                                           tileset-id (zone-chunk-size zone)
+                                           tx ty))
                (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
                (setf (editor-dirty editor) t)))
             (:collision
@@ -697,8 +742,14 @@
                (set-world-blocked-tile world tx ty value)
                (setf (editor-dirty editor) t)))
             (:object
-             (let* ((layer (ensure-zone-layer zone (editor-object-layer-id editor)))
+             (let* ((tileset-id (editor-current-tileset-id editor))
+                    (layer (ensure-zone-layer zone (editor-object-layer-id editor)
+                                              :tileset-id tileset-id))
                     (value (if right-down 0 (editor-selected-tile editor))))
+               (when tileset-id
+                 (editor-clear-layer-tiles zone (editor-object-layer-id editor)
+                                           tileset-id (zone-chunk-size zone)
+                                           tx ty))
                (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
                (setf (editor-dirty editor) t)))
             (:spawn

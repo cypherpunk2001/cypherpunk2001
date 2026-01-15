@@ -11,7 +11,7 @@ Why we do it this way
 Data format (zone file)
 - A zone file is a single plist (or `(:zone <plist>)`) stored under `data/`.
 - Required keys: `:id`, `:chunk-size`, `:width`, `:height`, `:layers`.
-- Layers are plists with `:id`, `:collision`, and `:chunks`.
+- Layers are plists with `:id`, optional `:tileset`, `:collision`, and `:chunks`.
 - Chunks are plists with `:x`, `:y`, and either `:tiles` or `:fill` + `:overrides`.
 - `:overrides` entries are `(x y value)` in chunk-local tile coordinates.
 - `:objects` is optional and reserved for placed entities/props.
@@ -24,7 +24,7 @@ Example zone
  :width 8
  :height 8
  :layers
- ((:id :floor :collision nil
+ ((:id :floor :tileset :overworld :collision nil
    :chunks ((:x 0 :y 0 :fill 0)))
   (:id :walls :collision t
    :chunks
@@ -60,5 +60,6 @@ Design note
 - The wall map is derived once at load time to keep movement cheap.
 - Export helpers preserve the chunked format so later streaming is easy.
 - Spawns live alongside objects so zones can drive NPC placement without extra files.
+- Layers can pin a tileset ID so mixed tileset sheets render correctly.
 - Zone `:id` values are referenced by the world graph to connect travel edges.
 - Zone paths are resolved relative to the system root even when passed as relative pathnames.
