@@ -1,18 +1,22 @@
 # AGENTS.md
 
-Common Lisp + raylib project slowly iterating in to a mmorpg.
+Common Lisp + raylib MMORPG prototype focused on clean architecture and system separation. The codebase is structured to teach modern game design habits: data-driven content, intent-based actions, and a strict update/draw split.
 
 ## Project layout
 
-```
+```txt
 mmorpg/
   AGENTS.md
+  README.md
   mmorpg.asd
   assets/*
     ...
   data/*
     game-data.lisp
+    world-graph.lisp
     ...
+    zones/*
+        ...
   src/*
     main.lisp
     ...
@@ -26,7 +30,16 @@ mmorpg/
 
 ## Current Task
 
-Improving mele combat UI/UX
+Fixing regression:
+
+Clicking with left mouse on non enemies no longer shows the yellow X that fades out
+Clicking with left mouse on enemy npcs no longer follows auto attacking them, and no long shows the red X that fades out
+Right clicking attack on an enemy should also make the red X and follow auto attacking them
+
+TL;DR We want a streamlined system:
+
+- You can right click on other players or npcs and click follow, it will simply follow
+- You can left click or right click context and choose Attack which will follow + auto attack repeatedly unending
 
 ---
 
@@ -34,16 +47,40 @@ Improving mele combat UI/UX
 
 ### Near-term (foundation, priority order)
 3) Inventory/equipment/loot + XP progression (data-driven archetypes)
+- You don’t need a full inventory system to split client/server. What you do want early is the pattern you’ll reuse:
+- Entities have an ID
+- Items are plain data
+- Server is authoritative over “give/remove item” and XP
+
 4) Ability/skill system built on intent (cooldowns, cast times, resource costs)
+
+I consider that we already have developed this with the mele system and the run/stamina timer cooldown system. Therefore, I believe we can skip developing further in 4, if you agree Chat, just double check over that our mele and stamina systems do observe the following principles in preparation for the upcoming client/server split.
+- client sends intent
+- server validates
+- server updates state
+- client renders result
+
+Just ensure we already follow the authority/intents boundary in code.
+
 5) Save/load + snapshot serialization (no rendering dependency)
+- Even if the game is always-online, you still need ways to persist and restore the authoritative world state.
+Not optional. Do this early.
+This is your “server-shaped core.” It also becomes your snapshot sync format later.
+Minimum slice:
+Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
+Version tag in the file
+That’s enough
+
 6) NPC spawn/respawn tables, simple faction/aggro rules, tuning via data
+
+We have already built a real AI. Let's ensure that our current npc spawn mechanisms are ready for the client/server split as much as we can per usual principles of server authority, etc.
+
+Just ensure we already follow the authority/intents boundary in code.
 
 ### Mid-term (world + UX)
 - Headless server loop in-process (client sends intents, server updates state)
-- Pathfinding/nav graph for NPCs; steering that reuses movement system
-- Zone streaming + chunked rendering cache; stricter culling
-- Combat effects pipeline (projectiles, hitboxes, damage types)
-- UI: inventory, character sheet, hotbar, chat, settings
+This is the split, just without sockets. Not optional.
+Do this ASAP after save/load.
 
 ### Long-term (MMO readiness)
 - Real client/server split (server-authoritative simulation, snapshot sync)
@@ -56,7 +93,7 @@ Improving mele combat UI/UX
 
 ## Client/Server Timing Guidance
 
-- Do not do the full network split yet; enforce server-authoritative boundaries now.
+- Until we do the full network split: enforce server-authoritative boundaries now.
 - Keep all gameplay in pure state updates driven by intents; rendering reads only.
 - Add save/load + snapshot serialization early; it becomes the future net format.
 - Prove a local headless "server loop" before committing to real networking.
