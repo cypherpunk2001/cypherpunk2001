@@ -35,11 +35,7 @@ mmorpg/
 
 ## Current Task
 
-- Currently the sprite sheets used by the characters and npcs are fine, for now, but we will be moving away from the other sprites in use currently. We are moving to using 16x16 everywhere (I am not sure if we are using 32x32 anywhere but just stating for certainty.) Particuarly we have new 16x16 assets in "assets/Zelda-like" that need to be integrated in to the world zone editor mode. These are all 16x16 sprite sheets of various sizes (feel free to use imagemagick and other cli tools to determine more information about them as needed)
-
-- One thing I would really like is instead of having to press q|e to cycle through tiles one by one, is just a way to cycle through the various sprite sheets (q|e for that would be fine) but then it literally opens up the entire sheet and allows me to preview them all together so that I can click on the one I want to paint with directly. This would allow me to see the entire context of the various tiles available in my sprite sheets.
-
-- Also I'm not sure what we need z/x for the docs say "Z/X cycle objects or spawns." But we already have 1,2,3,4 I think which should be enough for this? The docs state "1 tile mode, 2 collision mode, 3 object mode, 4 spawn mode." So clean this up or clarify.
+Perfect. Currently when painting, the base floor is black, now lets say i paint a basic green grass in an area, and put a water fountain sprite down in the middle of the grass. The water fountain may have some transparency in its sprite sheet. The result is what looks like a black void around the edges of the fountain, where you naturally think there should be grass, but the grass was lost when we painted over it. I think this is probably because painting has only 1 layer at the moment? We might need to give me a way to choose if I am painting on a base layer (for grass or something), and then to toggle to top layer (for object painting on top of the base layer). Can you implement this?
 
 ---
 

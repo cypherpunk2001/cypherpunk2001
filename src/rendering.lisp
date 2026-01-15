@@ -181,60 +181,71 @@
                                                      0.0
                                                      raylib:+white+)))))
     (when zone-layers
-      (loop :for layer :across zone-layers
-            :unless (zone-layer-collision-p layer)
-              :do (multiple-value-bind (layer-tileset layer-columns)
-                      (layer-tileset-context layer editor assets)
-                    (when (and layer-tileset layer-columns)
-                      (loop :for row :from start-row :to end-row
-                            :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-                            :do (loop :for col :from start-col :to end-col
-                                      :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                                      :for layer-index = (zone-layer-tile-at layer
-                                                                             chunk-size
-                                                                             col row)
-                                      :do (set-rectangle tile-dest dest-x dest-y
-                                                         tile-dest-size tile-dest-size)
-                                          (when (not (zerop layer-index))
-                                            (set-tile-source-rect tile-source
-                                                                  layer-index
-                                                                  tile-size-f
-                                                                  layer-columns)
-                                            (raylib:draw-texture-pro layer-tileset
-                                                                     tile-source
-                                                                     tile-dest
-                                                                     origin
-                                                                     0.0
-                                                                     raylib:+white+))))))))
-    (loop :for row :from start-row :to end-row
-          :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-          :do (loop :for col :from start-col :to end-col
-                    :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                    :for wall-index = (wall-tile-at wall-map col row)
-                    :do (set-rectangle tile-dest dest-x dest-y
-                                       tile-dest-size tile-dest-size)
-                        (when (not (zerop wall-index))
-                          (set-tile-source-rect tile-source wall-index tile-size-f)
-                          (raylib:draw-texture-pro tileset
-                                                   tile-source
-                                                   tile-dest
-                                                   origin
-                                                   0.0
-                                                   raylib:+white+))))
+      (labels ((draw-layer (layer)
+                 (multiple-value-bind (layer-tileset layer-columns)
+                     (layer-tileset-context layer editor assets)
+                   (when (and layer-tileset layer-columns)
+                     (loop :for row :from start-row :to end-row
+                           :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+                           :do (loop :for col :from start-col :to end-col
+                                     :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                                     :for layer-index = (zone-layer-tile-at layer
+                                                                            chunk-size
+                                                                            col row)
+                                     :do (set-rectangle tile-dest dest-x dest-y
+                                                        tile-dest-size tile-dest-size)
+                                         (when (not (zerop layer-index))
+                                           (set-tile-source-rect tile-source
+                                                                 layer-index
+                                                                 tile-size-f
+                                                                 layer-columns)
+                                           (raylib:draw-texture-pro layer-tileset
+                                                                    tile-source
+                                                                    tile-dest
+                                                                    origin
+                                                                    0.0
+                                                                    raylib:+white+)))))))
+               (draw-layers (predicate)
+                 (loop :for layer :across zone-layers
+                       :when (funcall predicate layer)
+                         :do (draw-layer layer))))
+        (draw-layers (lambda (layer)
+                       (and (not (zone-layer-collision-p layer))
+                            (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
+        (draw-layers #'zone-layer-collision-p)
+        (draw-layers (lambda (layer)
+                       (and (not (zone-layer-collision-p layer))
+                            (eql (zone-layer-id layer) *editor-object-layer-id*))))))
+    (unless zone
+      (loop :for row :from start-row :to end-row
+            :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+            :do (loop :for col :from start-col :to end-col
+                      :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                      :for wall-index = (wall-tile-at wall-map col row)
+                      :do (set-rectangle tile-dest dest-x dest-y
+                                         tile-dest-size tile-dest-size)
+                          (when (not (zerop wall-index))
+                            (set-tile-source-rect tile-source wall-index tile-size-f)
+                            (raylib:draw-texture-pro tileset
+                                                     tile-source
+                                                     tile-dest
+                                                     origin
+                                                     0.0
+                                                     raylib:+white+)))))
     (when *debug-collision-overlay*
       (let ((tile-px (round tile-dest-size)))
         (loop :for row :from start-row :to end-row
               :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
               :do (loop :for col :from start-col :to end-col
                         :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                            :for ix = (round dest-x)
-                            :for iy = (round dest-y)
-                            :do (when (wall-blocked-p wall-map col row)
-                                  (raylib:draw-rectangle ix iy tile-px tile-px
-                                                         (ui-debug-collision-color ui)))
-                                (when (not (zerop (wall-tile-at wall-map col row)))
-                                  (raylib:draw-rectangle ix iy tile-px tile-px
-                                                         (ui-debug-wall-color ui)))
+                        :for ix = (round dest-x)
+                        :for iy = (round dest-y)
+                        :do (when (wall-blocked-p wall-map col row)
+                              (raylib:draw-rectangle ix iy tile-px tile-px
+                                                     (ui-debug-collision-color ui)))
+                            (when (not (zerop (wall-tile-at wall-map col row)))
+                              (raylib:draw-rectangle ix iy tile-px tile-px
+                                                     (ui-debug-wall-color ui)))
                             (raylib:draw-rectangle-lines ix iy tile-px tile-px
                                                          (ui-debug-grid-color ui)))))
       (let ((ix (round (- x (world-collision-half-width world))))
@@ -262,9 +273,8 @@
                 (iw (round (* 2.0 ahw)))
                 (ih (round (* 2.0 ahh))))
             (raylib:draw-rectangle-lines ix iy iw ih
-                                         (ui-debug-collision-color ui)))))))
-  )
-
+                                         (ui-debug-collision-color ui))))
+    ))))
 (defun npc-textures-for (npc assets)
   ;; Select the NPC texture set based on archetype.
   (let* ((archetype (npc-archetype npc))

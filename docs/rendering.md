@@ -24,7 +24,7 @@ Key functions
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
-2) Draw floor tiles, zone layers, and wall map tiles.
+2) Draw floor tiles and zone layers; wall map tiles render only when no zone is loaded.
 3) If debug is enabled, overlay collision/bounds grid.
 4) Draw player and NPCs in world space.
 5) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.

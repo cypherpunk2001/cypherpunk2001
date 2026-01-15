@@ -418,11 +418,11 @@
                    (format nil "Spawn: ~a" label)
                    "Spawn: none")))
             ((eq mode :tile)
-             (format nil "Layer: ~a" (editor-tile-layer-id editor)))
+             (format nil "Layer: Base (~a)" (editor-tile-layer-id editor)))
             ((eq mode :collision)
-             (format nil "Layer: ~a" (editor-collision-layer-id editor)))
+             (format nil "Layer: Collision (~a)" (editor-collision-layer-id editor)))
             ((eq mode :object)
-             (format nil "Layer: ~a" (editor-object-layer-id editor)))
+             (format nil "Layer: Top (~a)" (editor-object-layer-id editor)))
             (t "Layer: none")))))
 
 (defun update-editor-zone-label (editor zone)
@@ -734,9 +734,15 @@
                (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
                (setf (editor-dirty editor) t)))
             (:collision
-             (let* ((layer (ensure-zone-layer zone (editor-collision-layer-id editor)
-                                              :collision-p t))
+             (let* ((tileset-id (editor-current-tileset-id editor))
+                    (layer (ensure-zone-layer zone (editor-collision-layer-id editor)
+                                              :collision-p t
+                                              :tileset-id tileset-id))
                     (value (if right-down 0 (editor-selected-tile editor))))
+               (when tileset-id
+                 (editor-clear-layer-tiles zone (editor-collision-layer-id editor)
+                                           tileset-id (zone-chunk-size zone)
+                                           tx ty))
                (zone-layer-set-tile layer (zone-chunk-size zone) tx ty value)
                (zone-set-collision-tile zone tx ty value)
                (set-world-blocked-tile world tx ty value)
@@ -855,7 +861,7 @@
       (incf y line)
       (raylib:draw-text (editor-object-label-text editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "1/2/3/4 mode | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | F5 export" x y 16
+      (raylib:draw-text "1 tiles | 2 collision | 3 objects | 4 npcs | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | F5 export" x y 16
                         (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle"
