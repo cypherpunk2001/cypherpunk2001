@@ -144,6 +144,15 @@
       (:east (values span-x 0.0))
       (:west (values (- span-x) 0.0)))))
 
+(defun preview-zone-corner-offset (zone tile-dest-size edge-a edge-b)
+  ;; Return the world offset to align ZONE along EDGE-A + EDGE-B.
+  (multiple-value-bind (offset-x-a offset-y-a)
+      (preview-zone-offset zone tile-dest-size edge-a)
+    (multiple-value-bind (offset-x-b offset-y-b)
+        (preview-zone-offset zone tile-dest-size edge-b)
+      (values (+ offset-x-a offset-x-b)
+              (+ offset-y-a offset-y-b)))))
+
 (defun draw-zone-preview (zone render assets editor
                           view-left view-right view-top view-bottom
                           tile-dest-size tile-size-f
@@ -232,7 +241,11 @@
          (start-col (floor view-left tile-dest-size))
          (end-col (ceiling view-right tile-dest-size))
          (start-row (floor view-top tile-dest-size))
-         (end-row (ceiling view-bottom tile-dest-size)))
+         (end-row (ceiling view-bottom tile-dest-size))
+         (ex-west (view-exceeds-edge-p world view-left view-right view-top view-bottom :west))
+         (ex-east (view-exceeds-edge-p world view-left view-right view-top view-bottom :east))
+         (ex-north (view-exceeds-edge-p world view-left view-right view-top view-bottom :north))
+         (ex-south (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)))
     (labels ((draw-preview-for-edge (edge)
                (let ((preview-zone (world-preview-zone-for-edge world edge)))
                  (when preview-zone
@@ -241,15 +254,33 @@
                      (draw-zone-preview preview-zone render assets editor
                                         view-left view-right view-top view-bottom
                                         tile-dest-size tile-size-f
-                                        offset-x offset-y))))))
-      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :west)
+                                        offset-x offset-y)))))
+             (draw-preview-for-corner (edge-a edge-b)
+               (let ((preview-zone (world-preview-zone-for-corner world edge-a edge-b)))
+                 (when preview-zone
+                   (multiple-value-bind (offset-x offset-y)
+                       (preview-zone-corner-offset preview-zone tile-dest-size edge-a edge-b)
+                     (draw-zone-preview preview-zone render assets editor
+                                        view-left view-right view-top view-bottom
+                                        tile-dest-size tile-size-f
+                                        offset-x offset-y)))))
+      )
+      (when ex-west
         (draw-preview-for-edge :west))
-      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :east)
+      (when ex-east
         (draw-preview-for-edge :east))
-      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :north)
+      (when ex-north
         (draw-preview-for-edge :north))
-      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)
-        (draw-preview-for-edge :south)))
+      (when ex-south
+        (draw-preview-for-edge :south))
+      (when (and ex-west ex-north)
+        (draw-preview-for-corner :west :north))
+      (when (and ex-east ex-north)
+        (draw-preview-for-corner :east :north))
+      (when (and ex-west ex-south)
+        (draw-preview-for-corner :west :south))
+      (when (and ex-east ex-south)
+        (draw-preview-for-corner :east :south)))
     (when (not (zerop floor-index))
       (loop :for row :from start-row :to end-row
             :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
@@ -360,8 +391,8 @@
                 (ih (round (* 2.0 ahh))))
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui))))
-    ))
-  (draw-click-marker player world)))
+      )
+    (draw-click-marker player world))))
 
 (defun draw-click-marker (player world)
   ;; Draw a fading click marker at the last target position.

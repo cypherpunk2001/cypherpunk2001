@@ -554,11 +554,38 @@
     (:south (> view-bottom (world-wall-max-y world)))
     (t nil)))
 
+(defun world-edge-exit-for-zone (world zone-id edge)
+  ;; Return the exit spec for EDGE in ZONE-ID.
+  (let ((graph (world-world-graph world)))
+    (when (and edge zone-id graph)
+      (find edge (world-graph-exits graph zone-id)
+            :key (lambda (exit) (getf exit :edge))
+            :test #'eq))))
+
+(defun world-diagonal-zone-id (world edge-a edge-b)
+  ;; Return the diagonal zone id for EDGE-A + EDGE-B if the graph connects it.
+  (let* ((zone (world-zone world))
+         (zone-id (and zone (zone-id zone))))
+    (when zone-id
+      (labels ((next-zone (from edge)
+                 (let ((exit (world-edge-exit-for-zone world from edge)))
+                   (and exit (getf exit :to)))))
+        (let ((first (next-zone zone-id edge-a)))
+          (or (and first (next-zone first edge-b))
+              (let ((second (next-zone zone-id edge-b)))
+                (and second (next-zone second edge-a)))))))))
+
 (defun world-preview-zone-for-edge (world edge)
   ;; Return cached preview zone data for EDGE if available.
   (let* ((cache (world-zone-preview-cache world))
          (exit (and cache (world-edge-exit world edge)))
          (target-id (and exit (getf exit :to))))
+    (and target-id (gethash target-id cache))))
+
+(defun world-preview-zone-for-corner (world edge-a edge-b)
+  ;; Return cached preview zone data for EDGE-A + EDGE-B if available.
+  (let* ((cache (world-zone-preview-cache world))
+         (target-id (and cache (world-diagonal-zone-id world edge-a edge-b))))
     (and target-id (gethash target-id cache))))
 
 (defun ensure-preview-zone-for-edge (world edge)
@@ -574,18 +601,42 @@
             (when zone
               (setf (gethash target-id cache) zone))))))))
 
+(defun ensure-preview-zone-for-corner (world edge-a edge-b)
+  ;; Load diagonal zone data for preview rendering on EDGE-A + EDGE-B.
+  (let* ((cache (world-zone-preview-cache world))
+         (target-id (and cache (world-diagonal-zone-id world edge-a edge-b))))
+    (when (and cache target-id (not (gethash target-id cache)))
+      (let* ((graph (world-world-graph world))
+             (path (and graph (world-graph-zone-path graph target-id))))
+        (when (and path (probe-file path))
+          (let ((zone (load-zone path)))
+            (when zone
+              (setf (gethash target-id cache) zone))))))))
+
 (defun ensure-preview-zones (world player camera editor)
   ;; Load adjacent zone data when the camera view reaches a world edge.
   (multiple-value-bind (view-left view-right view-top view-bottom)
       (camera-view-bounds camera player editor)
-    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :west)
-      (ensure-preview-zone-for-edge world :west))
-    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :east)
-      (ensure-preview-zone-for-edge world :east))
-    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :north)
-      (ensure-preview-zone-for-edge world :north))
-    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)
-      (ensure-preview-zone-for-edge world :south))))
+    (let* ((ex-west (view-exceeds-edge-p world view-left view-right view-top view-bottom :west))
+           (ex-east (view-exceeds-edge-p world view-left view-right view-top view-bottom :east))
+           (ex-north (view-exceeds-edge-p world view-left view-right view-top view-bottom :north))
+           (ex-south (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)))
+      (when ex-west
+        (ensure-preview-zone-for-edge world :west))
+      (when ex-east
+        (ensure-preview-zone-for-edge world :east))
+      (when ex-north
+        (ensure-preview-zone-for-edge world :north))
+      (when ex-south
+        (ensure-preview-zone-for-edge world :south))
+      (when (and ex-west ex-north)
+        (ensure-preview-zone-for-corner world :west :north))
+      (when (and ex-east ex-north)
+        (ensure-preview-zone-for-corner world :east :north))
+      (when (and ex-west ex-south)
+        (ensure-preview-zone-for-corner world :west :south))
+      (when (and ex-east ex-south)
+        (ensure-preview-zone-for-corner world :east :south)))))
 
 (defun world-edge-exit (world edge)
   ;; Return the exit spec for EDGE in the current zone.

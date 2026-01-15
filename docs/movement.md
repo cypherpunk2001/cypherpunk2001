@@ -59,5 +59,6 @@ Design note
   they align with adjacent zone placement, and render when the player is
   pushing against a valid exit edge or within `*minimap-preview-edge-tiles*`
   tiles of one.
-- When the camera view reaches a zone edge, `ensure-preview-zones` loads the
-  adjacent zones into a preview cache for seamless cross-zone rendering.
+- When the camera view reaches a zone edge or corner, `ensure-preview-zones`
+  loads adjacent and diagonal zones into a preview cache for seamless cross-zone
+  rendering.

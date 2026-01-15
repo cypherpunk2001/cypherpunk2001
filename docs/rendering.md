@@ -52,8 +52,8 @@ Design note
   against a connected edge or standing within `*minimap-preview-edge-tiles*` tiles
   of one to avoid confusing them with in-zone NPCs.
 - When a preview zone is cached, `draw-world` renders its layers offset beyond any
-  edges that the camera view extends past, so approaching a boundary feels continuous
-  instead of a hard cutoff.
+  edges or corners that the camera view extends past, so approaching a boundary feels
+  continuous instead of a hard cutoff.
 - Collision tiles render as faint minimap markers so navigational blockers are visible,
   including zone boundary tiles to show world edges (internal edges with world-graph
   exits are suppressed).
