@@ -26,11 +26,7 @@ mmorpg/
 
 ## Current Task
 
-Define the next milestone and sequence the work so the core gameplay loop
-(move -> fight -> loot -> progress) is data-driven and reusable.
-
-1) Simulation boundary: pure state + intents, fixed-tick update, stable entity IDs
-2) Stats + modifiers system (base stats, buffs/debuffs, derived values)
+Improving mele combat UI/UX
 
 ---
 

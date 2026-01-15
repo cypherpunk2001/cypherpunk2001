@@ -47,6 +47,10 @@
         (setf (npc-hits-left combatant) 0
               (npc-alive combatant) nil
               killed t))
+      (when killed
+        (let ((respawn (npc-respawn-seconds combatant)))
+          (when (and respawn (> respawn 0.0))
+            (setf (npc-respawn-timer combatant) respawn))))
       (when *debug-npc-logs*
         (let* ((archetype (npc-archetype combatant))
                (name (if archetype (npc-archetype-name archetype) "NPC"))
@@ -154,6 +158,117 @@
   ;; Return true when two axis-aligned boxes overlap (center + half sizes).
   (and (<= (abs (- ax bx)) (+ ahw bhw))
        (<= (abs (- ay by)) (+ ahh bhh))))
+
+(defun find-npc-by-id (npcs id)
+  ;; Return the NPC with ID, if present.
+  (when (> id 0)
+    (loop :for npc :across npcs
+          :when (= (npc-id npc) id)
+            :do (return npc))))
+
+(defun npc-respawn-seconds (npc)
+  ;; Return the respawn cooldown for NPC.
+  (let ((archetype (npc-archetype npc)))
+    (if archetype
+        (npc-archetype-respawn-seconds archetype)
+        *npc-respawn-seconds*)))
+
+(defun respawn-npc (npc)
+  ;; Reset NPC state after a respawn cooldown.
+  (let* ((archetype (npc-archetype npc))
+         (stats (make-npc-stats archetype))
+         (max-hp (stat-block-base-level stats :hitpoints))
+         (x (npc-home-x npc))
+         (y (npc-home-y npc))
+         (intent (npc-intent npc)))
+    (reset-frame-intent intent)
+    (clear-intent-target intent)
+    (setf (npc-x npc) x
+          (npc-y npc) y
+          (npc-stats npc) stats
+          (npc-anim-state npc) :idle
+          (npc-facing npc) :down
+          (npc-behavior-state npc) :idle
+          (npc-provoked npc) nil
+          (npc-wander-x npc) x
+          (npc-wander-y npc) y
+          (npc-wander-timer npc) 0.0
+          (npc-attack-timer npc) 0.0
+          (npc-frame-index npc) 0
+          (npc-frame-timer npc) 0.0
+          (npc-hits-left npc) max-hp
+          (npc-alive npc) t
+          (npc-respawn-timer npc) 0.0
+          (npc-hit-active npc) nil
+          (npc-hit-timer npc) 0.0
+          (npc-hit-frame npc) 0
+          (npc-hit-facing npc) :down
+          (npc-hit-facing-sign npc) 1.0))
+  (when *debug-npc-logs*
+    (let* ((archetype (npc-archetype npc))
+           (name (if archetype (npc-archetype-name archetype) "NPC")))
+      (format t "~&NPC-RESPAWN ~a at ~,1f ~,1f~%" name (npc-x npc) (npc-y npc))
+      (finish-output))))
+
+(defun update-npc-respawns (npcs dt)
+  ;; Tick respawn timers and restore NPCs when timers expire.
+  (loop :for npc :across npcs
+        :when (and (not (npc-alive npc))
+                   (> (npc-respawn-timer npc) 0.0))
+          :do (let ((timer (max 0.0 (- (npc-respawn-timer npc) dt))))
+                (setf (npc-respawn-timer npc) timer)
+                (when (<= timer 0.0)
+                  (respawn-npc npc)))))
+
+(defun player-attack-target (player npcs)
+  ;; Return the active NPC target for PLAYER, if any.
+  (let* ((id (player-attack-target-id player))
+         (npc (and (> id 0) (find-npc-by-id npcs id))))
+    (when (and npc (combatant-alive-p npc))
+      npc)))
+
+(defun player-follow-target (player npcs)
+  ;; Return the active NPC follow target for PLAYER, if any.
+  (let* ((id (player-follow-target-id player))
+         (npc (and (> id 0) (find-npc-by-id npcs id))))
+    (when (and npc (combatant-alive-p npc))
+      npc)))
+
+(defun sync-player-attack-target (player intent npcs)
+  ;; Sync intent target to the active attack target.
+  (let ((target (player-attack-target player npcs)))
+    (if target
+        (set-intent-target intent (npc-x target) (npc-y target))
+        (when (> (player-attack-target-id player) 0)
+          (setf (player-attack-target-id player) 0)
+          (clear-intent-target intent)))))
+
+(defun sync-player-follow-target (player intent npcs)
+  ;; Sync intent target to the active follow target.
+  (let ((target (player-follow-target player npcs)))
+    (if target
+        (set-intent-target intent (npc-x target) (npc-y target))
+        (when (> (player-follow-target-id player) 0)
+          (setf (player-follow-target-id player) 0)
+          (clear-intent-target intent)))))
+
+(defun player-attack-target-in-range-p (player target world)
+  ;; Return true when TARGET is inside the player's melee hitbox.
+  (multiple-value-bind (ax ay ahw ahh)
+      (attack-hitbox player world)
+    (multiple-value-bind (thw thh)
+        (combatant-collision-half target world)
+      (multiple-value-bind (tx ty)
+          (combatant-position target)
+        (aabb-overlap-p ax ay ahw ahh
+                        tx ty thw thh)))))
+
+(defun update-player-attack-intent (player npcs world)
+  ;; Request attacks when the active attack target is in range.
+  (let* ((intent (player-intent player))
+         (target (player-attack-target player npcs)))
+    (when (and target (player-attack-target-in-range-p player target world))
+      (request-intent-attack intent))))
 
 (defun attack-hitbox (player world)
   ;; Return attack hitbox center and half sizes for the current facing.

@@ -32,10 +32,12 @@ Common tunables
 - `:player-collision-scale` and `:npc-collision-scale` to loosen/tighten collider fit.
 - `:sim-tick-seconds` and `:sim-max-steps-per-frame` to tune fixed-step simulation timing.
 - `:collision-edge-epsilon` to control edge contact tolerance.
+- `:npc-respawn-seconds` for the default NPC respawn cooldown (per-archetype overrides are supported).
 - `:player-base-attack`, `:player-base-strength`, `:player-base-defense`, `:player-base-hitpoints`.
 - `:player-training-mode` (`:attack`, `:strength`, `:defense`, `:balanced`),
   `:stat-xp-per-level`, `:stat-max-level`, `:xp-per-damage`.
 - `:combat-hitpoints-xp-multiplier` to auto-train hitpoints on all combat XP awards.
+- `:click-marker-duration` and `:click-marker-size-scale` for target feedback markers.
 - `:inventory-size` to control player inventory slots.
 - `:zone-path` to load a zone file from `data/`.
 - `:zone-root` for editor zone file discovery and creation.

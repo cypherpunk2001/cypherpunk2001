@@ -134,6 +134,75 @@
       (t
        (values (assets-tileset assets) *tileset-columns*)))))
 
+(defun preview-zone-offset (zone tile-dest-size edge)
+  ;; Return the world offset to align ZONE along EDGE.
+  (let* ((span-x (* (zone-width zone) tile-dest-size))
+         (span-y (* (zone-height zone) tile-dest-size)))
+    (ecase edge
+      (:north (values 0.0 (- span-y)))
+      (:south (values 0.0 span-y))
+      (:east (values span-x 0.0))
+      (:west (values (- span-x) 0.0)))))
+
+(defun draw-zone-preview (zone render assets editor
+                          view-left view-right view-top view-bottom
+                          tile-dest-size tile-size-f
+                          offset-x offset-y)
+  ;; Draw ZONE layers offset into world space.
+  (let* ((zone-layers (zone-layers zone))
+         (chunk-size (zone-chunk-size zone))
+         (tile-source (render-tile-source render))
+         (tile-dest (render-tile-dest render))
+         (origin (render-origin render))
+         (preview-left (- view-left offset-x))
+         (preview-right (- view-right offset-x))
+         (preview-top (- view-top offset-y))
+         (preview-bottom (- view-bottom offset-y))
+         (max-col (max 0 (1- (zone-width zone))))
+         (max-row (max 0 (1- (zone-height zone))))
+         (start-col (max 0 (floor preview-left tile-dest-size)))
+         (end-col (min max-col (ceiling preview-right tile-dest-size)))
+         (start-row (max 0 (floor preview-top tile-dest-size)))
+         (end-row (min max-row (ceiling preview-bottom tile-dest-size))))
+    (when (and zone-layers (<= start-col end-col) (<= start-row end-row))
+      (labels ((draw-layer (layer)
+                 (multiple-value-bind (layer-tileset layer-columns)
+                     (layer-tileset-context layer editor assets)
+                   (when (and layer-tileset layer-columns)
+                     (loop :for row :from start-row :to end-row
+                           :for dest-y :from (+ offset-y (* start-row tile-dest-size))
+                             :by tile-dest-size
+                           :do (loop :for col :from start-col :to end-col
+                                     :for dest-x :from (+ offset-x (* start-col tile-dest-size))
+                                       :by tile-dest-size
+                                     :for layer-index = (zone-layer-tile-at layer
+                                                                            chunk-size
+                                                                            col row)
+                                     :do (set-rectangle tile-dest dest-x dest-y
+                                                        tile-dest-size tile-dest-size)
+                                         (when (not (zerop layer-index))
+                                           (set-tile-source-rect tile-source
+                                                                 layer-index
+                                                                 tile-size-f
+                                                                 layer-columns)
+                                           (raylib:draw-texture-pro layer-tileset
+                                                                    tile-source
+                                                                    tile-dest
+                                                                    origin
+                                                                    0.0
+                                                                    raylib:+white+)))))))
+               (draw-layers (predicate)
+                 (loop :for layer :across zone-layers
+                       :when (funcall predicate layer)
+                         :do (draw-layer layer))))
+        (draw-layers (lambda (layer)
+                       (and (not (zone-layer-collision-p layer))
+                            (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
+        (draw-layers #'zone-layer-collision-p)
+        (draw-layers (lambda (layer)
+                       (and (not (zone-layer-collision-p layer))
+                            (eql (zone-layer-id layer) *editor-object-layer-id*))))))))
+
 (defun draw-world (world render assets camera player npcs ui editor)
   ;; Render floor, map layers, and debug overlays.
   (let* ((tile-dest-size (world-tile-dest-size world))
@@ -164,6 +233,23 @@
          (end-col (ceiling view-right tile-dest-size))
          (start-row (floor view-top tile-dest-size))
          (end-row (ceiling view-bottom tile-dest-size)))
+    (labels ((draw-preview-for-edge (edge)
+               (let ((preview-zone (world-preview-zone-for-edge world edge)))
+                 (when preview-zone
+                   (multiple-value-bind (offset-x offset-y)
+                       (preview-zone-offset preview-zone tile-dest-size edge)
+                     (draw-zone-preview preview-zone render assets editor
+                                        view-left view-right view-top view-bottom
+                                        tile-dest-size tile-size-f
+                                        offset-x offset-y))))))
+      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :west)
+        (draw-preview-for-edge :west))
+      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :east)
+        (draw-preview-for-edge :east))
+      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :north)
+        (draw-preview-for-edge :north))
+      (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)
+        (draw-preview-for-edge :south)))
     (when (not (zerop floor-index))
       (loop :for row :from start-row :to end-row
             :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
@@ -274,7 +360,30 @@
                 (ih (round (* 2.0 ahh))))
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui))))
-    ))))
+    ))
+  (draw-click-marker player world)))
+
+(defun draw-click-marker (player world)
+  ;; Draw a fading click marker at the last target position.
+  (let* ((timer (player-click-marker-timer player))
+         (kind (player-click-marker-kind player)))
+    (when (and kind (> timer 0.0))
+      (let* ((duration (max 0.01 *click-marker-duration*))
+             (alpha (clamp (/ timer duration) 0.0 1.0))
+             (size (* (world-tile-dest-size world) *click-marker-size-scale*))
+             (half (round (/ size 2.0)))
+             (x (round (player-click-marker-x player)))
+             (y (round (player-click-marker-y player)))
+             (base-color (if (eq kind :attack)
+                             *click-marker-attack-color*
+                             *click-marker-walk-color*))
+             (color (raylib:fade base-color alpha)))
+        (raylib:draw-line (- x half) (- y half)
+                          (+ x half) (+ y half)
+                          color)
+        (raylib:draw-line (- x half) (+ y half)
+                          (+ x half) (- y half)
+                          color)))))
 (defun npc-textures-for (npc assets)
   ;; Select the NPC texture set based on archetype.
   (let* ((archetype (npc-archetype npc))
@@ -872,6 +981,39 @@
                       (ui-menu-button-text-size ui)
                       (ui-menu-text-color ui))))
 
+(defun draw-context-menu (ui)
+  ;; Render the right-click context menu.
+  (when (ui-context-open ui)
+    (let* ((x (ui-context-x ui))
+           (y (ui-context-y ui))
+           (width (ui-context-width ui))
+           (option-height (ui-context-option-height ui))
+           (padding (ui-context-padding ui))
+           (text-size (ui-context-text-size ui))
+           (count (context-menu-option-count ui))
+           (height (* count option-height))
+           (text-color (ui-menu-text-color ui))
+           (panel-color (ui-menu-panel-color ui)))
+      (raylib:draw-rectangle x y width height panel-color)
+      (raylib:draw-rectangle-lines x y width height text-color)
+      (raylib:draw-text (ui-context-walk-label ui)
+                        (+ x padding)
+                        (+ y padding)
+                        text-size
+                        text-color)
+      (when (ui-context-has-attack ui)
+        (raylib:draw-text (ui-context-attack-label ui)
+                          (+ x padding)
+                          (+ y padding option-height)
+                          text-size
+                          text-color))
+      (when (ui-context-has-follow ui)
+        (raylib:draw-text (ui-context-follow-label ui)
+                          (+ x padding)
+                          (+ y padding (* option-height 2))
+                          text-size
+                          text-color)))))
+
 (defun draw-game (game)
   ;; Render a full frame: world, entities, HUD, and menu.
   (let* ((player (game-player game))
@@ -899,6 +1041,7 @@
                   :do (draw-entity entity assets render))
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)
+      (draw-context-menu ui)
       (draw-minimap world player npcs ui)
       (draw-loading-overlay ui)
       (draw-editor-ui-overlay editor ui)

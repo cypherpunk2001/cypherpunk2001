@@ -242,6 +242,7 @@
                      (incf count))))
           (set-line (format nil "Train: ~a (1/2/3/Z)" (training-mode-label mode)))
           (when stats
+            (set-line (format nil "Combat Lvl: ~d" (combat-level stats)))
             (set-line (format-skill-hud-line "ATT" (stat-block-attack stats)))
             (set-line (format-skill-hud-line "STR" (stat-block-strength stats)))
             (set-line (format-skill-hud-line "DEF" (stat-block-defense stats)))

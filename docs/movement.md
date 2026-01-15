@@ -54,9 +54,10 @@ Design note
 - Zone transitions only happen on edges defined in `data/world-graph.lisp`.
 - Active click-to-move targets persist across zone transitions so long walks
   can continue without re-clicking.
-- Zone swaps refresh cached minimap spawn previews from adjacent zones, falling
-  back to the zone-centered default spawn grid (matching `make-npcs`) when a
-  zone has no explicit spawns. Previews are offset using world collision bounds
-  so they align with adjacent zone placement, and render when the player is
+- Zone swaps refresh cached minimap spawn previews from adjacent zones that
+  define explicit spawns. Previews are offset using world collision bounds so
+  they align with adjacent zone placement, and render when the player is
   pushing against a valid exit edge or within `*minimap-preview-edge-tiles*`
   tiles of one.
+- When the camera view reaches a zone edge, `ensure-preview-zones` loads the
+  adjacent zones into a preview cache for seamless cross-zone rendering.

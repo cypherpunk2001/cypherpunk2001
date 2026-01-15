@@ -26,6 +26,12 @@
 (defparameter *stat-max-level* 99) ;; Maximum attainable level per stat.
 (defparameter *xp-per-damage* 4) ;; XP awarded per point of damage dealt.
 (defparameter *combat-hitpoints-xp-multiplier* 0.33) ;; HP XP multiplier applied to focused combat XP.
+(defparameter *click-marker-duration* 0.6) ;; Seconds a click marker stays visible.
+(defparameter *click-marker-size-scale* 0.35) ;; Marker size as a fraction of a tile.
+(defparameter *click-marker-walk-color* (raylib:make-color :r 240 :g 210 :b 60 :a 240))
+;; Marker color for walk targets.
+(defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))
+;; Marker color for attack targets.
 (defparameter *inventory-size* 20) ;; Player inventory slots.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 (defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
@@ -97,11 +103,8 @@
 (defparameter *npc-home-radius-tiles* 2.0) ;; Roam radius around spawn in tiles.
 (defparameter *npc-wander-interval* 1.1) ;; Seconds between wander target changes.
 (defparameter *npc-wander-arrive-distance* 6.0) ;; Pixels to consider wander target reached.
-(defparameter *npc-count* 3) ;; Default number of NPCs spawned in the world.
-(defparameter *npc-spawn-columns* 3) ;; Column count when placing NPCs in a grid.
-(defparameter *npc-spawn-gap-tiles* 2.0) ;; Spacing between NPC spawns in tiles.
+(defparameter *npc-respawn-seconds* 5.0) ;; Default respawn cooldown in seconds.
 (defparameter *npc-default-archetype-id* :rat) ;; Default NPC archetype ID to spawn.
-(defparameter *npc-spawn-ids* nil) ;; Optional list of archetype IDs to cycle when spawning.
 (defparameter *npc-default-loot-table-id* nil) ;; Fallback loot table when NPC archetypes omit one.
 (defparameter *attack-hitbox-scale* 1.0) ;; Attack hitbox size relative to one tile.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
@@ -159,6 +162,8 @@
                       :reader npc-archetype-home-radius-tiles)
    (wander-interval :initarg :wander-interval :initform *npc-wander-interval*
                     :reader npc-archetype-wander-interval)
+   (respawn-seconds :initarg :respawn-seconds :initform *npc-respawn-seconds*
+                    :reader npc-archetype-respawn-seconds)
    (flee-speed-mult :initarg :flee-speed-mult :initform *npc-flee-speed-mult*
                     :reader npc-archetype-flee-speed-mult)
    (animation-set-id :initarg :animation-set-id :initform :npc

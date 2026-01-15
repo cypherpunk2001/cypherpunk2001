@@ -10,18 +10,18 @@ Why we do it this way
   without forcing an inheritance-heavy object model.
 
 Key structs
-- `player`, `npc`: runtime entities with an `id`, `intent`, stats, animation/combat state, and cached HUD stats lines.
+- `player`, `npc`: runtime entities with an `id`, `intent`, stats, animation/combat state, cached HUD stats lines, attack/follow targets, click markers, and NPC respawn timers.
 - `skill`, `stat-block`, `stat-modifiers`: reusable stat containers for combat progression.
 - `inventory`, `inventory-slot`: simple inventory storage for stackable items.
 - `id-source`: monotonic ID generator used for stable entity IDs.
-- `world`: zone metadata, world graph, per-zone NPC cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
-- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, minimap layout/colors, and a combat log ring buffer).
+- `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
+- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, minimap layout/colors, a combat log ring buffer, and a context menu).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
-- `make-npcs`: spawn a pool using zone spawns when present, else a grid anchored to the zone spawn center.
+- `make-npcs`: spawn a pool using explicit zone spawns (zones without spawns produce no NPCs).
 - `world-spawn-center`: returns a center point inside world collision bounds.
 - `make-entities`: pack NPCs + player into a stable array.
 

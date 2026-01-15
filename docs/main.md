@@ -8,8 +8,8 @@ Why we do it this way
   together and calls them in a consistent order.
 
 Update flow (high level)
-1) Input/UI -> intent
-2) Fixed-tick simulation -> movement/combat/AI state updates
+1) Input/UI -> intent, camera/UI updates, preview cache
+2) Fixed-tick simulation -> follow/attack sync, movement, combat, AI, respawns
 3) Zone transitions (edge exits) -> load new zone if needed
 4) Animation/effects -> visuals ready to render
 5) UI timers (loading overlay, menus) -> update per frame
@@ -30,7 +30,7 @@ Key functions
 Walkthrough: one frame
 1) Read input and UI; write intent for player and NPCs.
 2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
-3) Otherwise, run as many fixed-tick simulation steps as the accumulator allows.
+3) Otherwise, run as many fixed-tick simulation steps as the accumulator allows (including follow sync and NPC respawns).
 4) Advance animation/effect timers during simulation ticks.
 5) Update UI timers for loading overlays.
 6) Render the frame (world -> entities -> HUD/loading/menu/editor overlay).

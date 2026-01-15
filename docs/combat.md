@@ -15,11 +15,14 @@ What it does
 - Emits combat log lines (hit/miss, chance/roll, XP) to HUD + stdout when debug overlay is enabled.
 - Runs attack cooldowns and hit effect animations.
 - Emits NPC hit logs when `*debug-npc-logs*` is enabled.
+- Supports attack-target follow (auto-move + auto-attack while in range).
+- Starts NPC respawn cooldowns on death and restores NPCs when timers expire.
 
 Key functions
 - `attack-hitbox`, `start-player-attack`, `apply-melee-hit`.
 - `update-player-animation`, `update-npc-animation`.
 - `update-npc-attack` (consumes NPC intent).
+- `update-npc-respawns` (counts down and restores dead NPCs).
 
 Walkthrough: player melee hit
 1) Player input requests an attack intent.

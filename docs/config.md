@@ -13,6 +13,7 @@ What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Fixed simulation timing (tick length and max catch-up steps).
 - Player stat defaults, XP tuning (including hitpoints share), and inventory sizing.
+- Click marker sizing, duration, and base colors for left/right click feedback.
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Music volume steps and the default startup level.
 - Floor fill tile index for the base map; set to `0` to skip drawing a fill tile.
@@ -21,7 +22,7 @@ What lives here
 - Zone defaults and editor zone root for creating new zones.
 - Loading overlay duration for zone transitions.
 - Minimap sizing, placement, preview edge distance, and minimap color defaults.
-- Movement, combat, NPC behavior, and animation timings.
+- Movement, combat, NPC behavior, respawn, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
 
@@ -100,5 +101,6 @@ Example: adding a new archetype
    :attack-damage 1
    :home-radius-tiles 1.5
    :wander-interval 1.3
+   :respawn-seconds 5.0
    :animation-set-id :npc-slime)))
 ```

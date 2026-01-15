@@ -16,6 +16,8 @@ What it does
 - Updates training mode hotkeys for combat progression.
 - Flags the HUD stats cache to refresh when training mode changes.
 - Hitpoints auto-train from combat XP and are not a selectable hotkey.
+- Left click on NPCs attacks; left click on ground walks, both with click markers.
+- Right click opens a context menu with Walk here (always), Attack, and Follow (NPC only).
 - Updates camera zoom from the mouse wheel.
 
 Key functions

@@ -4,6 +4,8 @@
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
   id x y dx dy intent stats inventory
+  attack-target-id follow-target-id
+  click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
   facing-sign class hp
   frame-index frame-timer
@@ -23,7 +25,7 @@
   wander-x wander-y wander-timer
   attack-timer
   frame-index frame-timer
-  hits-left alive
+  hits-left alive respawn-timer
   hit-active hit-timer hit-frame hit-facing hit-facing-sign)
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
@@ -48,7 +50,7 @@
   ;; Inventory slots for a player.
   slots)
 
-(defparameter *player-hud-lines* 5) ;; Number of cached HUD lines for player stats.
+(defparameter *player-hud-lines* 6) ;; Number of cached HUD lines for player stats.
 
 (defstruct (id-source (:constructor make-id-source (&optional (next-id 1))))
   ;; Monotonic IDs for entities inside a simulation.
@@ -56,7 +58,8 @@
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
-  tile-size-f tile-dest-size floor-index zone zone-label world-graph zone-npc-cache
+  tile-size-f tile-dest-size floor-index zone zone-label world-graph
+  zone-npc-cache zone-preview-cache
   minimap-spawns minimap-collisions
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
@@ -87,6 +90,10 @@
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
+  context-open context-x context-y context-world-x context-world-y
+  context-target-id context-has-attack context-has-follow
+  context-width context-option-height context-padding context-text-size
+  context-walk-label context-attack-label context-follow-label
   minimap-x minimap-y minimap-width minimap-height minimap-point-size
   minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
   minimap-collision-color
@@ -215,6 +222,12 @@
                   :intent intent
                   :stats stats
                   :inventory (make-inventory)
+                  :attack-target-id 0
+                  :follow-target-id 0
+                  :click-marker-x 0.0
+                  :click-marker-y 0.0
+                  :click-marker-timer 0.0
+                  :click-marker-kind nil
                   :anim-state :idle
                   :facing :down
                   :facing-sign 1.0
@@ -269,14 +282,15 @@
                :frame-timer 0.0
                :hits-left max-hp
                :alive t
+               :respawn-timer 0.0
                :hit-active nil
                :hit-timer 0.0
                :hit-frame 0
                :hit-facing :down
                :hit-facing-sign 1.0))))
 
-(defun make-npcs (player world &key (count *npc-count*) id-source)
-  ;; Construct a fixed NPC pool placed in a simple grid near the zone center.
+(defun make-npcs (player world &key id-source)
+  ;; Construct NPCs from zone spawn data (or none if no spawns are defined).
   (let* ((zone (world-zone world))
          (spawns (and zone (zone-spawns zone))))
     (if (and spawns (not (null spawns)))
@@ -303,31 +317,7 @@
                                                         (allocate-entity-id id-source))))
                                   (incf index)))))
           npcs)
-        (let* ((npc-count (max 0 count))
-               (npcs (make-array npc-count))
-               (tile-size (world-tile-dest-size world))
-               (npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
-               (gap (max (* *npc-spawn-gap-tiles* tile-size)
-                         (+ (world-collision-half-width world) npc-half)))
-               (cols (max 1 *npc-spawn-columns*))
-               (spawn-ids *npc-spawn-ids*)
-               (spawn-count (if spawn-ids (length spawn-ids) 0)))
-          (multiple-value-bind (anchor-x anchor-y)
-              (world-spawn-center world)
-            (loop :for i :from 0 :below npc-count
-                  :for col = (mod i cols)
-                  :for row = (floor i cols)
-                  :for x = (+ anchor-x (* (1+ col) gap))
-                  :for y = (+ anchor-y (* row gap))
-                  :for archetype = (if (> spawn-count 0)
-                                       (find-npc-archetype (nth (mod i spawn-count) spawn-ids))
-                                       nil)
-                  :do (setf (aref npcs i)
-                            (make-npc x y
-                                      :archetype archetype
-                                      :id (when id-source
-                                            (allocate-entity-id id-source))))))
-          npcs))))
+        (make-array 0))))
 
 (defun make-entities (player npcs)
   ;; Build a stable entity array containing NPCs followed by the player.

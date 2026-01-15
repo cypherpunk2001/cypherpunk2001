@@ -20,10 +20,7 @@
  (:editor-object-layer-id :objects)
  (:player-animation-set-id :player-wizard)
  (:npc-default-archetype-id :rat)
- (:npc-spawn-ids (:rat :goblin :orc))
- (:npc-count 3)
- (:npc-spawn-columns 3)
- (:npc-spawn-gap-tiles 2.0)
+ (:npc-respawn-seconds 5.0)
  (:player-speed 222.0)
  (:player-collision-scale 0.85)
  (:npc-collision-scale 0.95)
@@ -39,6 +36,8 @@
  (:stat-max-level 99)
  (:xp-per-damage 4)
  (:combat-hitpoints-xp-multiplier 0.33)
+ (:click-marker-duration 0.6)
+ (:click-marker-size-scale 0.35)
  (:inventory-size 20)
  (:idle-frame-count 4)
  (:walk-frame-count 6)
@@ -168,6 +167,7 @@
    :attack-damage 1
    :home-radius-tiles 2.0
    :wander-interval 1.1
+   :respawn-seconds 5.0
    :flee-speed-mult 1.4
    :aggro-mode :provoked
    :retaliate t
@@ -189,6 +189,7 @@
    :attack-damage 1
    :home-radius-tiles 3.0
    :wander-interval 1.0
+   :respawn-seconds 5.0
    :flee-speed-mult 1.2
    :aggro-mode :always
    :retaliate t
@@ -210,6 +211,7 @@
    :attack-damage 2
    :home-radius-tiles 3.0
    :wander-interval 1.3
+   :respawn-seconds 5.0
    :flee-speed-mult 1.0
    :aggro-mode :always
    :retaliate t
@@ -231,6 +233,7 @@
    :attack-damage 1
    :home-radius-tiles 3.5
    :wander-interval 1.4
+   :respawn-seconds 5.0
    :flee-speed-mult 1.3
    :aggro-mode :provoked
    :retaliate t

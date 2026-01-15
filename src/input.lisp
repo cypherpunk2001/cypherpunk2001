@@ -37,6 +37,100 @@
         (player-auto-down player) nil
         (player-auto-up player) nil))
 
+(defun clear-player-attack-target (player)
+  ;; Clear any active attack target.
+  (setf (player-attack-target-id player) 0))
+
+(defun clear-player-follow-target (player)
+  ;; Clear any active follow target.
+  (setf (player-follow-target-id player) 0))
+
+(defun trigger-click-marker (player world-x world-y kind)
+  ;; Set a fading click marker at the given world position.
+  (setf (player-click-marker-x player) world-x
+        (player-click-marker-y player) world-y
+        (player-click-marker-kind player) kind
+        (player-click-marker-timer player) *click-marker-duration*))
+
+(defun update-click-marker (player dt)
+  ;; Tick the click marker timer down.
+  (let ((timer (player-click-marker-timer player)))
+    (when (> timer 0.0)
+      (setf timer (max 0.0 (- timer dt)))
+      (setf (player-click-marker-timer player) timer)
+      (when (<= timer 0.0)
+        (setf (player-click-marker-kind player) nil)))))
+
+(defun set-player-walk-target (player intent world-x world-y &optional (mark-p t))
+  ;; Set a walk target and clear any attack target.
+  (clear-player-auto-walk player)
+  (clear-player-attack-target player)
+  (clear-player-follow-target player)
+  (set-intent-target intent world-x world-y)
+  (when mark-p
+    (trigger-click-marker player world-x world-y :walk)))
+
+(defun set-player-attack-target (player intent npc &optional (mark-p t))
+  ;; Set an NPC attack target and optional marker.
+  (when npc
+    (clear-player-auto-walk player)
+    (clear-player-follow-target player)
+    (setf (player-attack-target-id player) (npc-id npc))
+    (set-intent-target intent (npc-x npc) (npc-y npc))
+    (when mark-p
+      (trigger-click-marker player (npc-x npc) (npc-y npc) :attack))))
+
+(defun set-player-follow-target (player intent npc &optional (mark-p t))
+  ;; Set an NPC follow target without attacking.
+  (when npc
+    (clear-player-auto-walk player)
+    (clear-player-attack-target player)
+    (setf (player-follow-target-id player) (npc-id npc))
+    (set-intent-target intent (npc-x npc) (npc-y npc))
+    (when mark-p
+      (trigger-click-marker player (npc-x npc) (npc-y npc) :walk))))
+
+(defun npc-hit-test-p (npc world world-x world-y)
+  ;; Return true when WORLD-X/WORLD-Y overlap the NPC collider.
+  (multiple-value-bind (half-w half-h)
+      (combatant-collision-half npc world)
+    (and (<= (abs (- world-x (npc-x npc))) half-w)
+         (<= (abs (- world-y (npc-y npc))) half-h))))
+
+(defun find-npc-at-world (npcs world world-x world-y)
+  ;; Return the closest NPC under the world coordinates, if any.
+  (let ((best nil)
+        (best-dist nil))
+    (loop :for npc :across npcs
+          :when (and (combatant-alive-p npc)
+                     (npc-hit-test-p npc world world-x world-y))
+            :do (let* ((dx (- world-x (npc-x npc)))
+                       (dy (- world-y (npc-y npc)))
+                       (dist (+ (* dx dx) (* dy dy))))
+                  (when (or (null best-dist) (< dist best-dist))
+                    (setf best npc
+                          best-dist dist))))
+    best))
+
+(defun find-npc-by-id (npcs id)
+  ;; Return the NPC with ID, if present.
+  (when (> id 0)
+    (loop :for npc :across npcs
+          :when (= (npc-id npc) id)
+            :do (return npc))))
+
+(defun find-npc-at-screen (npcs world player camera screen-x screen-y)
+  ;; Return NPC under the cursor and the world coordinates.
+  (multiple-value-bind (world-x world-y)
+      (screen-to-world screen-x screen-y
+                       (player-x player)
+                       (player-y player)
+                       (camera-offset camera)
+                       (camera-zoom camera))
+    (values (find-npc-at-world npcs world world-x world-y)
+            world-x
+            world-y)))
+
 (defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
   (when mouse-clicked
@@ -48,7 +142,7 @@
                          (player-y player)
                          (camera-offset camera)
                          (camera-zoom camera))
-      (set-intent-target intent target-x target-y)
+      (set-player-walk-target player intent target-x target-y t)
       (setf (player-mouse-hold-timer player) 0.0)))
   (when (and mouse-down (not mouse-clicked))
     (incf (player-mouse-hold-timer player) dt)
@@ -62,7 +156,7 @@
                            (player-y player)
                            (camera-offset camera)
                            (camera-zoom camera))
-        (set-intent-target intent target-x target-y))))
+        (set-player-walk-target player intent target-x target-y nil))))
   (unless mouse-down
     (setf (player-mouse-hold-timer player) 0.0)))
 
@@ -96,7 +190,7 @@
       (clear-player-auto-walk player)
       (multiple-value-bind (target-x target-y)
           (minimap-screen-to-world ui world player mouse-x mouse-y)
-        (set-intent-target intent target-x target-y)
+        (set-player-walk-target player intent target-x target-y t)
         (setf (player-mouse-hold-timer player) 0.0))
       t)
     (when (and inside mouse-down (not mouse-clicked))
@@ -106,7 +200,7 @@
         (clear-player-auto-walk player)
         (multiple-value-bind (target-x target-y)
             (minimap-screen-to-world ui world player mouse-x mouse-y)
-          (set-intent-target intent target-x target-y)))
+          (set-player-walk-target player intent target-x target-y nil)))
       t)
     (unless mouse-down
       (setf (player-mouse-hold-timer player) 0.0))
@@ -166,6 +260,9 @@
             (multiple-value-setq (input-dx input-dy)
               (read-input-direction)))))
     (set-intent-move intent input-dx input-dy)
+    (when (or (not (zerop input-dx)) (not (zerop input-dy)))
+      (clear-player-attack-target player)
+      (clear-player-follow-target player))
     (values input-dx input-dy)))
 
 (defun update-input-actions (intent allow-run-toggle)

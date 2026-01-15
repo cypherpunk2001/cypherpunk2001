@@ -59,27 +59,74 @@
   ;; Read raylib input and update UI/audio state; writes player intent.
   (let* ((player (game-player game))
          (world (game-world game))
+         (npcs (game-npcs game))
          (audio (game-audio game))
          (ui (game-ui game))
          (camera (game-camera game))
          (editor (game-editor game))
          (player-intent (player-intent player))
          (mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
-         (mouse-down (raylib:is-mouse-button-down +mouse-left+)))
+         (mouse-down (raylib:is-mouse-button-down +mouse-left+))
+         (mouse-right-clicked (raylib:is-mouse-button-pressed +mouse-right+))
+         (mouse-x (raylib:get-mouse-x))
+         (mouse-y (raylib:get-mouse-y)))
     (update-audio audio)
     (update-camera-zoom camera)
     (update-ui-loading ui dt)
+    (update-click-marker player dt)
+    (ensure-preview-zones world player camera editor)
     (let ((menu-action (update-ui-input ui audio mouse-clicked)))
       (when (eq menu-action :toggle-editor)
         (toggle-editor-mode editor player)
         (setf (ui-menu-open ui) nil)))
+    (when (or (ui-menu-open ui)
+              (editor-active editor))
+      (close-context-menu ui))
     (reset-frame-intent player-intent)
-    (unless (or (ui-menu-open ui)
-                (editor-active editor))
-      (let ((minimap-handled (update-target-from-minimap player player-intent ui world
-                                                         dt mouse-clicked mouse-down)))
-        (unless minimap-handled
-          (update-target-from-mouse player player-intent camera dt mouse-clicked mouse-down))))
+    (let ((click-consumed nil))
+      (when (and (ui-context-open ui) mouse-clicked)
+        (let ((action (handle-context-menu-click ui mouse-x mouse-y)))
+          (when action
+            (setf click-consumed t)
+            (close-context-menu ui)
+            (cond
+              ((eq action :walk)
+               (set-player-walk-target player player-intent
+                                       (ui-context-world-x ui)
+                                       (ui-context-world-y ui)
+                                       t))
+              ((eq action :attack)
+               (let ((npc (find-npc-by-id npcs (ui-context-target-id ui))))
+                 (when npc
+                   (set-player-attack-target player player-intent npc t))))
+              ((eq action :follow)
+               (let ((npc (find-npc-by-id npcs (ui-context-target-id ui))))
+                 (when npc
+                   (set-player-follow-target player player-intent npc t))))))))
+      (when (and (not click-consumed)
+                 (not (ui-menu-open ui))
+                 (not (editor-active editor))
+                 mouse-right-clicked)
+        (multiple-value-bind (npc world-x world-y)
+            (find-npc-at-screen npcs world player camera mouse-x mouse-y)
+          (open-context-menu ui mouse-x mouse-y world-x world-y
+                             :target-id (and npc (npc-id npc))))
+        (setf click-consumed t))
+      (unless (or (ui-menu-open ui)
+                  (editor-active editor))
+        (let ((minimap-handled (and (not click-consumed)
+                                    (update-target-from-minimap player player-intent ui world
+                                                                dt mouse-clicked mouse-down))))
+          (unless (or click-consumed minimap-handled)
+            (when mouse-clicked
+              (multiple-value-bind (npc world-x world-y)
+                  (find-npc-at-screen npcs world player camera mouse-x mouse-y)
+                (if npc
+                    (set-player-attack-target player player-intent npc t)
+                    (set-player-walk-target player player-intent world-x world-y t))))
+            (unless mouse-clicked
+              (update-target-from-mouse player player-intent camera dt
+                                        mouse-clicked mouse-down))))))
     (unless (editor-active editor)
       (update-input-direction player player-intent mouse-clicked))
     (unless (or (ui-menu-open ui)
@@ -110,6 +157,8 @@
          (player-intent (player-intent player)))
     (reset-npc-frame-intents npcs)
     (when allow-player-control
+      (sync-player-follow-target player player-intent npcs)
+      (sync-player-attack-target player player-intent npcs)
       (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
                          (not (zerop (intent-move-dy player-intent)))
                          (intent-target-active player-intent)))
@@ -121,7 +170,12 @@
       (when transitioned
         (setf npcs (game-npcs game)
               entities (game-entities game))
+        (setf (player-attack-target-id player) 0
+              (player-follow-target-id player) 0)
         (reset-npc-frame-intents npcs))
+      (update-npc-respawns npcs dt)
+      (when allow-player-control
+        (update-player-attack-intent player npcs world))
       (when (and allow-player-control
                  (intent-attack player-intent))
         (start-player-attack player player-intent))

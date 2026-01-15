@@ -13,13 +13,14 @@ Pipeline overview
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label + stats), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, and menu overlays.
+5) Draw HUD (stamina + zone label + stats), click markers, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
 - `draw-world`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
-- `draw-hud`, `draw-combat-log`, `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
+- `draw-hud`, `draw-combat-log`, `draw-click-marker`, `draw-context-menu`,
+  `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
 - `draw-loading-overlay` for zone swap feedback.
 
 Walkthrough: world rendering
@@ -47,11 +48,12 @@ Design note
 - The HUD reads the world zone label so you always know which zone is active.
 - The minimap recenters on the player, so you can always click ahead to set a target.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
-  see potential enemies before crossing; zones without explicit spawns show the
-  zone-centered default grid (matching `make-npcs`) instead. Previews render while
-  you are pushing against a connected edge or standing within
-  `*minimap-preview-edge-tiles*` tiles of one to avoid confusing them with
-  in-zone NPCs.
+  see potential enemies before crossing. Previews render while you are pushing
+  against a connected edge or standing within `*minimap-preview-edge-tiles*` tiles
+  of one to avoid confusing them with in-zone NPCs.
+- When a preview zone is cached, `draw-world` renders its layers offset beyond any
+  edges that the camera view extends past, so approaching a boundary feels continuous
+  instead of a hard cutoff.
 - Collision tiles render as faint minimap markers so navigational blockers are visible,
   including zone boundary tiles to show world edges (internal edges with world-graph
   exits are suppressed).

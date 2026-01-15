@@ -98,22 +98,6 @@
                         collision-half-height)))
     (values wall-min-x wall-max-x wall-min-y wall-max-y)))
 
-(defun default-npc-spawn-positions (center-x center-y tile-size player-half-width)
-  ;; Build default NPC spawn positions around CENTER-X/CENTER-Y.
-  (let* ((npc-half (* (/ tile-size 2.0) *npc-collision-scale*))
-         (gap (max (* *npc-spawn-gap-tiles* tile-size)
-                   (+ player-half-width npc-half)))
-         (cols (max 1 *npc-spawn-columns*))
-         (count (max 0 *npc-count*))
-         (positions nil))
-    (loop :for i :from 0 :below count
-          :for col = (mod i cols)
-          :for row = (floor i cols)
-          :for x = (+ center-x (* (1+ col) gap))
-          :for y = (+ center-y (* row gap))
-          :do (push (cons x y) positions))
-    (nreverse positions)))
-
 (defun build-adjacent-minimap-spawns (world &optional player)
   ;; Build cached spawn positions for adjacent zones on the minimap.
   (let* ((graph (world-world-graph world))
@@ -138,43 +122,20 @@
                 (edge-zone-offset edge span-x span-y)
               (let* ((data (read-zone-data target-path))
                      (plist (zone-data-plist data))
-                     (zone-spawns (getf plist :spawns nil))
-                     (width (getf plist :width))
-                     (height (getf plist :height))
-                     (target-width (if (and (numberp width) (> width 0))
-                                       width
-                                       (world-wall-map-width world)))
-                     (target-height (if (and (numberp height) (> height 0))
-                                        height
-                                        (world-wall-map-height world))))
-                (if (and zone-spawns (not (null zone-spawns)))
-                    (dolist (spawn zone-spawns)
-                      (let* ((tx (getf spawn :x))
-                             (ty (getf spawn :y))
-                             (count (max 1 (getf spawn :count 1))))
-                        (when (and (numberp tx) (numberp ty))
-                          (multiple-value-bind (cx cy)
-                              (tile-center-position tile-size tx ty)
-                            (loop :repeat count
-                                  :do (push (list edge
-                                                  (+ cx offset-x)
-                                                  (+ cy offset-y))
-                                            spawns))))))
-                    (multiple-value-bind (target-min-x target-max-x target-min-y target-max-y)
-                        (zone-bounds-from-dimensions tile-size
-                                                     target-width
-                                                     target-height
-                                                     (world-collision-half-width world)
-                                                     (world-collision-half-height world))
-                      (let ((center-x (/ (+ target-min-x target-max-x) 2.0))
-                            (center-y (/ (+ target-min-y target-max-y) 2.0)))
-                        (dolist (pos (default-npc-spawn-positions center-x center-y
-                                                                 tile-size
-                                                                 (world-collision-half-width world)))
-                          (push (list edge
-                                      (+ (car pos) offset-x)
-                                      (+ (cdr pos) offset-y))
-                                spawns)))))))))))
+                     (zone-spawns (getf plist :spawns nil)))
+                (when (and zone-spawns (not (null zone-spawns)))
+                  (dolist (spawn zone-spawns)
+                    (let* ((tx (getf spawn :x))
+                           (ty (getf spawn :y))
+                           (count (max 1 (getf spawn :count 1))))
+                      (when (and (numberp tx) (numberp ty))
+                        (multiple-value-bind (cx cy)
+                            (tile-center-position tile-size tx ty)
+                          (loop :repeat count
+                                :do (push (list edge
+                                                (+ cx offset-x)
+                                                (+ cy offset-y))
+                                          spawns)))))))))))))
     (nreverse spawns)))
 
 (defun build-minimap-collisions (world)
@@ -569,6 +530,63 @@
                             best-edge edge)))))
               best-edge))))))
 
+(defun camera-view-center (player editor)
+  ;; Return the current camera focus point.
+  (if (and editor (editor-active editor))
+      (values (editor-camera-x editor) (editor-camera-y editor))
+      (values (player-x player) (player-y player))))
+
+(defun camera-view-bounds (camera player editor)
+  ;; Return view bounds in world coordinates for the current camera focus.
+  (let* ((zoom (camera-zoom camera))
+         (half-view-width (/ *window-width* (* 2.0 zoom)))
+         (half-view-height (/ *window-height* (* 2.0 zoom))))
+    (multiple-value-bind (x y) (camera-view-center player editor)
+      (values (- x half-view-width) (+ x half-view-width)
+              (- y half-view-height) (+ y half-view-height)))))
+
+(defun view-exceeds-edge-p (world view-left view-right view-top view-bottom edge)
+  ;; Return true when the camera view extends beyond EDGE.
+  (case edge
+    (:west (< view-left (world-wall-min-x world)))
+    (:east (> view-right (world-wall-max-x world)))
+    (:north (< view-top (world-wall-min-y world)))
+    (:south (> view-bottom (world-wall-max-y world)))
+    (t nil)))
+
+(defun world-preview-zone-for-edge (world edge)
+  ;; Return cached preview zone data for EDGE if available.
+  (let* ((cache (world-zone-preview-cache world))
+         (exit (and cache (world-edge-exit world edge)))
+         (target-id (and exit (getf exit :to))))
+    (and target-id (gethash target-id cache))))
+
+(defun ensure-preview-zone-for-edge (world edge)
+  ;; Load adjacent zone data for preview rendering on EDGE.
+  (let* ((graph (world-world-graph world))
+         (cache (world-zone-preview-cache world))
+         (exit (and graph cache (world-edge-exit world edge)))
+         (target-id (and exit (getf exit :to))))
+    (when (and graph cache target-id (not (gethash target-id cache)))
+      (let ((path (world-graph-zone-path graph target-id)))
+        (when (and path (probe-file path))
+          (let ((zone (load-zone path)))
+            (when zone
+              (setf (gethash target-id cache) zone))))))))
+
+(defun ensure-preview-zones (world player camera editor)
+  ;; Load adjacent zone data when the camera view reaches a world edge.
+  (multiple-value-bind (view-left view-right view-top view-bottom)
+      (camera-view-bounds camera player editor)
+    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :west)
+      (ensure-preview-zone-for-edge world :west))
+    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :east)
+      (ensure-preview-zone-for-edge world :east))
+    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :north)
+      (ensure-preview-zone-for-edge world :north))
+    (when (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)
+      (ensure-preview-zone-for-edge world :south))))
+
 (defun world-edge-exit (world edge)
   ;; Return the exit spec for EDGE in the current zone.
   (let* ((zone (world-zone world))
@@ -833,6 +851,7 @@
                               :zone-label (zone-label zone)
                               :world-graph graph
                               :zone-npc-cache (make-hash-table :test 'eq)
+                              :zone-preview-cache (make-hash-table :test 'eq)
                               :minimap-spawns nil
                               :minimap-collisions nil
                               :wall-map wall-map
@@ -879,6 +898,8 @@
           (world-wall-max-x world) wall-max-x
           (world-wall-min-y world) wall-min-y
           (world-wall-max-y world) wall-max-y)
+    (unless (world-zone-preview-cache world)
+      (setf (world-zone-preview-cache world) (make-hash-table :test 'eq)))
     (let ((graph (world-world-graph world)))
       (when graph
         (setf (world-graph-zone-paths graph)

@@ -78,6 +78,21 @@
          (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
          (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
          (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
+         (context-open nil)
+         (context-x 0)
+         (context-y 0)
+         (context-world-x 0.0)
+         (context-world-y 0.0)
+         (context-target-id 0)
+         (context-has-attack nil)
+         (context-has-follow nil)
+         (context-width 160)
+         (context-option-height 28)
+         (context-padding 6)
+         (context-text-size 18)
+         (context-walk-label "Walk here")
+         (context-attack-label "Attack")
+         (context-follow-label "Follow")
          (minimap-width *minimap-width*)
          (minimap-height *minimap-height*)
          (minimap-point-size *minimap-point-size*)
@@ -163,6 +178,21 @@
               :menu-text-color menu-text-color
               :menu-button-color menu-button-color
               :menu-button-hover-color menu-button-hover-color
+              :context-open context-open
+              :context-x context-x
+              :context-y context-y
+              :context-world-x context-world-x
+              :context-world-y context-world-y
+              :context-target-id context-target-id
+              :context-has-attack context-has-attack
+              :context-has-follow context-has-follow
+              :context-width context-width
+              :context-option-height context-option-height
+              :context-padding context-padding
+              :context-text-size context-text-size
+              :context-walk-label context-walk-label
+              :context-attack-label context-attack-label
+              :context-follow-label context-follow-label
               :minimap-x minimap-x
               :minimap-y minimap-y
               :minimap-width minimap-width
@@ -253,7 +283,52 @@
     (setf action (handle-menu-click ui audio
                                     (raylib:get-mouse-x)
                                     (raylib:get-mouse-y))))
-  action))
+    action))
+
+(defun open-context-menu (ui screen-x screen-y world-x world-y &key target-id)
+  ;; Open a context menu anchored at the screen coordinates.
+  (let ((id (or target-id 0)))
+    (setf (ui-context-open ui) t
+          (ui-context-x ui) (truncate screen-x)
+          (ui-context-y ui) (truncate screen-y)
+          (ui-context-world-x ui) world-x
+          (ui-context-world-y ui) world-y
+          (ui-context-target-id ui) id
+          (ui-context-has-attack ui) (> id 0)
+          (ui-context-has-follow ui) (> id 0)))
+  ui)
+
+(defun close-context-menu (ui)
+  ;; Close any open context menu.
+  (setf (ui-context-open ui) nil
+        (ui-context-target-id ui) 0
+        (ui-context-has-attack ui) nil
+        (ui-context-has-follow ui) nil)
+  ui)
+
+(defun context-menu-option-count (ui)
+  ;; Return the number of context menu options.
+  (+ 1
+     (if (ui-context-has-attack ui) 1 0)
+     (if (ui-context-has-follow ui) 1 0)))
+
+(defun handle-context-menu-click (ui mouse-x mouse-y)
+  ;; Handle a click against the context menu; returns :walk, :attack, :close, or nil.
+  (when (ui-context-open ui)
+    (let* ((x (ui-context-x ui))
+           (y (ui-context-y ui))
+           (width (ui-context-width ui))
+           (option-height (ui-context-option-height ui))
+           (count (context-menu-option-count ui))
+           (height (* count option-height)))
+      (if (point-in-rect-p mouse-x mouse-y x y width height)
+          (let* ((index (floor (/ (- mouse-y y) option-height))))
+            (cond
+              ((= index 0) :walk)
+              ((and (= index 1) (ui-context-has-attack ui)) :attack)
+              ((and (= index 2) (ui-context-has-follow ui)) :follow)
+              (t nil)))
+          :close))))
 
 (defun ui-trigger-loading (ui &optional (seconds *zone-loading-seconds*))
   ;; Ensure the loading overlay stays visible for at least SECONDS.
