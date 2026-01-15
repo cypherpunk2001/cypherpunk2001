@@ -97,7 +97,7 @@
          (hud-stats-line-gap 4)
          (combat-log-text-size 14)
          (combat-log-line-gap 2)
-         (combat-log-lines 6)
+         (combat-log-lines 10)
          (combat-log-buffer (make-array (max 1 combat-log-lines)
                                          :initial-element ""))
          (combat-log-index 0)

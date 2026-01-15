@@ -188,8 +188,6 @@
          (set-training-mode stats :strength))
         ((raylib:is-key-pressed +key-three+)
          (set-training-mode stats :defense))
-        ((raylib:is-key-pressed +key-four+)
-         (set-training-mode stats :hitpoints))
         ((raylib:is-key-pressed +key-z+)
          (set-training-mode stats :balanced))))
     (when (and stats (not (eq before (stat-block-training-mode stats))))

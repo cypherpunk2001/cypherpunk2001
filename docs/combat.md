@@ -12,7 +12,7 @@ What it does
 - Creates a directional attack hitbox for the player.
 - Applies hits once per attack window.
 - Rolls hit/miss and damage based on attack/strength/defense stats.
-- Emits combat log lines (hit/miss + chance) when debug overlay is enabled.
+- Emits combat log lines (hit/miss, chance/roll, XP) when debug overlay is enabled.
 - Runs attack cooldowns and hit effect animations.
 - Emits NPC hit logs when `*debug-npc-logs*` is enabled.
 

@@ -48,7 +48,7 @@
   ;; Inventory slots for a player.
   slots)
 
-(defparameter *player-hud-lines* 6) ;; Number of cached HUD lines for player stats.
+(defparameter *player-hud-lines* 5) ;; Number of cached HUD lines for player stats.
 
 (defstruct (id-source (:constructor make-id-source (&optional (next-id 1))))
   ;; Monotonic IDs for entities inside a simulation.

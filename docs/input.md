@@ -15,6 +15,7 @@ What it does
 - Emits action intents for running and attacking.
 - Updates training mode hotkeys for combat progression.
 - Flags the HUD stats cache to refresh when training mode changes.
+- Hitpoints auto-train from combat XP and are not a selectable hotkey.
 - Updates camera zoom from the mouse wheel.
 
 Key functions
@@ -32,7 +33,7 @@ Walkthrough: minimap click to target
 3) Write `intent-target-x/y` and mark the target active.
 
 Training hotkeys (default)
-- `1` attack, `2` strength, `3` defense, `4` hitpoints, `Z` balanced.
+- `1` attack, `2` strength, `3` defense, `Z` balanced.
 
 Example flow
 ```lisp

@@ -2,21 +2,26 @@
 (in-package #:mmorpg)
 
 (defparameter *training-modes*
-  #(:attack :strength :defense :hitpoints :balanced))
+  #(:attack :strength :defense :balanced))
 
 (defun valid-training-mode-p (mode)
   ;; Return true when MODE is a supported training option.
   (and mode (find mode *training-modes*)))
 
+(defun normalize-training-mode (mode)
+  ;; Normalize MODE to a supported training mode.
+  (if (valid-training-mode-p mode)
+      mode
+      :balanced))
+
 (defun training-mode-label (mode)
   ;; Return a short label for MODE.
-  (case mode
+  (case (normalize-training-mode mode)
     (:attack "ATT")
     (:strength "STR")
     (:defense "DEF")
-    (:hitpoints "HP")
     (:balanced "BAL")
-    (t "NONE")))
+    (t "BAL")))
 
 (defun set-training-mode (stats mode)
   ;; Update training mode when MODE is valid.
@@ -137,10 +142,30 @@
         (values old new)))))
 
 (defun combat-hitpoints-xp (amount)
-  ;; Return hitpoints XP for focused combat XP.
+  ;; Return hitpoints XP for combat XP awards.
   (let* ((xp (max 0 (truncate amount)))
          (ratio (max 0.0 *combat-hitpoints-xp-multiplier*)))
     (truncate (* xp ratio))))
+
+(defun split-combat-xp (player amount)
+  ;; Split AMOUNT into (attack strength defense hitpoints) XP awards.
+  (let* ((stats (player-stats player))
+         (mode (normalize-training-mode (and stats (stat-block-training-mode stats))))
+         (xp (max 0 (truncate amount)))
+         (hp-xp (min xp (combat-hitpoints-xp xp)))
+         (remaining (max 0 (- xp hp-xp))))
+    (case mode
+      (:attack (values remaining 0 0 hp-xp))
+      (:strength (values 0 remaining 0 hp-xp))
+      (:defense (values 0 0 remaining hp-xp))
+      (:balanced
+       (multiple-value-bind (base remainder)
+           (split-xp remaining 3)
+         (values (+ base (if (> remainder 0) 1 0))
+                 (+ base (if (> remainder 1) 1 0))
+                 (+ base (if (> remainder 2) 1 0))
+                 hp-xp)))
+      (t (values 0 0 0 hp-xp)))))
 
 (defun split-xp (amount parts)
   ;; Split AMOUNT into PARTS, returning base and remainder.
@@ -152,38 +177,43 @@
 (defun award-combat-xp (player amount)
   ;; Award XP based on the player's current training mode.
   (let* ((stats (player-stats player))
-         (mode (and stats (stat-block-training-mode stats)))
-         (xp (max 0 (truncate amount))))
+         (xp (max 0 (truncate amount)))
+         (attack-xp 0)
+         (strength-xp 0)
+         (defense-xp 0)
+         (hitpoints-xp 0))
     (when (and stats (> xp 0))
-      (let ((hp-xp (combat-hitpoints-xp xp)))
-        (case mode
-          (:attack
-           (award-skill-xp (stat-block-attack stats) xp)
-           (when (> hp-xp 0)
-             (award-hitpoints-xp player hp-xp)))
-          (:strength
-           (award-skill-xp (stat-block-strength stats) xp)
-           (when (> hp-xp 0)
-             (award-hitpoints-xp player hp-xp)))
-          (:defense
-           (award-skill-xp (stat-block-defense stats) xp)
-           (when (> hp-xp 0)
-             (award-hitpoints-xp player hp-xp)))
-          (:hitpoints (award-hitpoints-xp player xp))
-          (:balanced
-           (multiple-value-bind (base remainder)
-               (split-xp xp 4)
-             (award-skill-xp (stat-block-attack stats) (+ base (if (> remainder 0) 1 0)))
-             (award-skill-xp (stat-block-strength stats) (+ base (if (> remainder 1) 1 0)))
-             (award-skill-xp (stat-block-defense stats) (+ base (if (> remainder 2) 1 0)))
-             (award-hitpoints-xp player base)))
-          (t nil)))
-      (mark-player-hud-stats-dirty player))))
+      (multiple-value-setq (attack-xp strength-xp defense-xp hitpoints-xp)
+        (split-combat-xp player xp))
+      (when (> attack-xp 0)
+        (award-skill-xp (stat-block-attack stats) attack-xp))
+      (when (> strength-xp 0)
+        (award-skill-xp (stat-block-strength stats) strength-xp))
+      (when (> defense-xp 0)
+        (award-skill-xp (stat-block-defense stats) defense-xp))
+      (when (> hitpoints-xp 0)
+        (award-hitpoints-xp player hitpoints-xp))
+      (mark-player-hud-stats-dirty player))
+    (values attack-xp strength-xp defense-xp hitpoints-xp)))
 
 (defun mark-player-hud-stats-dirty (player)
   ;; Flag the player's HUD stats cache for refresh.
   (when player
     (setf (player-hud-stats-dirty player) t)))
+
+(defun format-xp-awards (attack-xp strength-xp defense-xp hitpoints-xp)
+  ;; Format XP awards for combat logging.
+  (let ((parts nil))
+    (when (> attack-xp 0)
+      (push (format nil "A+~d" attack-xp) parts))
+    (when (> strength-xp 0)
+      (push (format nil "S+~d" strength-xp) parts))
+    (when (> defense-xp 0)
+      (push (format nil "D+~d" defense-xp) parts))
+    (when (> hitpoints-xp 0)
+      (push (format nil "HP+~d" hitpoints-xp) parts))
+    (when parts
+      (format nil "XP ~{~a~^ ~}" (nreverse parts)))))
 
 (defun format-skill-hud-line (label skill)
   ;; Build a HUD line for LABEL + SKILL.
@@ -193,9 +223,10 @@
              (xp (skill-xp skill)))
         (if (>= level *stat-max-level*)
             (format nil "~a ~d MAX" label level)
-            (let ((next (level->xp (1+ level))))
-              (format nil "~a ~d XP ~d/~d need ~d"
-                      label level xp next (- next xp)))))))
+            (let* ((next (level->xp (1+ level)))
+                   (need (- next xp)))
+              (format nil "~a ~d ~d/~d (~d)"
+                      label level xp next need))))))
 
 (defun refresh-player-hud-stats (player)
   ;; Refresh cached HUD stats lines for the player.
@@ -204,14 +235,12 @@
     (when lines
       (let* ((cap (length lines))
              (count 0)
-             (mode (and stats (stat-block-training-mode stats)))
-             (combat (if stats (combat-level stats) 1)))
+             (mode (and stats (stat-block-training-mode stats))))
         (labels ((set-line (text)
                    (when (< count cap)
                      (setf (aref lines count) text)
                      (incf count))))
-          (set-line (format nil "Train: ~a (1/2/3/4/Z)" (training-mode-label mode)))
-          (set-line (format nil "Combat Lvl: ~d" combat))
+          (set-line (format nil "Train: ~a (1/2/3/Z)" (training-mode-label mode)))
           (when stats
             (set-line (format-skill-hud-line "ATT" (stat-block-attack stats)))
             (set-line (format-skill-hud-line "STR" (stat-block-strength stats)))

@@ -117,23 +117,31 @@
                "NPC")))
     (t "Entity")))
 
-(defun format-combat-log (attacker defender hit chance &key damage killed)
+(defun format-combat-log (attacker defender hit chance roll attack-level defense-level
+                          &key damage xp-text killed)
   ;; Build a combat log line for a hit or miss.
-  (let ((pct (round (* chance 100.0))))
+  (let ((chance-pct (round (* chance 100.0)))
+        (roll-pct (round (* roll 100.0))))
     (if hit
-        (format nil "~a -> ~a: hit ~d (~d%%)~@[ KILL~]"
-                attacker defender damage pct killed)
-        (format nil "~a -> ~a: miss (~d%%)" attacker defender pct))))
+        (format nil "~a -> ~a: hit ~d (c~d r~d atk~d def~d)~@[ ~a~]~@[ KILL~]"
+                attacker defender damage chance-pct roll-pct
+                attack-level defense-level xp-text killed)
+        (format nil "~a -> ~a: miss (c~d r~d atk~d def~d)~@[ ~a~]"
+                attacker defender chance-pct roll-pct
+                attack-level defense-level xp-text))))
 
-(defun push-combat-log (ui attacker defender hit chance &key damage killed)
+(defun push-combat-log (ui attacker defender hit chance roll attack-level defense-level
+                           &key damage xp-text killed)
   ;; Push a combat log line to the UI buffer when debug is enabled.
   (when (and ui *debug-collision-overlay*)
     (ui-push-combat-log ui
                         (format-combat-log
                          (combatant-display-name attacker)
                          (combatant-display-name defender)
-                         hit chance
+                         hit chance roll
+                         attack-level defense-level
                          :damage damage
+                         :xp-text xp-text
                          :killed killed))))
 
 (defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
@@ -228,20 +236,39 @@
           (when (aabb-overlap-p ax ay ahw ahh
                                 tx ty thw thh)
             (setf (player-attack-hit player) t)
-            (multiple-value-bind (hit chance)
+            (multiple-value-bind (hit chance roll)
                 (roll-melee-hit player target)
-              (if hit
-                  (let* ((damage (roll-melee-damage player))
-                         (killed (combatant-apply-hit target damage)))
-                    (combatant-trigger-hit-effect target)
-                    (award-combat-xp player (* damage *xp-per-damage*))
-                    (when killed
-                      (award-combat-xp player (npc-kill-xp target))
-                      (award-npc-loot player target))
-                    (push-combat-log ui player target t chance
-                                     :damage damage
-                                     :killed killed))
-                  (push-combat-log ui player target nil chance)))))))))
+              (let ((attack-level (combatant-attack-level player))
+                    (defense-level (combatant-defense-level target)))
+                (if hit
+                    (let* ((damage (roll-melee-damage player))
+                           (killed (combatant-apply-hit target damage))
+                           (xp-text nil))
+                      (combatant-trigger-hit-effect target)
+                      (multiple-value-bind (attack-xp strength-xp defense-xp hitpoints-xp)
+                          (award-combat-xp player (* damage *xp-per-damage*))
+                        (setf xp-text (format-xp-awards attack-xp strength-xp
+                                                       defense-xp hitpoints-xp)))
+                      (push-combat-log ui player target t chance roll
+                                       attack-level defense-level
+                                       :damage damage
+                                       :xp-text xp-text
+                                       :killed killed)
+                      (when killed
+                        (let ((kill-xp (npc-kill-xp target)))
+                          (when (> kill-xp 0)
+                            (multiple-value-bind (k-attack k-strength k-defense k-hp)
+                                (award-combat-xp player kill-xp)
+                              (let ((kill-text (format-xp-awards k-attack k-strength
+                                                                 k-defense k-hp)))
+                                (when kill-text
+                                  (ui-push-combat-log ui
+                                                      (format nil "Kill XP: ~a"
+                                                              kill-text)))))))
+                        (award-npc-loot player target)))
+                    (push-combat-log ui player target nil chance roll
+                                     attack-level defense-level
+                                     :xp-text "XP 0"))))))))))
 
 (defun update-player-animation (player dt)
   ;; Advance animation timers and set facing/state.
@@ -315,15 +342,21 @@
                (dy (- (player-y player) (npc-y npc)))
                (dist-sq (+ (* dx dx) (* dy dy))))
           (when (<= dist-sq attack-range-sq)
-            (multiple-value-bind (hit chance)
+            (multiple-value-bind (hit chance roll)
                 (roll-melee-hit npc player)
-              (if hit
-                  (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
-                    (combatant-apply-hit player damage)
-                    (combatant-trigger-hit-effect player)
-                    (push-combat-log ui npc player t chance :damage damage))
-                  (push-combat-log ui npc player nil chance)))
-            (setf (npc-attack-timer npc) (npc-attack-cooldown npc))))))))
+              (let ((attack-level (combatant-attack-level npc))
+                    (defense-level (combatant-defense-level player)))
+                (if hit
+                    (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
+                      (combatant-apply-hit player damage)
+                      (combatant-trigger-hit-effect player)
+                      (push-combat-log ui npc player t chance roll
+                                       attack-level defense-level
+                                       :damage damage))
+                    (push-combat-log ui npc player nil chance roll
+                                     attack-level defense-level
+                                     :xp-text "XP 0")))))
+            (setf (npc-attack-timer npc) (npc-attack-cooldown npc)))))))
 
 (defun update-npc-animation (npc dt)
   ;; Advance idle animation frames for the NPC.

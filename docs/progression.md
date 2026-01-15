@@ -9,8 +9,8 @@ Why we do it this way
 
 What it does
 - Defines the XP -> level curve and clamps levels at `*stat-max-level*`.
-- Applies training-mode XP splits (`:attack`, `:strength`, `:defense`, `:hitpoints`, `:balanced`).
-- Grants hitpoints XP alongside focused training using `*combat-hitpoints-xp-multiplier*`.
+- Applies training-mode XP splits (`:attack`, `:strength`, `:defense`, `:balanced`).
+- Grants hitpoints XP on every combat award using `*combat-hitpoints-xp-multiplier*`.
 - Computes simple combat levels and melee hit chance/damage from stats.
 - Adds inventory stacking and loot-table rolls for NPC drops.
 
@@ -24,7 +24,7 @@ Key functions
 Walkthrough: awarding XP on a hit
 1) A successful hit computes damage.
 2) XP is derived from damage and `*xp-per-damage*`.
-3) Training mode splits XP into the selected stat(s) and can add hitpoints XP on focused modes.
+3) Training mode splits remaining XP into the selected stat(s) while hitpoints always auto-train.
 4) Hitpoints leveling raises the player's current HP.
 
 Walkthrough: rolling loot

@@ -33,8 +33,9 @@ Common tunables
 - `:sim-tick-seconds` and `:sim-max-steps-per-frame` to tune fixed-step simulation timing.
 - `:collision-edge-epsilon` to control edge contact tolerance.
 - `:player-base-attack`, `:player-base-strength`, `:player-base-defense`, `:player-base-hitpoints`.
-- `:player-training-mode`, `:stat-xp-per-level`, `:stat-max-level`, `:xp-per-damage`.
-- `:combat-hitpoints-xp-multiplier` to award HP XP alongside focused training modes.
+- `:player-training-mode` (`:attack`, `:strength`, `:defense`, `:balanced`),
+  `:stat-xp-per-level`, `:stat-max-level`, `:xp-per-damage`.
+- `:combat-hitpoints-xp-multiplier` to auto-train hitpoints on all combat XP awards.
 - `:inventory-size` to control player inventory slots.
 - `:zone-path` to load a zone file from `data/`.
 - `:zone-root` for editor zone file discovery and creation.
