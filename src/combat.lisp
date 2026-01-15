@@ -130,19 +130,25 @@
                 attacker defender chance-pct roll-pct
                 attack-level defense-level xp-text))))
 
+(defun emit-combat-log (ui text)
+  ;; Emit combat log lines to the UI buffer and stdout in debug mode.
+  (when (and ui *debug-collision-overlay* text)
+    (ui-push-combat-log ui text)
+    (format t "~&COMBAT ~a~%" text)
+    (finish-output)))
+
 (defun push-combat-log (ui attacker defender hit chance roll attack-level defense-level
                            &key damage xp-text killed)
-  ;; Push a combat log line to the UI buffer when debug is enabled.
-  (when (and ui *debug-collision-overlay*)
-    (ui-push-combat-log ui
-                        (format-combat-log
-                         (combatant-display-name attacker)
-                         (combatant-display-name defender)
-                         hit chance roll
-                         attack-level defense-level
-                         :damage damage
-                         :xp-text xp-text
-                         :killed killed))))
+  ;; Build and emit a combat log line when debug is enabled.
+  (emit-combat-log ui
+                   (format-combat-log
+                    (combatant-display-name attacker)
+                    (combatant-display-name defender)
+                    hit chance roll
+                    attack-level defense-level
+                    :damage damage
+                    :xp-text xp-text
+                    :killed killed)))
 
 (defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
   ;; Return true when two axis-aligned boxes overlap (center + half sizes).
@@ -262,9 +268,9 @@
                               (let ((kill-text (format-xp-awards k-attack k-strength
                                                                  k-defense k-hp)))
                                 (when kill-text
-                                  (ui-push-combat-log ui
-                                                      (format nil "Kill XP: ~a"
-                                                              kill-text)))))))
+                                  (emit-combat-log ui
+                                                   (format nil "Kill XP: ~a"
+                                                           kill-text)))))))
                         (award-npc-loot player target)))
                     (push-combat-log ui player target nil chance roll
                                      attack-level defense-level
