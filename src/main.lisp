@@ -3,40 +3,18 @@
 
 (defun make-game ()
   ;; Assemble game state and log setup if verbose is enabled.
-  (load-game-data)
-  (let* ((world (make-world))
-         (spawn-x nil)
-         (spawn-y nil))
-    (multiple-value-bind (center-x center-y)
-        (world-spawn-center world)
-      (multiple-value-setq (spawn-x spawn-y)
-        (world-open-position world center-x center-y)))
-    (let* ((id-source (make-id-source))
-           (player (make-player spawn-x spawn-y
-                                :id (allocate-entity-id id-source)))
-           (npcs (make-npcs player world :id-source id-source))
-           (entities (make-entities player npcs))
-           (audio (make-audio))
+  (multiple-value-bind (world player npcs entities id-source combat-events)
+      (make-sim-state)
+    (let* ((audio (make-audio))
            (ui (make-ui))
            (render (make-render))
            (assets (load-assets world))
            (camera (make-camera))
-           (editor (make-editor world assets player)))
+           (editor (make-editor world assets player))
+           (client-intent (make-intent :target-x (player-x player)
+                                       :target-y (player-y player))))
       (when *editor-start-enabled*
         (toggle-editor-mode editor player))
-      (setf (world-minimap-spawns world)
-            (build-adjacent-minimap-spawns world player))
-      (ensure-npcs-open-spawn npcs world)
-      (when *verbose-logs*
-        (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
-                (world-tile-dest-size world)
-                (world-collision-half-width world)
-                (world-collision-half-height world)
-                (world-wall-min-x world)
-                (world-wall-max-x world)
-                (world-wall-min-y world)
-                (world-wall-max-y world))
-        (finish-output))
       (%make-game :world world
                   :player player
                   :npcs npcs
@@ -48,7 +26,8 @@
                   :assets assets
                   :camera camera
                   :editor editor
-                  :combat-events (make-combat-event-queue)))))
+                  :combat-events combat-events
+                  :client-intent client-intent))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
@@ -66,7 +45,7 @@
          (camera (game-camera game))
          (editor (game-editor game))
          (event-queue (game-combat-events game))
-         (player-intent (player-intent player))
+         (client-intent (game-client-intent game))
          (mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
          (mouse-down (raylib:is-mouse-button-down +mouse-left+))
          (mouse-right-clicked (raylib:is-mouse-button-pressed +mouse-right+))
@@ -91,8 +70,13 @@
            (let ((zone-id (load-game game *save-filepath*)))
              (if zone-id
                  (progn
-                   (reset-frame-intent player-intent)
-                   (clear-intent-target player-intent)
+                   (let ((server-intent (and player (player-intent player))))
+                     (when server-intent
+                       (reset-frame-intent server-intent)
+                       (clear-intent-target server-intent)))
+                   (when client-intent
+                     (reset-frame-intent client-intent)
+                     (clear-intent-target client-intent))
                    (clear-player-auto-walk player)
                    (setf (player-attacking player) nil
                          (player-attack-hit player) nil
@@ -124,7 +108,7 @@
                  (ui-context-open ui)
                  (not (eq (ui-context-target-type ui) :inventory)))
         (close-context-menu ui))
-      (reset-frame-intent player-intent)
+      (reset-frame-intent client-intent)
       (let ((click-consumed nil))
         (when (and (ui-context-open ui) mouse-clicked)
           (let ((action (handle-context-menu-click ui mouse-x mouse-y)))
@@ -141,24 +125,24 @@
                   (setf click-consumed t)
                   (cond
                     ((eq action :walk)
-                     (set-player-walk-target player player-intent
+                     (set-player-walk-target player client-intent
                                              context-x
                                              context-y
                                              t))
                     ((eq action :attack)
                      (let ((npc (find-npc-by-id npcs context-id)))
                        (when npc
-                         (set-player-attack-target player player-intent npc t))))
+                         (set-player-attack-target player client-intent npc t))))
                     ((eq action :follow)
                      (let ((npc (find-npc-by-id npcs context-id)))
                        (when npc
-                         (set-player-follow-target player player-intent npc t))))
+                         (set-player-follow-target player client-intent npc t))))
                     ((eq action :pickup)
                      (let* ((tile-size (world-tile-dest-size world))
                             (tx (floor context-x tile-size))
                             (ty (floor context-y tile-size)))
                        (when context-object-id
-                         (set-player-pickup-target player player-intent world
+                         (set-player-pickup-target player client-intent world
                                                    context-object-id
                                                    tx
                                                    ty
@@ -233,7 +217,7 @@
           (setf click-consumed t))
         (unless input-blocked
           (let ((minimap-handled (and (not click-consumed)
-                                      (update-target-from-minimap player player-intent ui world
+                                      (update-target-from-minimap player client-intent ui world
                                                                   dt mouse-clicked mouse-down))))
             (unless (or click-consumed minimap-handled)
               (let ((mouse-npc nil)
@@ -250,27 +234,27 @@
                     (when mouse-clicked
                       (cond
                         (mouse-npc
-                         (set-player-attack-target player player-intent mouse-npc t))
+                         (set-player-attack-target player client-intent mouse-npc t))
                         (mouse-object
-                         (set-player-pickup-target player player-intent world
+                         (set-player-pickup-target player client-intent world
                                                    (getf mouse-object :id)
                                                    (getf mouse-object :x)
                                                    (getf mouse-object :y)
                                                    t))
                         (t
-                         (update-target-from-mouse player player-intent camera dt
+                         (update-target-from-mouse player client-intent camera dt
                                                    mouse-clicked mouse-down))))))
                 (when (and mouse-down (not mouse-clicked)
                            (not mouse-npc) (not mouse-object))
-                  (update-target-from-mouse player player-intent camera dt
+                  (update-target-from-mouse player client-intent camera dt
                                             mouse-clicked mouse-down)))))))
       (unless (or (editor-active editor)
                   (ui-inventory-open ui))
-        (update-input-direction player player-intent mouse-clicked))
+        (update-input-direction player client-intent mouse-clicked))
       (unless (or (ui-menu-open ui)
                   (editor-active editor)
                   (ui-inventory-open ui))
-        (update-input-actions player-intent (not mouse-clicked))
+        (update-input-actions client-intent (not mouse-clicked))
         (update-training-mode player))
       (if input-blocked
           (setf (ui-hover-npc-name ui) nil)
@@ -362,22 +346,16 @@
          (allow-player-control (and (not (ui-menu-open ui))
                                     (not (ui-inventory-open ui))
                                     (not (editor-active editor))))
-         (step *sim-tick-seconds*)
-         (max-steps (max 1 *sim-max-steps-per-frame*)))
+         (step *sim-tick-seconds*))
     (if (editor-active editor)
         (setf accumulator 0.0)
-        (when (> step 0.0)
-          (incf accumulator dt)
-          (let ((max-accum (* step max-steps)))
-            (when (> accumulator max-accum)
-              (setf accumulator max-accum)))
-          (loop :with steps = 0
-                :while (and (>= accumulator step)
-                            (< steps max-steps))
-                :do (when (update-sim game step allow-player-control)
-                      (handle-zone-transition game))
-                    (decf accumulator step)
-                    (incf steps))
+        (multiple-value-bind (new-acc transitions)
+            (server-step game (game-client-intent game) dt accumulator
+                         :allow-player-control allow-player-control)
+          (setf accumulator new-acc)
+          (dotimes (_ transitions)
+            (declare (ignore _))
+            (handle-zone-transition game))
           (process-combat-events game))))
   (update-editor (game-editor game) game dt)
   accumulator)

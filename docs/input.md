@@ -42,9 +42,9 @@ Training hotkeys (default)
 
 Example flow
 ```lisp
-(update-target-from-mouse player player-intent camera dt mouse-clicked mouse-down)
-(update-input-direction player player-intent mouse-clicked)
-(update-input-actions player-intent (not mouse-clicked))
+(update-target-from-mouse player client-intent camera dt mouse-clicked mouse-down)
+(update-input-direction player client-intent mouse-clicked)
+(update-input-actions client-intent (not mouse-clicked))
 ```
 
 Design note

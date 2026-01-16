@@ -50,6 +50,7 @@ Design note
 Client/Server Separation (preparation for future networking)
 - Input functions (client-side) only set intent fields, never authoritative player state
 - Sync functions in combat.lisp (server-side) validate requested targets and set authoritative state
+- The server loop copies client intent into the authoritative intent each frame (`apply-client-intent`)
 - This enforces: client sends intent → server validates → server updates state → client renders result
 - Examples:
   - `set-player-attack-target` sets `requested-attack-target-id` in intent

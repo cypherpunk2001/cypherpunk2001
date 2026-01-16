@@ -28,29 +28,16 @@ mmorpg/
 
 ---
 
-## Previous Task (Completed)
+## Current Task
 
-5) Save/load + snapshot serialization (no rendering dependency)
-(For whatever it's worth, when we do the final server/client split, postgresql is planned.)
-- Even if the game is always-online, you still need ways to persist and restore the authoritative world state.
-Not optional. Do this early.
-This is your “server-shaped core.” It also becomes your snapshot sync format later.
-Minimum slice:
-Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
-Version tag in the file
-That’s enough
-
-Put easy one click Save | Load buttons (use same style as the music player buttons) on the ESC menu below the fullscreen | windowed button, based on save.lisp | save.md which should already be completed... I need to test that it works.
-
-## Current Task - As we prepare for a future Client / Server MMO Split
-(world + UX)
-- Headless server loop in-process (client sends intents, server updates state)
-This is the split, just without sockets. Not optional.
-Do this ASAP after save/load.
-
----
+TBA.
 
 ## Future Tasks / Roadmap
+
+Right Now Principle:
+- play as‑is and keep building zones/content.
+- Keep exercising save/load + headless loop while you iterate gameplay.
+- Defer long‑term networking/prediction until systems/data feel stable and you’re happy with the core loop.
 
 ### Long-term (MMO readiness)
 - Real client/server split (server-authoritative simulation, snapshot sync)

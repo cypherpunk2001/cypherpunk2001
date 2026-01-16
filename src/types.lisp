@@ -166,7 +166,7 @@
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
   world player npcs entities id-source audio ui render assets camera editor
-  combat-events)
+  combat-events client-intent)
 
 (defun allocate-entity-id (id-source)
   ;; Return the next entity id and advance the counter.

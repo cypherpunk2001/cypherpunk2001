@@ -8,8 +8,8 @@ Why we do it this way
   together and calls them in a consistent order.
 
 Update flow (high level)
-1) Input/UI -> intent, camera/UI updates, preview cache
-2) Fixed-tick simulation -> follow/attack/pickup sync, movement, combat, AI, respawns
+1) Input/UI -> client intent, camera/UI updates, preview cache
+2) Server fixed-tick simulation -> follow/attack/pickup sync, movement, combat, AI, respawns
 3) Combat events -> process event queue and write to UI (client-side rendering)
 4) Zone transitions (edge exits) -> load new zone if needed
 5) Animation/effects -> visuals ready to render
@@ -17,15 +17,17 @@ Update flow (high level)
 7) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
-- `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.
+- `make-game`: assembles the authoritative sim state plus audio/UI/render subsystems.
+- `make-sim-state` (server.lisp): builds world, player, NPCs, entities, and combat events without client-only subsystems.
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
 - `shutdown-game`: unloads editor tilesets and rendering assets.
 - Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
-- `update-client-input`: reads raylib input, writes player intent, updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions, and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly.
-- `update-sim`: runs one fixed-tick simulation step from intent, resolves object pickups, and feeds UI combat logging.
-- `update-game`: orchestrates fixed-step simulation and returns the accumulator.
+- `update-client-input`: reads raylib input, writes client intent, updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions, and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly.
+- `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts.
+- `update-sim`: runs one fixed-tick simulation step from server intent, resolves object pickups, and feeds UI combat logging.
+- `update-game`: orchestrates input + server-step simulation and returns the accumulator.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 
 Walkthrough: one frame
