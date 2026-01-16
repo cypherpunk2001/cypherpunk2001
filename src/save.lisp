@@ -405,35 +405,50 @@
       (values (deserialize-game-state state game) zone-loaded))))
 
 (defun save-game (game filepath)
-  ;; Save game state to FILEPATH.
-  (when *verbose*
-    (format t "~&[VERBOSE] Serializing game state for save...~%"))
-  (let ((state (serialize-game-state game)))
-    (with-open-file (out filepath
-                         :direction :output
-                         :if-exists :supersede
-                         :if-does-not-exist :create)
-      (prin1 state out))
-    (format t "~&Saved game to ~a~%" filepath)
-    (when *verbose*
-      (format t "~&[VERBOSE] Save completed successfully~%"))
-    t))
+  ;; Save game state to FILEPATH. Returns T on success, NIL on failure (non-fatal).
+  (handler-case
+      (progn
+        (when *verbose*
+          (format t "~&[VERBOSE] Serializing game state for save...~%"))
+        (let ((state (serialize-game-state game)))
+          (with-open-file (out filepath
+                               :direction :output
+                               :if-exists :supersede
+                               :if-does-not-exist :create)
+            (prin1 state out))
+          (format t "~&Saved game to ~a~%" filepath)
+          (when *verbose*
+            (format t "~&[VERBOSE] Save completed successfully~%"))
+          t))
+    (error (e)
+      (warn "Failed to save game to ~a: ~a" filepath e)
+      (when *verbose*
+        (format t "~&[VERBOSE] Save error: ~a~%" e))
+      nil)))
 
 (defun load-game (game filepath &key (apply-zone t))
   ;; Load game state from FILEPATH into existing GAME.
+  ;; Returns zone-id on success, NIL on failure (non-fatal).
   (if (probe-file filepath)
-      (progn
-        (when *verbose*
-          (format t "~&[VERBOSE] Loading game from ~a...~%" filepath))
-        (let* ((state (with-open-file (in filepath :direction :input)
-                        (read in))))
-          (multiple-value-bind (loaded-zone-id _zone-loaded)
-              (apply-game-state game state :apply-zone apply-zone)
-            (declare (ignore _zone-loaded))
-            (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
+      (handler-case
+          (progn
             (when *verbose*
-              (format t "~&[VERBOSE] Load completed, zone transitioned to ~a~%" loaded-zone-id))
-            loaded-zone-id)))
+              (format t "~&[VERBOSE] Loading game from ~a...~%" filepath))
+            (let* ((state (with-open-file (in filepath :direction :input)
+                            (let ((*read-eval* nil)) ; Security: disable eval in read
+                              (read in)))))
+              (multiple-value-bind (loaded-zone-id _zone-loaded)
+                  (apply-game-state game state :apply-zone apply-zone)
+                (declare (ignore _zone-loaded))
+                (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
+                (when *verbose*
+                  (format t "~&[VERBOSE] Load completed, zone transitioned to ~a~%" loaded-zone-id))
+                loaded-zone-id)))
+        (error (e)
+          (warn "Failed to load game from ~a: ~a" filepath e)
+          (when *verbose*
+            (format t "~&[VERBOSE] Load error (possibly corrupt save): ~a~%" e))
+          nil))
       (progn
         (warn "Save file not found: ~a" filepath)
         nil)))

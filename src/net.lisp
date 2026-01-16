@@ -37,13 +37,20 @@
 
 (defun send-net-message (socket message &key host port)
   ;; Send MESSAGE over SOCKET to HOST/PORT (or connected peer).
-  (let* ((text (encode-net-message message))
-         (octets (string-to-octets text))
-         (size (length octets)))
-    (when (> size *net-buffer-size*)
-      (warn "Dropping UDP payload (~d bytes) over buffer size ~d" size *net-buffer-size*)
-      (return-from send-net-message nil))
-    (usocket:socket-send socket octets size :host host :port port)))
+  ;; Returns T on success, NIL on failure (non-fatal, logs warning).
+  (handler-case
+      (let* ((text (encode-net-message message))
+             (octets (string-to-octets text))
+             (size (length octets)))
+        (when (> size *net-buffer-size*)
+          (warn "Dropping UDP payload (~d bytes) over buffer size ~d" size *net-buffer-size*)
+          (return-from send-net-message nil))
+        (usocket:socket-send socket octets size :host host :port port)
+        t)
+    (error (e)
+      (when *verbose*
+        (format t "~&[VERBOSE] Failed to send message to ~a:~d: ~a~%" host port e))
+      nil)))
 
 (defun get-nproc ()
   ;; Return number of CPU cores, or 1 if unable to determine.
@@ -298,22 +305,30 @@
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
-  (when player-id
-    (setf (game-net-player-id game) player-id))
-  (multiple-value-bind (zone-id zone-changed)
-      (apply-game-state game state :apply-zone t)
-    (when zone-changed
-      (handle-zone-transition game))
-    (let ((queue (game-combat-events game)))
-      (dolist (event-plist event-plists)
-        (let ((event (plist->combat-event event-plist)))
-          (when event
-            (push-combat-event queue event)))))
-    (let ((player (game-player game)))
-      (when player
-        (mark-player-hud-stats-dirty player)
-        (mark-player-inventory-dirty player)))
-    zone-id))
+  ;; Returns zone-id on success, NIL on failure (non-fatal).
+  (handler-case
+      (progn
+        (when player-id
+          (setf (game-net-player-id game) player-id))
+        (multiple-value-bind (zone-id zone-changed)
+            (apply-game-state game state :apply-zone t)
+          (when zone-changed
+            (handle-zone-transition game))
+          (let ((queue (game-combat-events game)))
+            (dolist (event-plist event-plists)
+              (let ((event (plist->combat-event event-plist)))
+                (when event
+                  (push-combat-event queue event)))))
+          (let ((player (game-player game)))
+            (when player
+              (mark-player-hud-stats-dirty player)
+              (mark-player-inventory-dirty player)))
+          zone-id))
+    (error (e)
+      (warn "Failed to apply snapshot: ~a" e)
+      (when *verbose*
+        (format t "~&[VERBOSE] Snapshot application error: ~a~%" e))
+      nil)))
 
 (defun send-intent-message (socket intent &key host port)
   ;; Send the current INTENT as a UDP message.
@@ -432,12 +447,18 @@
                        ;; OPTIMIZATION: Serialization happens once and is shared across clients.
                        ;; For 500 clients this is much better than 500 serializations.
                        ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
+                       ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
                        (when clients
-                         (let* ((events (pop-combat-events (game-combat-events game)))
-                                (event-plists (mapcar #'combat-event->plist events))
-                                (state (serialize-game-state game :include-visuals t)))
-                           (send-snapshots-parallel socket clients state event-plists
-                                                    worker-threads)))
+                         (handler-case
+                             (let* ((events (pop-combat-events (game-combat-events game)))
+                                    (event-plists (mapcar #'combat-event->plist events))
+                                    (state (serialize-game-state game :include-visuals t)))
+                               (send-snapshots-parallel socket clients state event-plists
+                                                        worker-threads))
+                           (error (e)
+                             (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
+                             (when *verbose*
+                               (format t "~&[VERBOSE] Snapshot error, skipping frame~%")))))
                        (sleep *sim-tick-seconds*))
            #+sbcl
            (sb-sys:interactive-interrupt ()
