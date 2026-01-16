@@ -29,37 +29,31 @@ mmorpg/
 ---
 
 ## Current Task
+~~Real client/server split (server-authoritative simulation, snapshot sync)~~ DONE
 
-Finish up the initial client/server udp split and do it for real.
+Now that we have working UDP with make server and make client with a save/load working...
 
-For now, the server will just listen on some localhost:1337 or similar
+- let's ensure the server correctly handles SIGTERM because I Control-C'd it earlier and threw scary errors but I think it was fine, but if there's a proper a shutdown mechanism let's build it. It'd be wise to do that before we have serious database things and so forth.
 
-give me two new things in the makefile:
+- let's do what it takes to ensure multiple clients can connect simultaneously and stay updated.
 
-make server
-make client
+Currently,
 
-make server must start first
+make server #term 0
 
-make client will just auto connect to the server
+make client #term 1
+make client #term 2
 
-from here I should still be able to play the game, save and load like normal.
+The result here is that the same character shows in both clients. Your choice, this might be a good first test, do the terminals track with each other?
 
-after that we'll discuss some character setup and minimal poc registration type of system so that we can have multiple clients connecting in a way that is sane and doesnt corrupt the save file?
+But I'm wondering if this could be causing some kind of infinite crazy server loads with two clients yelling at the server simultaneously about the same exact character?
 
-Adjust this if I am missing something or you need to correct my plan.
-
+I notice that it does track the active client i am controlling the character with, but it's definitely not smooth the second one just teleports to the correct place every few seconds. A real test I think would be to introduce a second character id maybe and see if I can play with them together smoothly in two windows? Can you arrange this and tell me how to do it?
 
 
 ## Future Tasks / Roadmap
 
-Right Now Principle:
-- play as‑is and keep building zones/content.
-- Keep exercising save/load + headless loop while you iterate gameplay.
-- Defer long‑term networking/prediction until systems/data feel stable and you’re happy with the core loop.
-
 ### Long-term (MMO readiness)
-- Real client/server split (server-authoritative simulation, snapshot sync)
 - Prediction + interpolation for smooth client UX
 - Persistent world storage and migrations
 - Editor upgrades for world-graph, spawns, and content validation

@@ -831,7 +831,8 @@
                 (player-attack-timer player) 0.0)
           (setf (world-minimap-spawns world)
                 (build-adjacent-minimap-spawns world player))
-          (let* ((target-zone-id (and zone (zone-id zone)))
+          (let* ((players (game-players game))
+                 (target-zone-id (and zone (zone-id zone)))
                  (cached (cached-zone-npcs world target-zone-id))
                  (npcs (or cached
                            (make-npcs player world
@@ -840,7 +841,7 @@
             (ensure-npcs-open-spawn npcs world)
             (let ((merged (merge-npc-vectors npcs carried)))
               (setf (game-npcs game) merged
-                    (game-entities game) (make-entities player merged))))
+                    (game-entities game) (make-entities players merged))))
           t)))))
 
 (defun update-zone-transition (game)

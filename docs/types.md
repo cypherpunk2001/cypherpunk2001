@@ -19,13 +19,13 @@ Key structs
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, chat buffer/active flag, hovered NPC name, HUD/combat log ring buffers with HUD fade timers, minimap layout/colors, Save/Load/quit menu buttons, and a context menu with target metadata; assets include object and item textures).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette, object palette).
 - `combat-event`, `combat-event-queue`: event system for decoupling simulation from UI (server emits events, client renders them).
-- `game`: top-level aggregator passed to update/draw functions (includes combat-events queue, a client-side intent buffer, a net role flag, and a queued net request list).
+- `game`: top-level aggregator passed to update/draw functions (includes the primary player plus a `players` array, combat-events queue, a client-side intent buffer, a net role flag, a queued net request list, and the client-side `net-player-id`).
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
 - `make-npcs`: spawn a pool using explicit zone spawns (zones without spawns produce no NPCs).
 - `world-spawn-center`: returns a center point inside world collision bounds.
-- `make-entities`: pack NPCs + player into a stable array.
+- `make-entities`: pack NPCs + players into a stable array.
 
 Key generics
 - Combat: `combatant-position`, `combatant-health`, `combatant-apply-hit`.

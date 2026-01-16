@@ -3,7 +3,7 @@
 
 (defun make-game ()
   ;; Assemble game state and log setup if verbose is enabled.
-  (multiple-value-bind (world player npcs entities id-source combat-events)
+  (multiple-value-bind (world player players npcs entities id-source combat-events)
       (make-sim-state)
     (let* ((audio (make-audio))
            (ui (make-ui))
@@ -17,6 +17,7 @@
         (toggle-editor-mode editor player))
       (%make-game :world world
                   :player player
+                  :players players
                   :npcs npcs
                   :entities entities
                   :id-source id-source
@@ -29,7 +30,8 @@
                   :combat-events combat-events
                   :client-intent client-intent
                   :net-role :local
-                  :net-requests nil))))
+                  :net-requests nil
+                  :net-player-id (player-id player)))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
@@ -304,53 +306,63 @@
 (defun update-sim (game dt &optional (allow-player-control t))
   ;; Run one fixed-tick simulation step. Returns true on zone transition.
   (let* ((player (game-player game))
+         (players (game-players game))
          (npcs (game-npcs game))
          (entities (game-entities game))
          (world (game-world game))
-         (event-queue (game-combat-events game))
-         (player-intent (player-intent player)))
+         (event-queue (game-combat-events game)))
     (reset-npc-frame-intents npcs)
     (when allow-player-control
-      (sync-player-follow-target player player-intent npcs)
-      (sync-player-attack-target player player-intent npcs)
-      (sync-player-pickup-target player player-intent world)
-      (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
-                         (not (zerop (intent-move-dy player-intent)))
-                         (intent-target-active player-intent)))
-             (speed-mult (update-running-state player dt moving
-                                               (intent-run-toggle player-intent))))
-        (update-player-position player player-intent world speed-mult dt)
-        (update-player-pickup-target player world)))
+      (loop :for current-player :across players
+            :for current-intent = (player-intent current-player)
+            :do (sync-player-follow-target current-player current-intent npcs)
+                (sync-player-attack-target current-player current-intent npcs)
+                (sync-player-pickup-target current-player current-intent world)
+                (let* ((moving (or (not (zerop (intent-move-dx current-intent)))
+                                   (not (zerop (intent-move-dy current-intent)))
+                                   (intent-target-active current-intent)))
+                       (speed-mult (update-running-state current-player dt moving
+                                                         (intent-run-toggle current-intent))))
+                  (update-player-position current-player current-intent world speed-mult dt)
+                  (update-player-pickup-target current-player world))))
     (update-object-respawns world dt)
     (let ((transitioned (and allow-player-control
                              (update-zone-transition game))))
       (when transitioned
         (setf npcs (game-npcs game)
               entities (game-entities game))
-        (setf (player-attack-target-id player) 0
-              (player-follow-target-id player) 0)
+        (loop :for current-player :across players
+              :do (setf (player-attack-target-id current-player) 0
+                        (player-follow-target-id current-player) 0))
         (reset-npc-frame-intents npcs))
       (update-npc-respawns npcs dt)
       (when allow-player-control
-        (update-player-attack-intent player npcs world))
-      (process-chat-intent player player-intent world event-queue)
-      (when (and allow-player-control
-                 (intent-attack player-intent))
-        (start-player-attack player player-intent))
+        (loop :for current-player :across players
+              :do (update-player-attack-intent current-player npcs world)))
+      (loop :for current-player :across players
+            :for current-intent = (player-intent current-player)
+            :do (process-chat-intent current-player current-intent world event-queue)
+                (when (and allow-player-control
+                           (intent-attack current-intent))
+                  (start-player-attack current-player current-intent)))
       (when *verbose-logs*
         (log-player-position player world))
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))
+      (loop :for current-player :across players
+            :do (loop :for npc :across npcs
+                      :do (apply-melee-hit current-player npc world event-queue)))
       (loop :for npc :across npcs
-            :do (apply-melee-hit player npc world event-queue))
-      (loop :for npc :across npcs
-            :do (update-npc-behavior npc player world)
-                (update-npc-intent npc player world dt)
-                (update-npc-movement npc world dt)
-                (update-npc-attack npc player world dt event-queue))
+            :for target-player = (closest-player players npc)
+            :do (when target-player
+                  (update-npc-behavior npc target-player world)
+                  (update-npc-intent npc target-player world dt)
+                  (update-npc-movement npc world dt)
+                  (update-npc-attack npc target-player world dt event-queue)))
       (loop :for entity :across entities
             :do (combatant-update-hit-effect entity dt))
-      (consume-intent-actions player-intent)
+      (loop :for current-player :across players
+            :do (consume-intent-actions (player-intent current-player)))
       transitioned)))
 
 (defun process-combat-events (game)

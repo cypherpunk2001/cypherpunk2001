@@ -71,6 +71,7 @@ Key responsibilities
 - Update the world wall-map so collisions update live.
 - Export zones with `zone-to-plist` and `zone-slice`.
 - Reset player/NPC spawns and refresh minimap previews when the active zone changes.
+- Rebuild the entity array from the current players plus the refreshed NPC list.
 - NPC respawns use the shared ID source so entities keep stable IDs.
 
 Design note

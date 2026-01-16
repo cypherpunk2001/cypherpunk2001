@@ -24,6 +24,7 @@ Key concepts
   preserving their offset from the player.
 - Zone transitions cache NPCs per zone (excluding carried NPCs) so returning to a zone
   restores its population without duplicating spawns.
+- Zone transitions rebuild the entity array using the current players plus NPCs.
 - NPC spawns allocate stable entity IDs from the simulation ID source.
 - `*collision-edge-epsilon*` avoids treating exact tile-edge contact as blocked.
 

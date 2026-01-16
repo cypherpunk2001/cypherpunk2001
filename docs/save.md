@@ -10,7 +10,7 @@ Why we do it this way
 - Plist format is human-readable for debugging and easily extensible.
 
 What it serializes
-- Player state: position, HP, stats (attack/strength/defense/hitpoints with XP), inventory, equipment, timers
+- Player state: position, HP, stats (attack/strength/defense/hitpoints with XP), inventory, equipment, timers (for all players)
 - NPC state: position, HP, alive status, respawn timer, provocation, behavior state, home position
 - Object state: position, count, respawn timer, respawnable flag
 - World context: current zone ID, entity ID source
@@ -39,15 +39,16 @@ Walkthrough: load game
 
 Save format (plist structure)
 ```lisp
-(:version 1
+(:version 2
  :zone-id :overworld
  :id-next 42
- :player (:id 1 :x 100.0 :y 200.0 :hp 10
-          :stats (:attack (:level 5 :xp 123) ...)
-          :inventory (:slots ((:item-id :coins :count 50) ...))
-          :equipment (:items (:wooden-sword nil nil ...))
-          :attack-timer 0.0 :hit-timer 0.0 :run-stamina 1.0
-          :attack-target-id 0 :follow-target-id 0)
+ :players ((:id 1 :x 100.0 :y 200.0 :hp 10
+            :stats (:attack (:level 5 :xp 123) ...)
+            :inventory (:slots ((:item-id :coins :count 50) ...))
+            :equipment (:items (:wooden-sword nil nil ...))
+            :attack-timer 0.0 :hit-timer 0.0 :run-stamina 1.0
+            :attack-target-id 0 :follow-target-id 0)
+           ...)
  :npcs ((:id 10 :x 150.0 :y 180.0 :home-x 150.0 :home-y 180.0
          :hits-left 3 :alive t :respawn-timer 0.0
          :provoked nil :behavior-state :idle :attack-timer 0.0) ...)

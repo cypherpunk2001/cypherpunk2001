@@ -1,6 +1,21 @@
 ;; NOTE: If you change behavior here, update docs/ai.md :)
 (in-package #:mmorpg)
 
+(defun closest-player (players npc)
+  ;; Return the closest alive player to NPC, if any.
+  (let ((best nil)
+        (best-dist nil))
+    (when players
+      (loop :for player :across players
+            :when (combatant-alive-p player)
+              :do (let* ((dx (- (player-x player) (npc-x npc)))
+                         (dy (- (player-y player) (npc-y npc)))
+                         (dist (+ (* dx dx) (* dy dy))))
+                    (when (or (null best-dist) (< dist best-dist))
+                      (setf best player
+                            best-dist dist)))))
+    best))
+
 (defun npc-home-radius (npc world)
   ;; Return NPC home radius in world pixels.
   (let* ((archetype (npc-archetype npc))
@@ -74,12 +89,13 @@
 
 (defun npc-in-perception-range-p (npc player world)
   ;; Return true when the player is within the NPC perception radius.
-  (let* ((dx (- (player-x player) (npc-x npc)))
-         (dy (- (player-y player) (npc-y npc)))
-         (dist-sq (+ (* dx dx) (* dy dy)))
-         (range-sq (npc-perception-range-sq npc world)))
-    (and (> range-sq 0.0)
-         (<= dist-sq range-sq))))
+  (when player
+    (let* ((dx (- (player-x player) (npc-x npc)))
+           (dy (- (player-y player) (npc-y npc)))
+           (dist-sq (+ (* dx dx) (* dy dy)))
+           (range-sq (npc-perception-range-sq npc world)))
+      (and (> range-sq 0.0)
+           (<= dist-sq range-sq)))))
 
 (defun npc-should-flee-p (npc)
   ;; Return true when the NPC is low enough to flee.
@@ -100,6 +116,8 @@
     (cond
       ((not (npc-alive npc))
        (setf new-state :dead))
+      ((not player)
+       (setf new-state :idle))
       ((not archetype)
        (setf new-state :idle))
       (t
@@ -126,7 +144,7 @@
 
 (defun update-npc-intent (npc player world dt)
   ;; Populate the NPC intent based on behavior and proximity.
-  (when (npc-alive npc)
+  (when (and (npc-alive npc) player)
     (let* ((intent (npc-intent npc))
            (state (if (npc-should-flee-p npc)
                       :flee

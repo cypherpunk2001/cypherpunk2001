@@ -1,43 +1,48 @@
 ;; NOTE: If you change behavior here, update docs/server.md :)
 (in-package #:mmorpg)
 
+(defun spawn-player-at-world (world id-source)
+  ;; Spawn a player at the world spawn center on a valid open tile.
+  (multiple-value-bind (center-x center-y)
+      (world-spawn-center world)
+    (multiple-value-bind (spawn-x spawn-y)
+        (world-open-position world center-x center-y)
+      (make-player spawn-x spawn-y
+                   :id (when id-source
+                         (allocate-entity-id id-source))))))
+
 (defun make-sim-state ()
   ;; Build authoritative simulation state without client-only subsystems.
   (load-game-data)
   (let* ((world (make-world))
-         (spawn-x nil)
-         (spawn-y nil))
-    (multiple-value-bind (center-x center-y)
-        (world-spawn-center world)
-      (multiple-value-setq (spawn-x spawn-y)
-        (world-open-position world center-x center-y)))
-    (let* ((id-source (make-id-source))
-           (player (make-player spawn-x spawn-y
-                                :id (allocate-entity-id id-source)))
-           (npcs (make-npcs player world :id-source id-source))
-           (entities (make-entities player npcs))
-           (combat-events (make-combat-event-queue)))
-      (setf (world-minimap-spawns world)
-            (build-adjacent-minimap-spawns world player))
-      (ensure-npcs-open-spawn npcs world)
-      (when *verbose-logs*
-        (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
-                (world-tile-dest-size world)
-                (world-collision-half-width world)
-                (world-collision-half-height world)
-                (world-wall-min-x world)
-                (world-wall-max-x world)
-                (world-wall-min-y world)
-                (world-wall-max-y world))
-        (finish-output))
-      (values world player npcs entities id-source combat-events))))
+         (id-source (make-id-source))
+         (player (spawn-player-at-world world id-source))
+         (players (make-array 1 :initial-element player))
+         (npcs (make-npcs player world :id-source id-source))
+         (entities (make-entities players npcs))
+         (combat-events (make-combat-event-queue)))
+    (setf (world-minimap-spawns world)
+          (build-adjacent-minimap-spawns world player))
+    (ensure-npcs-open-spawn npcs world)
+    (when *verbose-logs*
+      (format t "~&Verbose logs on. tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
+              (world-tile-dest-size world)
+              (world-collision-half-width world)
+              (world-collision-half-height world)
+              (world-wall-min-x world)
+              (world-wall-max-x world)
+              (world-wall-min-y world)
+              (world-wall-max-y world))
+      (finish-output))
+    (values world player players npcs entities id-source combat-events)))
 
 (defun make-server-game ()
   ;; Build a headless game state for server-only simulation.
-  (multiple-value-bind (world player npcs entities id-source combat-events)
+  (multiple-value-bind (world player players npcs entities id-source combat-events)
       (make-sim-state)
     (%make-game :world world
                 :player player
+                :players players
                 :npcs npcs
                 :entities entities
                 :id-source id-source
@@ -50,7 +55,8 @@
                 :combat-events combat-events
                 :client-intent nil
                 :net-role :server
-                :net-requests nil)))
+                :net-requests nil
+                :net-player-id nil)))
 
 (defun apply-client-intent (server-intent client-intent)
   ;; Copy the client intent payload into the server intent for this frame.

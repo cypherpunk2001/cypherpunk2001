@@ -18,7 +18,7 @@ Update flow (high level)
 
 Key functions
 - `make-game`: assembles the authoritative sim state plus audio/UI/render subsystems; defaults the net role to `:local`.
-- `make-sim-state` (server.lisp): builds world, player, NPCs, entities, and combat events without client-only subsystems.
+- `make-sim-state` (server.lisp): builds world, player + players array, NPCs, entities, and combat events without client-only subsystems.
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
@@ -26,12 +26,12 @@ Key functions
 - Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
 - `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode.
 - `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts.
-- `update-sim`: runs one fixed-tick simulation step from server intent, resolves object pickups, processes chat broadcasts, and feeds UI combat logging.
+- `update-sim`: runs one fixed-tick simulation step across all players, resolves object pickups, processes chat broadcasts, and feeds UI combat logging.
 - `update-game`: orchestrates input + server-step simulation and returns the accumulator.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 
 Walkthrough: one frame
-1) Read input and UI; write intent for player and NPCs.
+1) Read input and UI; write intent for the local player and NPCs.
 2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
 3) Otherwise, run as many fixed-tick simulation steps as the accumulator allows (including follow sync and NPC respawns).
 4) Advance animation/effect timers during simulation ticks.
@@ -65,7 +65,7 @@ Design note
 
 Client/Server Separation (preparation for future networking)
 - `make-game` initializes a combat event queue for decoupling simulation from UI
-- `update-sim` calls sync functions (`sync-player-attack-target`, `sync-player-follow-target`, `sync-player-pickup-target`) that validate client intent requests and set authoritative state (server-side)
+- `update-sim` calls sync functions (`sync-player-attack-target`, `sync-player-follow-target`, `sync-player-pickup-target`) for each player to validate client intent requests and set authoritative state (server-side)
 - Combat functions emit events (:combat-log, :hud-message) to the queue instead of writing UI directly
 - `process-combat-events` reads the event queue and writes to UI (client-side rendering)
 - This enforces: client sends intent → server validates → server updates state → server emits events → client renders result

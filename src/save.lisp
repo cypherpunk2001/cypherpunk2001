@@ -11,7 +11,7 @@
 ;;; Format is versioned plist for future-proof migrations.
 ;;; This becomes the snapshot sync format for future networking.
 
-(defparameter *save-format-version* 1
+(defparameter *save-format-version* 2
   "Current save file format version for migration support.")
 
 ;;; Serialization helpers
@@ -162,6 +162,39 @@
           (player-running player) (getf plist :running nil))
     player))
 
+(defun apply-player-plist (player plist)
+  ;; Apply plist fields onto an existing PLAYER.
+  (when (and player plist)
+    (setf (player-id player) (getf plist :id (player-id player))
+          (player-x player) (getf plist :x (player-x player))
+          (player-y player) (getf plist :y (player-y player))
+          (player-dx player) (getf plist :dx 0.0)
+          (player-dy player) (getf plist :dy 0.0)
+          (player-hp player) (getf plist :hp (player-hp player))
+          (player-stats player) (deserialize-stat-block (getf plist :stats))
+          (player-inventory player)
+          (deserialize-inventory (getf plist :inventory) *inventory-size*)
+          (player-equipment player)
+          (deserialize-equipment (getf plist :equipment) (length *equipment-slot-ids*))
+          (player-attack-timer player) (getf plist :attack-timer 0.0)
+          (player-hit-timer player) (getf plist :hit-timer 0.0)
+          (player-run-stamina player) (getf plist :run-stamina 1.0)
+          (player-attack-target-id player) (getf plist :attack-target-id 0)
+          (player-follow-target-id player) (getf plist :follow-target-id 0)
+          (player-anim-state player) (getf plist :anim-state :idle)
+          (player-facing player) (getf plist :facing :down)
+          (player-facing-sign player) (getf plist :facing-sign 1.0)
+          (player-frame-index player) (getf plist :frame-index 0)
+          (player-frame-timer player) (getf plist :frame-timer 0.0)
+          (player-attacking player) (getf plist :attacking nil)
+          (player-attack-hit player) (getf plist :attack-hit nil)
+          (player-hit-active player) (getf plist :hit-active nil)
+          (player-hit-frame player) (getf plist :hit-frame 0)
+          (player-hit-facing player) (getf plist :hit-facing :down)
+          (player-hit-facing-sign player) (getf plist :hit-facing-sign 1.0)
+          (player-running player) (getf plist :running nil)))
+  player)
+
 (defun serialize-npc (npc &key (include-visuals nil))
   ;; Convert NPC state to plist (server-authoritative state only).
   (let ((payload (list :id (npc-id npc)
@@ -214,6 +247,53 @@
               (npc-hit-facing npc) (getf plist :hit-facing :down)
               (npc-hit-facing-sign npc) (getf plist :hit-facing-sign 1.0))))))
 
+(defun players-match-order-p (players plists)
+  ;; Return true when PLAYERS and PLISTS share the same ID ordering.
+  (and players
+       (= (length players) (length plists))
+       (loop :for i :from 0 :below (length players)
+             :for plist :in plists
+             :for id = (getf plist :id 0)
+             :always (and (> id 0)
+                          (= (player-id (aref players i)) id)))))
+
+(defun apply-player-plists (game player-plists)
+  ;; Apply PLAYER-PLISTS to GAME players, preserving local player state.
+  (when player-plists
+    (let* ((players (game-players game))
+           (reuse-order (players-match-order-p players player-plists))
+           (players-changed nil))
+      (if reuse-order
+          (loop :for i :from 0 :below (length players)
+                :for plist :in player-plists
+                :do (apply-player-plist (aref players i) plist))
+          (let ((new-players (make-array (length player-plists))))
+            (loop :for plist :in player-plists
+                  :for index :from 0
+                  :for id = (getf plist :id 0)
+                  :for existing = (and players (find-player-by-id players id))
+                  :do (if existing
+                          (apply-player-plist existing plist)
+                          (setf existing
+                                (deserialize-player plist
+                                                    *inventory-size*
+                                                    (length *equipment-slot-ids*))))
+                      (setf (aref new-players index) existing))
+            (setf (game-players game) new-players
+                  players new-players
+                  players-changed t)))
+      (let* ((local-id (or (game-net-player-id game)
+                           (and (game-player game)
+                                (player-id (game-player game)))))
+             (local-player (and local-id (find-player-by-id players local-id))))
+        (when (and local-player (not (eq (game-player game) local-player)))
+          (setf (game-player game) local-player))
+        (when (and (null local-player) (> (length players) 0))
+          (setf (game-player game) (aref players 0))))
+      (when players-changed
+        (setf (game-entities game)
+              (make-entities (game-players game) (game-npcs game)))))))
+
 (defun serialize-object (object)
   ;; Convert zone object to plist (ID, position, count, respawn timer).
   (list :id (getf object :id)
@@ -234,13 +314,18 @@
 
 (defun serialize-game-state (game &key (include-visuals nil))
   ;; Serialize authoritative game state to plist (server snapshot).
-  (let* ((player (game-player game))
+  (let* ((players (game-players game))
          (npcs (game-npcs game))
          (world (game-world game))
          (zone (world-zone world))
          (id-source (game-id-source game))
+         (player-list nil)
          (npc-list nil)
          (object-list nil))
+    ;; Serialize players
+    (when players
+      (loop :for player :across players
+            :do (push (serialize-player player :include-visuals include-visuals) player-list)))
     ;; Serialize NPCs
     (when npcs
       (loop :for npc :across npcs
@@ -254,7 +339,7 @@
     (list :version *save-format-version*
           :zone-id (and zone (zone-id zone))
           :id-next (and id-source (id-source-next-id id-source))
-          :player (serialize-player player :include-visuals include-visuals)
+          :players (nreverse player-list)
           :npcs (nreverse npc-list)
           :objects (nreverse object-list))))
 
@@ -263,10 +348,11 @@
   (let* ((version (getf plist :version 0))
          (zone-id (getf plist :zone-id))
          (id-next (getf plist :id-next 1))
-         (player-plist (getf plist :player))
+         (player-plists (or (getf plist :players)
+                            (let ((player-plist (getf plist :player)))
+                              (and player-plist (list player-plist)))))
          (npc-plists (getf plist :npcs))
          (object-plists (getf plist :objects))
-         (player (game-player game))
          (npcs (game-npcs game))
          (world (game-world game))
          (zone (world-zone world))
@@ -278,36 +364,8 @@
     ;; Restore ID source
     (when id-source
       (setf (id-source-next-id id-source) id-next))
-    ;; Restore player
-    (when player-plist
-      (let ((restored-player (deserialize-player player-plist
-                                                 *inventory-size*
-                                                 (length *equipment-slot-ids*))))
-        (setf (player-x player) (player-x restored-player)
-              (player-y player) (player-y restored-player)
-              (player-dx player) (player-dx restored-player)
-              (player-dy player) (player-dy restored-player)
-              (player-hp player) (player-hp restored-player)
-              (player-stats player) (player-stats restored-player)
-              (player-inventory player) (player-inventory restored-player)
-              (player-equipment player) (player-equipment restored-player)
-              (player-anim-state player) (player-anim-state restored-player)
-              (player-facing player) (player-facing restored-player)
-              (player-facing-sign player) (player-facing-sign restored-player)
-              (player-frame-index player) (player-frame-index restored-player)
-              (player-frame-timer player) (player-frame-timer restored-player)
-              (player-attacking player) (player-attacking restored-player)
-              (player-attack-timer player) (player-attack-timer restored-player)
-              (player-attack-hit player) (player-attack-hit restored-player)
-              (player-hit-active player) (player-hit-active restored-player)
-              (player-hit-timer player) (player-hit-timer restored-player)
-              (player-hit-frame player) (player-hit-frame restored-player)
-              (player-hit-facing player) (player-hit-facing restored-player)
-              (player-hit-facing-sign player) (player-hit-facing-sign restored-player)
-              (player-running player) (player-running restored-player)
-              (player-run-stamina player) (player-run-stamina restored-player)
-              (player-attack-target-id player) (player-attack-target-id restored-player)
-              (player-follow-target-id player) (player-follow-target-id restored-player))))
+    ;; Restore players
+    (apply-player-plists game player-plists)
     ;; Restore NPCs
     (loop :for npc-plist :in npc-plists
           :for index :from 0
@@ -338,11 +396,12 @@
                 (setf zone-loaded t))))))
       (when zone-loaded
         (let* ((player (game-player game))
+               (players (game-players game))
                (npcs (make-npcs player world
                                 :id-source (game-id-source game))))
           (ensure-npcs-open-spawn npcs world)
           (setf (game-npcs game) npcs
-                (game-entities game) (make-entities player npcs))))
+                (game-entities game) (make-entities players npcs))))
       (values (deserialize-game-state state game) zone-loaded))))
 
 (defun save-game (game filepath)

@@ -11,6 +11,7 @@ Why we do it this way
 Behavior model
 - Simple state machine: `idle`, `aggressive`, `retaliate`, `flee`, `dead`.
 - Behavior is driven by archetype tuning (aggro, flee thresholds, perception).
+- In multi-player sessions, NPCs evaluate the closest alive player.
 - Being provoked overrides perception checks so hit NPCs respond immediately.
 - Any provoked NPC enters `:retaliate` so they fight back after taking a hit.
 - Flee ignores the home-radius tether so low-health NPCs actually run away.
@@ -18,6 +19,7 @@ Behavior model
   NPCs flee even if behavior state lags a frame behind.
 
 Key functions
+- `closest-player`: choose the nearest alive player to drive NPC behavior/intent.
 - `npc-should-flee-p`: low-health flee check shared by behavior and intent.
 - `update-npc-behavior`: choose the behavior state.
 - `update-npc-intent`: produce movement/attack intent.

@@ -251,6 +251,7 @@
   ;; Reset player/NPC positions after a zone change.
   (let* ((world (game-world game))
          (player (game-player game))
+         (players (game-players game))
          (intent (player-intent player)))
     (multiple-value-bind (center-x center-y)
         (world-spawn-center world)
@@ -274,7 +275,7 @@
                            :id-source (game-id-source game))))
       (ensure-npcs-open-spawn npcs world)
       (setf (game-npcs game) npcs
-            (game-entities game) (make-entities player npcs))))))
+            (game-entities game) (make-entities players npcs))))))
 
 (defun editor-activate-zone (editor game zone path status)
   ;; Activate ZONE/PATH and refresh editor state.

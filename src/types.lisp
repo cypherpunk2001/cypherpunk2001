@@ -166,8 +166,8 @@
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player npcs entities id-source audio ui render assets camera editor
-  combat-events client-intent net-role net-requests)
+  world player players npcs entities id-source audio ui render assets camera editor
+  combat-events client-intent net-role net-requests net-player-id)
 
 (defun queue-net-request (game request)
   ;; Queue a network request for the client to send.
@@ -374,14 +374,23 @@
           npcs)
         (make-array 0))))
 
-(defun make-entities (player npcs)
-  ;; Build a stable entity array containing NPCs followed by the player.
+(defun make-entities (players npcs)
+  ;; Build a stable entity array containing NPCs followed by players.
   (let* ((npc-count (length npcs))
-         (entities (make-array (1+ npc-count))))
+         (player-count (if players (length players) 0))
+         (entities (make-array (+ npc-count player-count))))
     (loop :for i :from 0 :below npc-count
           :do (setf (aref entities i) (aref npcs i)))
-    (setf (aref entities npc-count) player)
+    (loop :for i :from 0 :below player-count
+          :do (setf (aref entities (+ npc-count i)) (aref players i)))
     entities))
+
+(defun find-player-by-id (players id)
+  ;; Return the player with ID, if present.
+  (when (and players (> id 0))
+    (loop :for player :across players
+          :when (= (player-id player) id)
+            :do (return player))))
 
 (defgeneric entity-id (entity)
   (:documentation "Return the stable id for ENTITY."))

@@ -45,6 +45,12 @@
       (return-from send-net-message nil))
     (usocket:socket-send socket octets size :host host :port port)))
 
+(defun host-to-string (host)
+  ;; Convert a host (byte vector or string) to string.
+  (if (stringp host)
+      host
+      (format nil "~{~d~^.~}" (coerce host 'list))))
+
 (defun receive-net-message (socket buffer)
   ;; Receive a single UDP message if ready; returns message and sender.
   (when (usocket:wait-for-input socket :timeout 0 :ready-only t)
@@ -53,7 +59,116 @@
       (declare (ignore recv))
       (when (and size (> size 0))
         (let ((text (octets-to-string buffer size)))
-          (values (decode-net-message text) host port))))))
+          (values (decode-net-message text) (host-to-string host) port))))))
+
+(defstruct (net-client (:constructor %make-net-client))
+  ;; Server-side view of a connected client.
+  host port player intent last-heard)
+
+(defun make-net-client (host port player)
+  ;; Build a client record with an intent seeded to PLAYER position.
+  (%make-net-client :host host
+                    :port port
+                    :player player
+                    :intent (make-intent :target-x (player-x player)
+                                         :target-y (player-y player))
+                    :last-heard 0.0))
+
+(defun find-net-client (clients host port)
+  ;; Return the matching CLIENT for HOST/PORT, if any.
+  (loop :for client :in clients
+        :when (and (string= host (net-client-host client))
+                   (= port (net-client-port client)))
+          :do (return client)))
+
+(defun client-uses-player-p (clients player)
+  ;; Return true when PLAYER is already assigned to a CLIENT.
+  (loop :for client :in clients
+        :when (eq (net-client-player client) player)
+          :do (return t)))
+
+(defun find-unassigned-player (game clients)
+  ;; Return a player without a client assignment, if any.
+  (let ((players (game-players game)))
+    (when players
+      (loop :for player :across players
+            :unless (client-uses-player-p clients player)
+              :do (return player)))))
+
+(defun reset-player-for-client (player)
+  ;; Clear transient state when binding a player to a client.
+  (when player
+    (let ((intent (player-intent player)))
+      (when intent
+        (reset-frame-intent intent)
+        (clear-intent-target intent)))
+    (clear-player-auto-walk player)
+    (setf (player-attacking player) nil
+          (player-attack-hit player) nil
+          (player-hit-active player) nil
+          (player-attack-target-id player) 0
+          (player-follow-target-id player) 0)))
+
+(defun add-player-to-game (game player)
+  ;; Append PLAYER to GAME and refresh entity list.
+  (let* ((players (game-players game))
+         (count (if players (length players) 0))
+         (new-players (make-array (1+ count))))
+    (when players
+      (replace new-players players))
+    (setf (aref new-players count) player)
+    (setf (game-players game) new-players
+          (game-entities game)
+          (make-entities new-players (game-npcs game))))
+  player)
+
+(defun register-net-client (game clients host port &key (timestamp 0.0))
+  ;; Ensure a client exists for HOST/PORT and return updated list.
+  (let ((client (find-net-client clients host port)))
+    (if client
+        (progn
+          (setf (net-client-last-heard client) timestamp)
+          (values client clients nil))
+        (let* ((player (or (find-unassigned-player game clients)
+                           (add-player-to-game
+                            game
+                            (spawn-player-at-world (game-world game)
+                                                   (game-id-source game)))))
+               (client (make-net-client host port player)))
+          (reset-player-for-client player)
+          (setf (net-client-last-heard client) timestamp)
+          (values client (cons client clients) t)))))
+
+(defun apply-client-intents (clients)
+  ;; Copy each client intent into its assigned player intent.
+  (dolist (client clients)
+    (let* ((player (net-client-player client))
+           (server-intent (and player (player-intent player)))
+           (client-intent (net-client-intent client)))
+      (apply-client-intent server-intent client-intent)
+      (when (and client-intent
+                 (intent-requested-chat-message client-intent))
+        (clear-requested-chat-message client-intent)))))
+
+(defun reconcile-net-clients (game clients)
+  ;; Rebind clients to players that exist in the current game state.
+  (let ((players (game-players game)))
+    (dolist (client clients)
+      (let* ((current (net-client-player client))
+             (current-id (and current (player-id current)))
+             (matching (and current-id (find-player-by-id players current-id))))
+        (cond
+          ((and matching (not (eq matching current)))
+           (setf (net-client-player client) matching))
+          ((null matching)
+           (let ((assigned (or (find-unassigned-player game clients)
+                               (add-player-to-game
+                                game
+                                (spawn-player-at-world (game-world game)
+                                                       (game-id-source game))))))
+             (reset-player-for-client assigned)
+             (setf (net-client-player client) assigned)))))))
+  clients)
 
 (defun intent->plist (intent)
   ;; Convert INTENT into a plist suitable for network transport.
@@ -117,8 +232,10 @@
     (make-combat-event :type (getf plist :type)
                        :text (getf plist :text))))
 
-(defun apply-snapshot (game state event-plists)
+(defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
+  (when player-id
+    (setf (game-net-player-id game) player-id))
   (multiple-value-bind (zone-id zone-changed)
       (apply-game-state game state :apply-zone t)
     (when zone-changed
@@ -144,22 +261,24 @@
 (defun handle-server-load (game)
   ;; Load game state on the server and reset transient flags.
   (let* ((event-queue (game-combat-events game))
+         (players (game-players game))
          (player (game-player game))
          (world (game-world game))
          (zone-id (load-game game *save-filepath*)))
     (if zone-id
         (progn
-          (let ((server-intent (and player (player-intent player))))
-            (when server-intent
-              (reset-frame-intent server-intent)
-              (clear-intent-target server-intent)))
-          (when player
-            (clear-player-auto-walk player)
-            (setf (player-attacking player) nil
-                  (player-attack-hit player) nil
-                  (player-hit-active player) nil)
-            (mark-player-hud-stats-dirty player)
-            (mark-player-inventory-dirty player))
+          (when players
+            (loop :for current-player :across players
+                  :do (let ((server-intent (player-intent current-player)))
+                        (when server-intent
+                          (reset-frame-intent server-intent)
+                          (clear-intent-target server-intent)))
+                      (clear-player-auto-walk current-player)
+                      (setf (player-attacking current-player) nil
+                            (player-attack-hit current-player) nil
+                            (player-hit-active current-player) nil)
+                      (mark-player-hud-stats-dirty current-player)
+                      (mark-player-inventory-dirty current-player)))
           (when world
             (setf (world-minimap-spawns world)
                   (build-adjacent-minimap-spawns world player))
@@ -181,58 +300,75 @@
                                         :local-port port))
          (recv-buffer (make-net-buffer))
          (game (make-server-game))
-         (player (game-player game))
-         (client-intent (make-intent :target-x (player-x player)
-                                     :target-y (player-y player)))
-         (client-host nil)
-         (client-port nil))
+         (clients nil)
+         (stop-flag nil)
+         (stop-reason nil))
     (format t "~&SERVER: listening on ~a:~d~%" host port)
     (finish-output)
     (unwind-protect
-         (loop :with elapsed = 0.0
-               :with frames = 0
-               :with accumulator = 0.0
-               :until (or (and (> max-seconds 0.0)
-                               (>= elapsed max-seconds))
-                          (and (> max-frames 0)
-                               (>= frames max-frames)))
-               :do (loop
-                     (multiple-value-bind (message host port)
-                         (receive-net-message socket recv-buffer)
-                       (unless message
-                         (return))
-                       (setf client-host host
-                             client-port port)
-                       (case (getf message :type)
-                         (:hello nil)
-                         (:intent
-                          (apply-intent-plist
-                           client-intent
-                           (getf message :payload)))
-                         (:save
-                          (when (save-game game *save-filepath*)
-                            (emit-hud-message-event (game-combat-events game)
-                                                    "Game saved.")))
-                         (:load
-                          (handle-server-load game)))))
-                   (let ((dt *sim-tick-seconds*))
-                     (incf elapsed dt)
-                     (incf frames)
-                     (multiple-value-bind (new-acc transitions)
-                         (server-step game client-intent dt accumulator)
-                       (setf accumulator new-acc)
-                       (dotimes (_ transitions)
-                         (declare (ignore _)))))
-                   (when (and client-host client-port)
-                     (let* ((events (pop-combat-events (game-combat-events game)))
-                            (message (list :type :snapshot
-                                           :state (serialize-game-state game
-                                                                        :include-visuals t)
-                                           :events (mapcar #'combat-event->plist events))))
-                       (send-net-message socket message
-                                         :host client-host
-                                         :port client-port)))
-                   (sleep *sim-tick-seconds*))
+         (handler-case
+             (loop :with elapsed = 0.0
+                   :with frames = 0
+                   :with accumulator = 0.0
+                   :until (or stop-flag
+                              (and (> max-seconds 0.0)
+                                   (>= elapsed max-seconds))
+                              (and (> max-frames 0)
+                                   (>= frames max-frames)))
+                   :do (loop
+                         (multiple-value-bind (message host port)
+                             (receive-net-message socket recv-buffer)
+                           (unless message
+                             (return))
+                           (multiple-value-bind (client next-clients _new)
+                               (register-net-client game clients host port
+                                                    :timestamp elapsed)
+                             (declare (ignore _new))
+                             (setf clients next-clients)
+                             (case (getf message :type)
+                               (:hello nil)
+                               (:intent
+                                (when client
+                                  (apply-intent-plist
+                                   (net-client-intent client)
+                                   (getf message :payload))))
+                               (:save
+                                (when (save-game game *save-filepath*)
+                                  (emit-hud-message-event (game-combat-events game)
+                                                          "Game saved.")))
+                               (:load
+                                (handle-server-load game)
+                                (setf clients
+                                      (reconcile-net-clients game clients)))))))
+                       (apply-client-intents clients)
+                       (let ((dt *sim-tick-seconds*))
+                         (incf elapsed dt)
+                         (incf frames)
+                         (multiple-value-bind (new-acc transitions)
+                             (server-step game nil dt accumulator)
+                           (setf accumulator new-acc)
+                           (dotimes (_ transitions)
+                             (declare (ignore _)))))
+                       (when clients
+                         (let* ((events (pop-combat-events (game-combat-events game)))
+                                (event-plists (mapcar #'combat-event->plist events))
+                                (state (serialize-game-state game :include-visuals t)))
+                           (dolist (client clients)
+                             (send-net-message socket
+                                               (list :type :snapshot
+                                                     :state state
+                                                     :events event-plists
+                                                     :player-id (player-id
+                                                                 (net-client-player client)))
+                                               :host (net-client-host client)
+                                               :port (net-client-port client)))))
+                       (sleep *sim-tick-seconds*))
+           #+sbcl
+           (sb-sys:interactive-interrupt ()
+             (setf stop-flag t stop-reason "interrupt")))
+      (when stop-reason
+        (format t "~&SERVER: shutdown requested (~a).~%" stop-reason)
+        (finish-output))
       (usocket:socket-close socket))))
 
 (defun run-client (&key (host *net-default-host*)
@@ -267,7 +403,8 @@
                        (send-intent-message socket (game-client-intent game))
                        (clear-requested-chat-message (game-client-intent game))
                        (let ((latest-state nil)
-                             (latest-events nil))
+                             (latest-events nil)
+                             (latest-player-id nil))
                          (loop
                            (multiple-value-bind (message _host _port)
                                (receive-net-message socket recv-buffer)
@@ -276,13 +413,16 @@
                                (return))
                              (case (getf message :type)
                                (:snapshot
-                                (setf latest-state (getf message :state))
+                                (setf latest-state (getf message :state)
+                                      latest-player-id (or (getf message :player-id)
+                                                           latest-player-id))
                                 (dolist (event (getf message :events))
                                   (push event latest-events))))))
                          (when latest-state
-                           (apply-snapshot game latest-state (nreverse latest-events))))
+                           (apply-snapshot game latest-state (nreverse latest-events)
+                                           :player-id latest-player-id))))
                        (process-combat-events game)
                        (draw-game game)))
         (shutdown-game game)
         (usocket:socket-close socket)
-        (raylib:close-audio-device)))))
+        (raylib:close-audio-device))))

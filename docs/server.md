@@ -9,14 +9,14 @@ Why we do it this way
 
 What it does
 - Builds authoritative simulation state without client-only subsystems.
-- Copies client intent into the authoritative server intent each frame.
+- Spawns a primary player plus a `players` array for multi-client simulation.
 - Runs fixed-tick simulation steps and reports zone transitions.
 
 Key functions
-- `make-sim-state`: build world/player/NPCs/entities/id-source/combat-events without client subsystems.
+- `spawn-player-at-world`: spawn a player on a valid open tile near the world spawn center.
+- `make-sim-state`: build world/player/players/NPCs/entities/id-source/combat-events without client subsystems.
 - `make-server-game`: construct a headless game struct (audio/ui/render/assets/camera/editor are nil; net role is `:server`).
 - `apply-client-intent`: copy the client intent payload into the server intent.
-- One-shot requests like chat are cleared from the client intent after being applied.
 - `server-step`: apply client intent and run fixed-tick simulation steps.
 - `run-headless`: convenience loop for headless simulation (no rendering).
 
