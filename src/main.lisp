@@ -210,24 +210,34 @@
                                       (update-target-from-minimap player player-intent ui world
                                                                   dt mouse-clicked mouse-down))))
             (unless (or click-consumed minimap-handled)
-              (when mouse-clicked
-                (multiple-value-bind (npc world-x world-y)
-                    (find-npc-at-screen npcs world player camera mouse-x mouse-y)
-                  (if npc
-                      (set-player-attack-target player player-intent npc t)
-                      (multiple-value-bind (object obj-world-x obj-world-y)
-                          (find-object-at-screen world player camera mouse-x mouse-y)
-                        (declare (ignore obj-world-x obj-world-y))
-                        (if object
-                            (set-player-pickup-target player player-intent world
-                                                      (getf object :id)
-                                                      (getf object :x)
-                                                      (getf object :y)
-                                                      t)
-                            (set-player-walk-target player player-intent world-x world-y t)))))
-              (unless mouse-clicked
-                (update-target-from-mouse player player-intent camera dt
-                                          mouse-clicked mouse-down)))))))
+              (let ((mouse-npc nil)
+                    (mouse-object nil))
+                (when (or mouse-clicked mouse-down)
+                  (multiple-value-bind (world-x world-y)
+                      (screen-to-world mouse-x mouse-y
+                                       (player-x player)
+                                       (player-y player)
+                                       (camera-offset camera)
+                                       (camera-zoom camera))
+                    (setf mouse-npc (find-npc-at-world npcs world world-x world-y)
+                          mouse-object (find-object-at-world world world-x world-y))
+                    (when mouse-clicked
+                      (cond
+                        (mouse-npc
+                         (set-player-attack-target player player-intent mouse-npc t))
+                        (mouse-object
+                         (set-player-pickup-target player player-intent world
+                                                   (getf mouse-object :id)
+                                                   (getf mouse-object :x)
+                                                   (getf mouse-object :y)
+                                                   t))
+                        (t
+                         (update-target-from-mouse player player-intent camera dt
+                                                   mouse-clicked mouse-down))))))
+                (when (and mouse-down (not mouse-clicked)
+                           (not mouse-npc) (not mouse-object))
+                  (update-target-from-mouse player player-intent camera dt
+                                            mouse-clicked mouse-down)))))))
       (unless (or (editor-active editor)
                   (ui-inventory-open ui))
         (update-input-direction player player-intent mouse-clicked))

@@ -30,11 +30,11 @@ mmorpg/
 
 ## Current Task
 
-Needs improved:
+Regression discovered:
 
-UI messages below the stats should probably fade after a little time.
+We used to be able to hold down the mouse click button anywhere on the world tiles and it would continually walk in that direction. It no longer works. I mean, yes we want the yellow X and so forth to behave the same, when click it makes yellow x and moves char there, but without breaking that -- if player continues to hold down the mouse button, it just continue walking around and refresh with the mouse every X second of (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 
-And arrows are still black bordered when placed on the green tile i dont see the green grass. For example if I place down a collision object in mode 2, the transparency allows the mode 1 bottom layer to show (e.g. grass). We just need the same functionality for mode 3 items, they sit on top of the mode 1 bottom layer in the same way, they just are not collision objects, but instead are pick-upable and special :D
+
 ---
 
 ## Future Tasks / Roadmap
