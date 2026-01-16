@@ -34,6 +34,8 @@
 (defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))
 ;; Marker color for attack targets.
 (defparameter *inventory-size* 20) ;; Player inventory slots.
+(defparameter *equipment-slot-ids* #(:head :body :legs :weapon :offhand :accessory))
+;; Equipment slot order used by the equipment vector.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
 (defparameter *editor-move-speed* 360.0) ;; Movement speed for editor camera.
 (defparameter *editor-start-enabled* nil) ;; When true, editor mode starts enabled.
@@ -195,6 +197,7 @@
 (defparameter +key-q+ (cffi:foreign-enum-value 'raylib:keyboard-key :q)) ;; Raylib keycode for the Q key.
 (defparameter +key-e+ (cffi:foreign-enum-value 'raylib:keyboard-key :e)) ;; Raylib keycode for the E key.
 (defparameter +key-z+ (cffi:foreign-enum-value 'raylib:keyboard-key :z)) ;; Raylib keycode for the Z key.
+(defparameter +key-i+ (cffi:foreign-enum-value 'raylib:keyboard-key :i)) ;; Raylib keycode for the I key.
 (defparameter +key-x+ (cffi:foreign-enum-value 'raylib:keyboard-key :x)) ;; Raylib keycode for the X key.
 (defparameter +key-one+ (cffi:foreign-enum-value 'raylib:keyboard-key :one)) ;; Raylib keycode for the 1 key.
 (defparameter +key-two+ (cffi:foreign-enum-value 'raylib:keyboard-key :two)) ;; Raylib keycode for the 2 key.

@@ -12,14 +12,19 @@ What it does
 - Applies training-mode XP splits (`:attack`, `:strength`, `:defense`, `:balanced`).
 - Grants hitpoints XP on every combat award using `*combat-hitpoints-xp-multiplier*`.
 - Computes simple combat levels and melee hit chance/damage from stats.
-- Adds inventory stacking and loot-table rolls for NPC drops.
+- Adds inventory stacking, removal, and loot-table rolls for NPC drops.
+- Applies equipment stat modifiers when items are equipped or unequipped.
+- Clamps current HP to the effective max after equipment modifier changes.
+- Refreshes cached inventory lines for the inventory overlay.
+- Picks up placed world objects into inventory when the player steps on them.
 
 Key functions
 - `xp->level`, `level->xp`, `award-combat-xp`
 - `melee-hit-p`, `roll-melee-hit`, `roll-melee-damage`
 - `ensure-player-hud-stats`, `refresh-player-hud-stats`
 - `combat-level`, `combatant-max-hp`
-- `inventory-add`, `award-npc-loot`
+- `inventory-add`, `inventory-remove`, `equip-item`, `unequip-item`, `award-npc-loot`
+- `ensure-player-inventory`, `update-object-pickups`
 
 Walkthrough: awarding XP on a hit
 1) A successful hit computes damage.

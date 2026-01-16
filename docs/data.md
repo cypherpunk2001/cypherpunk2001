@@ -12,14 +12,15 @@ Key responsibilities
 - Read `data/game-data.lisp` without evaluating code, including keyword section
   headers (e.g., `:animation-sets`) and single-plist variants.
 - Apply tunables to config variables.
-- Register animation sets, NPC archetypes, items, and loot tables into hash tables.
+- Register animation sets, NPC archetypes, items, object archetypes, and loot tables into hash tables.
 - Validate section entries so malformed data fails fast.
+- Item archetypes can include equipment slots and stat modifier values for progression.
 
 Key functions
 - `load-game-data`: entry point; clears registries, loads data, registers defaults.
 - `ensure-game-data`: guard that loads once when needed.
 - `get-animation-set`, `find-npc-archetype`, `npc-archetype-ids`: lookup helpers.
-- `find-item-archetype`, `find-loot-table`: loot/inventory lookups.
+- `find-item-archetype`, `find-object-archetype`, `find-loot-table`: loot/inventory lookups.
 
 Walkthrough: startup data load
 1) `load-game-data` reads `data/game-data.lisp` as plain data (single plist or
@@ -72,6 +73,13 @@ Example: item + loot table
 ```lisp
 :items
  (:coins (:name "Coins" :stack-size 9999))
+ (:rusty-sword (:name "Rusty Sword" :stack-size 1 :equip-slot :weapon :attack 1))
+
+:object-archetypes
+ (:arrows
+  (:name "Arrows"
+   :sprite "../assets/1 Characters/Other/Arrow.png"
+   :item-id :arrows))
 
 :loot-tables
  (:rat

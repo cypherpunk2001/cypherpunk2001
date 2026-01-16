@@ -22,8 +22,8 @@ Key functions
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
 - `shutdown-game`: unloads editor tilesets and rendering assets.
 - Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
-- `update-client-input`: reads raylib input, writes player intent, updates hovered NPC UI, and lets outside context-menu clicks fall through.
-- `update-sim`: runs one fixed-tick simulation step from intent and feeds UI combat logging.
+- `update-client-input`: reads raylib input, writes player intent, updates hovered NPC UI, and toggles the inventory overlay.
+- `update-sim`: runs one fixed-tick simulation step from intent, resolves object pickups, and feeds UI combat logging.
 - `update-game`: orchestrates fixed-step simulation and returns the accumulator.
 - `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
 

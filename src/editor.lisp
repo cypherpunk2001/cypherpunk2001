@@ -187,6 +187,10 @@
         ids
         (vector *npc-default-archetype-id*))))
 
+(defun load-editor-objects ()
+  ;; Build the object palette from loaded object archetypes.
+  (object-archetype-ids))
+
 (defun editor-refresh-zone-files (editor)
   ;; Refresh the zone file list and active index.
   (let* ((root (editor-zone-root editor))
@@ -382,6 +386,13 @@
       (let ((index (mod (editor-spawn-index editor) (length spawns))))
         (aref spawns index)))))
 
+(defun editor-current-object-id (editor)
+  ;; Return the currently selected object archetype ID.
+  (let ((objects (editor-object-catalog editor)))
+    (when (and objects (> (length objects) 0))
+      (let ((index (mod (editor-object-index editor) (length objects))))
+        (aref objects index)))))
+
 (defun editor-mode-label-text (mode)
   ;; Convert editor mode into a display label.
   (ecase mode
@@ -430,7 +441,13 @@
             ((eq mode :collision)
              (format nil "Layer: Collision (~a)" (editor-collision-layer-id editor)))
             ((eq mode :object)
-             (format nil "Layer: Top (~a)" (editor-object-layer-id editor)))
+             (let* ((object-id (editor-current-object-id editor))
+                    (archetype (and object-id (find-object-archetype object-id)))
+                    (label (or (and archetype (object-archetype-name archetype))
+                               object-id)))
+               (if label
+                   (format nil "Object: ~a" label)
+                   "Object: none")))
             (t "Layer: none"))))
   )
 
@@ -482,6 +499,7 @@
          (tile-count (tileset-tile-count (assets-tileset assets)))
          (zone-root (resolve-zone-root *zone-root*))
          (spawns (load-editor-spawns))
+         (objects (load-editor-objects))
          (editor (%make-editor :active nil
                                :mode :tile
                                :camera-x (player-x player)
@@ -505,6 +523,8 @@
                                :zone-history nil
                                :spawn-catalog spawns
                                :spawn-index 0
+                               :object-catalog objects
+                               :object-index 0
                                :status-label nil
                                :status-timer 0.0
                                :export-path nil
@@ -636,6 +656,14 @@
     (when (and spawns (> (length spawns) 0))
       (setf (editor-spawn-index editor)
             (mod (+ (editor-spawn-index editor) delta) (length spawns)))
+      (update-editor-labels editor))))
+
+(defun editor-adjust-object (editor delta)
+  ;; Move the selected object index by DELTA.
+  (let ((objects (editor-object-catalog editor)))
+    (when (and objects (> (length objects) 0))
+      (setf (editor-object-index editor)
+            (mod (+ (editor-object-index editor) delta) (length objects)))
       (update-editor-labels editor))))
 
 (defun editor-tileset-preview-layout (editor)
@@ -860,35 +888,16 @@
                (when painted
                  (setf (editor-dirty editor) t))))
             (:object
-             (let* ((tileset-id (editor-current-tileset-id editor))
-                    (tileset (editor-current-tileset editor))
-                    (layer (ensure-zone-layer zone (editor-object-layer-id editor)
-                                              :tileset-id tileset-id))
-                    (brush-w (max 1 (editor-selection-width editor)))
-                    (brush-h (max 1 (editor-selection-height editor)))
-                    (chunk-size (zone-chunk-size zone))
-                    (painted nil))
-               (multiple-value-bind (origin-x origin-y columns)
-                   (editor-selection-origin editor tileset)
-                 (loop :for dy :from 0 :below brush-h
-                       :for world-y = (+ ty dy)
-                       :do (loop :for dx :from 0 :below brush-w
-                                 :for world-x = (+ tx dx)
-                                 :do (when (zone-tile-in-bounds-p zone world-x world-y)
-                                       (let ((value (if right-down
-                                                        0
-                                                        (+ (+ origin-x dx)
-                                                           (* (+ origin-y dy) columns)))))
-                                         (when tileset-id
-                                           (editor-clear-layer-tiles zone
-                                                                     (editor-object-layer-id editor)
-                                                                     tileset-id
-                                                                     chunk-size
-                                                                     world-x world-y))
-                                         (zone-layer-set-tile layer chunk-size world-x world-y value)
-                                         (setf painted t))))))
-               (when painted
-                 (setf (editor-dirty editor) t))))
+             (if right-down
+                 (progn
+                   (zone-remove-object-at zone tx ty)
+                   (setf (editor-dirty editor) t))
+                 (let ((object-id (editor-current-object-id editor)))
+                   (when object-id
+                     (zone-add-object zone (list :id object-id
+                                                 :x tx
+                                                 :y ty))
+                     (setf (editor-dirty editor) t)))))
             (:spawn
              (if right-down
                  (progn
@@ -922,15 +931,21 @@
         (editor-update-mode editor)
         (editor-handle-zone-actions editor game)
         (when (raylib:is-key-pressed +key-q+)
-          (if (eq (editor-mode editor) :spawn)
-              (editor-adjust-spawn editor -1)
-              (when (member (editor-mode editor) '(:tile :collision :object))
-                (editor-adjust-tileset editor game assets -1))))
+          (cond
+            ((eq (editor-mode editor) :spawn)
+             (editor-adjust-spawn editor -1))
+            ((eq (editor-mode editor) :object)
+             (editor-adjust-object editor -1))
+            ((member (editor-mode editor) '(:tile :collision))
+             (editor-adjust-tileset editor game assets -1))))
         (when (raylib:is-key-pressed +key-e+)
-          (if (eq (editor-mode editor) :spawn)
-              (editor-adjust-spawn editor 1)
-              (when (member (editor-mode editor) '(:tile :collision :object))
-                (editor-adjust-tileset editor game assets 1))))
+          (cond
+            ((eq (editor-mode editor) :spawn)
+             (editor-adjust-spawn editor 1))
+            ((eq (editor-mode editor) :object)
+             (editor-adjust-object editor 1))
+            ((member (editor-mode editor) '(:tile :collision))
+             (editor-adjust-tileset editor game assets 1))))
         (editor-handle-tileset-picker editor)
         (when (raylib:is-key-pressed +key-f5+)
           (editor-export-zone editor world))
@@ -999,7 +1014,7 @@
       (incf y line)
       (raylib:draw-text (editor-object-label-text editor) x y 16 (ui-menu-text-color ui))
       (incf y line)
-      (raylib:draw-text "1 tiles | 2 collision | 3 objects | 4 npcs | Q/E sheet (1/2/3) | Q/E spawn (4) | click tile | shift+click block | F5 export" x y 16
+      (raylib:draw-text "1 tiles | 2 collision | 3 objects | 4 npcs | Q/E sheet (1/2) | Q/E object (3) | Q/E spawn (4) | click tile | shift+click block | F5 export" x y 16
                         (ui-menu-text-color ui))
       (incf y line)
       (raylib:draw-text "F6 new | F7 delete | F8/F9 cycle"

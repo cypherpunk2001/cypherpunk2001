@@ -10,7 +10,7 @@
  (:minimap-height 220)
  (:minimap-padding 12)
  (:minimap-point-size 4)
- (:editor-start-enabled nil)
+ (:editor-start-enabled t)
  (:music-volume-steps 10)
  (:music-default-volume-level 1)
  (:tileset-path "../assets/Zelda-like/Overworld.png")
@@ -126,6 +126,29 @@
   (:name "Goblin Ear"
    :stack-size 1
    :value 4))
+ (:arrows
+  (:name "Arrows"
+   :stack-size 99
+   :value 1))
+ (:leather-cap
+  (:name "Leather Cap"
+   :stack-size 1
+   :value 9
+   :equip-slot :head
+   :defense 1))
+ (:rusty-sword
+  (:name "Rusty Sword"
+   :stack-size 1
+   :value 12
+   :equip-slot :weapon
+   :attack 1))
+
+:object-archetypes
+ (:arrows
+  (:name "Arrows"
+   :sprite "../assets/1 Characters/Other/Arrow.png"
+   :item-id :arrows
+   :count 1))
 
 :loot-tables
  (:rat
@@ -133,13 +156,15 @@
    :entries
    ((:coins 10 1 5)
     (:bones 2 1 1)
-    (:rat-tail 1 1 1))))
+    (:rat-tail 1 1 1)
+    (:leather-cap 1 1 1))))
  (:goblin
   (:rolls 1
    :entries
    ((:coins 10 2 8)
     (:bones 2 1 1)
-    (:goblin-ear 1 1 1))))
+    (:goblin-ear 1 1 1)
+    (:rusty-sword 1 1 1))))
  (:orc
   (:rolls 1
    :entries

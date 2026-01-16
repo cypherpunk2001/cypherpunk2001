@@ -11,7 +11,7 @@ Why we do it this way
 Core UX
 - Toggle Editor Mode from the Escape menu.
 - Move the editor camera freely to inspect tiles.
-- Paint base tiles, paint collision tiles, paint top-layer objects, or place spawn points.
+- Paint base tiles, paint collision tiles, place object pickups, or place spawn points.
 - Export the full zone to `data/`.
 - Create, delete, and cycle zones from hotkeys.
 
@@ -20,7 +20,7 @@ Quick start (recommended flow)
 2) Tile mode (`1`), use `Q/E` to cycle tileset sheets, then click a tile in the sheet preview.
 3) Left-click to paint, right-click to erase.
 4) Collision mode (`2`) to paint blocked tiles (LMB add, RMB remove).
-5) Object mode (`3`) to paint detail tiles above the base (LMB add, RMB remove).
+5) Object mode (`3`) to place object pickups (LMB add, RMB remove); `Q/E` cycles objects.
 6) Spawn mode (`4`) to place NPC spawns (LMB add, RMB remove); `Q/E` cycles spawn types.
 7) Press `F5` to export the full zone to `data/`.
 
@@ -34,13 +34,15 @@ What the on-screen text means
 - `Mode` = current brush (tile/collision/object/spawn).
 - `Sheet` = active tileset sheet and its index in the catalog.
 - `Tile` = current tile index out of the tileset sheet (shows brush size when >1x1).
-- `Layer` = layer ID used by the active paint mode.
+- `Layer` = layer ID used by the tile/collision paint modes.
+- `Object` = current object archetype selection.
 - `Spawn` = current NPC archetype selection.
 
 Controls (default)
 - `1` tile mode (base), `2` collision mode (blocking + top), `3` object mode (top), `4` spawn mode.
-- `Q`/`E` cycle tileset sheets (tile/collision/object modes), click a tile to select it.
+- `Q`/`E` cycle tileset sheets (tile/collision modes), click a tile to select it.
 - `Shift` + `LMB` in the sheet selects a rectangular brush for multi-tile painting.
+- `Q`/`E` cycle object types (object mode).
 - `Q`/`E` cycle spawns (spawn mode).
 - `WASD`/arrows move the editor camera.
 - `LMB` paint, `RMB` erase.
@@ -59,6 +61,9 @@ Editor asset paths (configurable)
 Spawn palette
 - Spawn selections are pulled from NPC archetypes loaded in `data/game-data.lisp`.
 
+Object palette
+- Object selections are pulled from object archetypes loaded in `data/game-data.lisp`.
+
 Key responsibilities
 - Maintain editor state (`editor` struct) and cached UI labels.
 - Build a tileset catalog from `*editor-tileset-paths*`/`*editor-tileset-root*` and sync the active sheet.
@@ -70,7 +75,7 @@ Key responsibilities
 
 Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.
-- Use object mode for sprites with transparency so the base layer stays visible.
+- Use object mode for pickups that render from object archetype sprites.
 - Collision mode paints the selected tile into the collision layer and updates the collision map.
 - Export defaults to `*editor-export-path*` unless a zone path is already set.
 - Spawn mode writes `:spawns` into the zone file so runtime NPC placement can be data-driven.

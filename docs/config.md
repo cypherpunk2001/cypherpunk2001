@@ -12,7 +12,7 @@ Why we do it this way
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Fixed simulation timing (tick length and max catch-up steps).
-- Player stat defaults, XP tuning (including hitpoints share), and inventory sizing.
+- Player stat defaults, XP tuning (including hitpoints share), inventory sizing, and equipment slot order.
 - Click marker sizing, duration, thickness, and base colors for left/right click feedback.
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Music volume steps and the default startup level.
@@ -25,6 +25,7 @@ What lives here
 - Movement, combat, NPC behavior, respawn, and animation timings.
 - Debug overlay sizing/color for NPC AI text when logs are enabled.
 - Collision edge epsilon for fine-tuning tile contact behavior.
+- Raylib keycode constants used by input and editor hotkeys.
 
 How it connects
 - Values can be overridden by `data/game-data.lisp` via `load-game-data`.

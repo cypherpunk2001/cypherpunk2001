@@ -12,6 +12,7 @@ What it does
 - Handles menu click actions (quit, music, volume, debug, editor mode, fullscreen).
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
+- Tracks inventory overlay visibility for the `I` hotkey.
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 - Caches combat log lines for the debug overlay and HUD text sizing for stats.
 - Tracks a right-click context menu (position, options, target id, and Walk/Attack/Follow labels).

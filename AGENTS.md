@@ -30,18 +30,28 @@ mmorpg/
 
 ## Current Task
 
-Make red X (left click npc enemy) thicker / easier to see. Likewise yellow left click walking X should be shifted similarly.
+3) Inventory/equipment/loot + XP progression (data-driven archetypes)
+- You don’t need a full inventory system to split client/server. What you do want early is the pattern you’ll reuse:
+- Entities have an ID
+- Items are plain data
+- Server is authoritative over “give/remove item” and XP
+
+Needs improved:
+
+- combat logs that currently display in collision mode are actually really cool looking and a minimal version should display textual feedback during gameplay in the same area, such as "You are under attack!" or "Congratulations you are now level X!" Or "Congratulations you are now attack level XX!" etc.
+
+- Placing arrows down with 3, seems to not use a "top layer" like the colission layer (we're not saying this are colission items, but just that they should be on a top layer so as to utilize png transparency and show grass below (behind) arrows on the ground for example.
+
+- Right clicking on pick-up-able objects such as arrows should offer an additional pickup item context menu option as well as a "examine item" which simply gets info from the object class about what it is and states it for the player to see on the screen. The description can come from the character class, while the message can display in the above new player combat logs feedback area. Keep in mind that NPCS also should be right click examineable with some janky creative descriptions. Thanks.
+
+- Pressing 'i' pulls up the worst excuse for an "inventory" I have ever seen and isnt even visible behind the upper right mini map. Lets give a player a XX amount of slots and make a large overlayed inventory grid for items, lets make it be perhaps the same size as the ESC menu for consistency and the items sprites should show with the count of how many of the item type is beind held. and Each item should be right click drop-able using similar style context menu as what we use elsewhere.
+
 
 ---
 
 ## Future Tasks / Roadmap
 
 ### Near-term (foundation, priority order)
-3) Inventory/equipment/loot + XP progression (data-driven archetypes)
-- You don’t need a full inventory system to split client/server. What you do want early is the pattern you’ll reuse:
-- Entities have an ID
-- Items are plain data
-- Server is authoritative over “give/remove item” and XP
 
 4) Ability/skill system built on intent (cooldowns, cast times, resource costs)
 

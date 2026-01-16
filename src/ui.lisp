@@ -78,6 +78,7 @@
          (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
          (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
          (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
+         (inventory-open nil)
          (hover-npc-name nil)
          (context-open nil)
          (context-x 0)
@@ -179,6 +180,7 @@
               :menu-text-color menu-text-color
               :menu-button-color menu-button-color
               :menu-button-hover-color menu-button-hover-color
+              :inventory-open inventory-open
               :hover-npc-name hover-npc-name
               :context-open context-open
               :context-x context-x

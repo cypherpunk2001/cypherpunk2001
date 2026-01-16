@@ -11,7 +11,12 @@
 
 (defstruct (item-archetype (:constructor %make-item-archetype))
   ;; Static item data for inventory and loot.
-  id name stack-size value)
+  id name stack-size value
+  equip-slot attack strength defense hitpoints)
+
+(defstruct (object-archetype (:constructor %make-object-archetype))
+  ;; Static object data for world pickups.
+  id name sprite item-id count)
 
 (defstruct (loot-entry (:constructor %make-loot-entry))
   ;; Single weighted loot entry.
@@ -24,6 +29,7 @@
 (defparameter *animation-sets* (make-hash-table :test 'eq))
 (defparameter *npc-archetypes* (make-hash-table :test 'eq))
 (defparameter *item-archetypes* (make-hash-table :test 'eq))
+(defparameter *object-archetypes* (make-hash-table :test 'eq))
 (defparameter *loot-tables* (make-hash-table :test 'eq))
 (defparameter *game-data-loaded-p* nil)
 
@@ -128,19 +134,66 @@
   (let ((name (or (getf plist :name)
                   (string-capitalize (string id))))
         (stack-size (getf plist :stack-size 1))
-        (value (getf plist :value 0)))
+        (value (getf plist :value 0))
+        (equip-slot (getf plist :equip-slot nil))
+        (attack (getf plist :attack 0))
+        (strength (getf plist :strength 0))
+        (defense (getf plist :defense 0))
+        (hitpoints (getf plist :hitpoints 0)))
     (%make-item-archetype :id id
                           :name name
                           :stack-size (max 1 stack-size)
-                          :value value)))
+                          :value value
+                          :equip-slot equip-slot
+                          :attack attack
+                          :strength strength
+                          :defense defense
+                          :hitpoints hitpoints)))
+
+(defun object-archetype-from-plist (id plist)
+  ;; Build an object-archetype from plist values.
+  (let* ((name (or (getf plist :name)
+                   (string-capitalize (string id))))
+         (sprite (getf plist :sprite nil))
+         (item-id (getf plist :item-id nil))
+         (raw-count (getf plist :count nil))
+         (count (if (and raw-count (numberp raw-count))
+                    (max 1 (truncate raw-count))
+                    1)))
+    (%make-object-archetype :id id
+                            :name name
+                            :sprite sprite
+                            :item-id item-id
+                            :count count)))
 
 (defun register-item-archetype (id item)
   ;; Store ITEM under ID.
   (setf (gethash id *item-archetypes*) item))
 
+(defun register-object-archetype (id object)
+  ;; Store OBJECT under ID.
+  (setf (gethash id *object-archetypes*) object))
+
 (defun find-item-archetype (id)
   ;; Lookup item archetype by ID.
   (gethash id *item-archetypes*))
+
+(defun find-object-archetype (id)
+  ;; Lookup object archetype by ID.
+  (gethash id *object-archetypes*))
+
+(defun object-archetype-ids ()
+  ;; Return a vector of available object archetype IDs sorted by name.
+  (let ((ids nil))
+    (maphash (lambda (id _value)
+               (declare (ignore _value))
+               (push id ids))
+             *object-archetypes*)
+    (when ids
+      (setf ids (sort ids #'string< :key #'symbol-name)))
+    (if ids
+        (coerce ids 'vector)
+        (make-array 0))))
 
 (defun loot-entry-from-spec (spec)
   ;; Parse a loot entry spec of (item-id weight min max).
@@ -486,6 +539,14 @@
       (when id
         (register-item-archetype id (item-archetype-from-plist id plist))))))
 
+(defun load-object-archetypes (specs)
+  ;; Load object archetypes from data specs.
+  (dolist (pair (normalize-pairs specs))
+    (let ((id (first pair))
+          (plist (second pair)))
+      (when id
+        (register-object-archetype id (object-archetype-from-plist id plist))))))
+
 (defun load-loot-tables (specs)
   ;; Load loot tables from data specs.
   (dolist (pair (normalize-pairs specs))
@@ -507,6 +568,7 @@
     (clrhash *animation-sets*)
     (clrhash *npc-archetypes*)
     (clrhash *item-archetypes*)
+    (clrhash *object-archetypes*)
     (clrhash *loot-tables*)
     (register-default-animation-sets)
     (let ((data (read-game-data path)))
@@ -517,6 +579,7 @@
         (load-animation-sets (getf data :animation-sets))
         (load-npc-archetypes (getf data :npc-archetypes))
         (load-items (getf data :items))
+        (load-object-archetypes (getf data :object-archetypes))
         (load-loot-tables (getf data :loot-tables))))
     (ensure-default-npc-archetype)
     (ensure-default-items)

@@ -3,7 +3,7 @@
 
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
-  id x y dx dy intent stats inventory
+  id x y dx dy intent stats inventory equipment
   attack-target-id follow-target-id
   click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
@@ -14,6 +14,7 @@
   running run-stamina
   auto-right auto-left auto-down auto-up
   mouse-hold-timer
+  inventory-lines inventory-count inventory-dirty
   hud-stats-lines hud-stats-count hud-stats-dirty)
 
 (defstruct (npc (:constructor %make-npc))
@@ -49,6 +50,10 @@
 (defstruct (inventory (:constructor %make-inventory))
   ;; Inventory slots for a player.
   slots)
+
+(defstruct (equipment (:constructor %make-equipment))
+  ;; Equipped item IDs aligned to *equipment-slot-ids*.
+  items)
 
 (defparameter *player-hud-lines* 6) ;; Number of cached HUD lines for player stats.
 
@@ -90,6 +95,7 @@
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
+  inventory-open
   hover-npc-name
   context-open context-x context-y context-world-x context-world-y
   context-target-id context-has-attack context-has-follow
@@ -118,7 +124,7 @@
   down-idle down-walk down-attack
   up-idle up-walk up-attack
   side-idle side-walk side-attack
-  npc-animations
+  npc-animations object-textures
   blood-down blood-up blood-side
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
@@ -135,6 +141,7 @@
   tile-layer-id collision-layer-id object-layer-id
   zone-root zone-files zone-index zone-label zone-history
   spawn-catalog spawn-index
+  object-catalog object-index
   mode-label tile-label object-label-text status-label status-timer
   export-path dirty)
 
@@ -208,13 +215,20 @@
       (setf (aref slots i) (make-inventory-slot)))
     (%make-inventory :slots slots)))
 
+(defun make-equipment (&optional (slot-ids *equipment-slot-ids*))
+  ;; Build an equipment container aligned to SLOT-IDS.
+  (let ((items (make-array (length slot-ids) :initial-element nil)))
+    (%make-equipment :items items)))
+
 (defun make-player (start-x start-y &key (class *wizard-class*) id)
   ;; Construct a player state struct at the given start position.
   (let* ((intent (make-intent :target-x start-x :target-y start-y))
          (stats (make-player-stats))
          (max-hp (stat-block-base-level stats :hitpoints))
          (hud-lines (make-array (max 1 *player-hud-lines*)
-                                :initial-element "")))
+                                :initial-element ""))
+         (inventory-lines (make-array (max 1 *inventory-size*)
+                                      :initial-element "")))
     (%make-player :id (or id 0)
                   :x start-x
                   :y start-y
@@ -223,6 +237,7 @@
                   :intent intent
                   :stats stats
                   :inventory (make-inventory)
+                  :equipment (make-equipment)
                   :attack-target-id 0
                   :follow-target-id 0
                   :click-marker-x 0.0
@@ -251,6 +266,9 @@
                   :auto-down nil
                   :auto-up nil
                   :mouse-hold-timer 0.0
+                  :inventory-lines inventory-lines
+                  :inventory-count 0
+                  :inventory-dirty t
                   :hud-stats-lines hud-lines
                   :hud-stats-count 0
                   :hud-stats-dirty t)))

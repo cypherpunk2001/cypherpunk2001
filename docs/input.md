@@ -20,6 +20,7 @@ What it does
 - Right click opens a context menu with Walk here (always), Attack, and Follow (NPC only).
 - Tracks the NPC under the cursor for a top-middle HUD name display.
 - Updates camera zoom from the mouse wheel.
+- `I` toggles the inventory overlay.
 
 Key functions
 - `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,

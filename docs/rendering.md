@@ -11,25 +11,26 @@ Why we do it this way
 Pipeline overview
 1) Load textures in `load-assets` (tileset columns derive from texture width).
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
-3) Draw entities via `draw-entity` (NPCs and player).
+3) Draw placed zone objects and entities (NPCs + player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
+5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name), inventory overlay, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
-- `draw-world`.
+- `draw-world`, `draw-zone-objects`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
-- `draw-hud`, `draw-combat-log`, `draw-click-marker`, `draw-context-menu`,
+- `draw-hud`, `draw-inventory`, `draw-combat-log`, `draw-click-marker`, `draw-context-menu`,
   `draw-minimap`, `draw-editor-tileset-preview`, `draw-menu`, `draw-game`.
 - `draw-loading-overlay` for zone swap feedback.
 
 Walkthrough: world rendering
 1) Compute visible tile bounds from camera and player position.
 2) Draw floor tiles and zone layers; wall map tiles render only when no zone is loaded.
-3) If debug is enabled, overlay collision/bounds grid.
-4) Draw player and NPCs in world space.
-5) Draw click markers in world space above entities.
-6) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
+3) Draw placed zone objects in world space.
+4) If debug is enabled, overlay collision/bounds grid.
+5) Draw player and NPCs in world space.
+6) Draw click markers in world space above entities.
+7) Draw HUD, inventory overlay, minimap, loading overlay, editor overlays, and pause menu in screen space.
 
 Example: draw flow
 ```lisp
@@ -48,6 +49,7 @@ Design note
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
 - The HUD shows the hovered NPC name at the top-center when the cursor is over one.
+- The inventory overlay renders from the cached inventory lines when `I` is toggled on.
 - The minimap recenters on the player, so you can always click ahead to set a target.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
   see potential enemies before crossing. Previews render while you are pushing

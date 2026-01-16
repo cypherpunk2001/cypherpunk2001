@@ -122,13 +122,20 @@
   (let ((max-hit (melee-max-hit combatant fallback)))
     (1+ (random (max 1 max-hit)))))
 
+(defun clamp-player-hp (player)
+  ;; Clamp the player's current HP to the effective max.
+  (let ((max-hp (combatant-max-hp player)))
+    (when (> (player-hp player) max-hp)
+      (setf (player-hp player) max-hp))
+    (when (< (player-hp player) 0)
+      (setf (player-hp player) 0))
+    max-hp))
+
 (defun apply-hitpoints-level-up (player old new)
   ;; Increase current HP when hitpoints levels increase.
   (when (> new old)
     (incf (player-hp player) (- new old)))
-  (let ((max-hp (combatant-max-hp player)))
-    (when (> (player-hp player) max-hp)
-      (setf (player-hp player) max-hp))))
+  (clamp-player-hp player))
 
 (defun award-hitpoints-xp (player amount)
   ;; Award XP to hitpoints and sync current HP.
@@ -201,6 +208,11 @@
   (when player
     (setf (player-hud-stats-dirty player) t)))
 
+(defun mark-player-inventory-dirty (player)
+  ;; Flag the player's inventory cache for refresh.
+  (when player
+    (setf (player-inventory-dirty player) t)))
+
 (defun format-xp-awards (attack-xp strength-xp defense-xp hitpoints-xp)
   ;; Format XP awards for combat logging.
   (let ((parts nil))
@@ -257,6 +269,43 @@
   (when (and player (player-hud-stats-dirty player))
     (refresh-player-hud-stats player)))
 
+(defun inventory-slot-label (item-id count)
+  ;; Build a label for ITEM-ID with COUNT.
+  (let* ((item (and item-id (find-item-archetype item-id)))
+         (name (or (and item (item-archetype-name item))
+                   (and item-id (string-capitalize (string item-id)))
+                   "Unknown")))
+    (if (> count 1)
+        (format nil "~a x~d" name count)
+        name)))
+
+(defun refresh-player-inventory (player)
+  ;; Refresh cached inventory lines for the player.
+  (let* ((inventory (and player (player-inventory player)))
+         (lines (and player (player-inventory-lines player)))
+         (slots (and inventory (inventory-slots inventory))))
+    (when (and inventory lines slots)
+      (let* ((cap (length lines))
+             (count 0))
+        (labels ((set-line (text)
+                   (when (< count cap)
+                     (setf (aref lines count) text)
+                     (incf count))))
+          (loop :for slot :across slots
+                :for item-id = (inventory-slot-item-id slot)
+                :for item-count = (inventory-slot-count slot)
+                :when (and item-id (> item-count 0))
+                  :do (set-line (inventory-slot-label item-id item-count)))
+          (loop :for i :from count :below cap
+                :do (setf (aref lines i) "")))
+        (setf (player-inventory-count player) count
+              (player-inventory-dirty player) nil)))))
+
+(defun ensure-player-inventory (player)
+  ;; Refresh inventory lines when flagged dirty.
+  (when (and player (player-inventory-dirty player))
+    (refresh-player-inventory player)))
+
 (defun npc-kill-xp (npc)
   ;; Return optional bonus XP for defeating NPC.
   (let ((archetype (npc-archetype npc)))
@@ -308,6 +357,169 @@
                     (decf remaining add))))
     remaining))
 
+(defun inventory-remove (inventory item-id count)
+  ;; Remove COUNT of ITEM-ID from INVENTORY, returning leftover count.
+  (let* ((remaining (max 0 (truncate count)))
+         (slots (and inventory (inventory-slots inventory))))
+    (when (and slots (> remaining 0))
+      (loop :for slot :across slots
+            :while (> remaining 0)
+            :when (eq (inventory-slot-item-id slot) item-id)
+              :do (let ((take (min remaining (inventory-slot-count slot))))
+                    (decf (inventory-slot-count slot) take)
+                    (decf remaining take)
+                    (when (inventory-slot-empty-p slot)
+                      (setf (inventory-slot-item-id slot) nil
+                            (inventory-slot-count slot) 0)))))
+    remaining))
+
+(defun grant-inventory-item (player item-id count)
+  ;; Authoritatively add items to PLAYER's inventory.
+  (let* ((inventory (and player (player-inventory player)))
+         (amount (max 0 (truncate count))))
+    (if inventory
+        (let ((leftover (inventory-add inventory item-id amount)))
+          (when (< leftover amount)
+            (mark-player-inventory-dirty player))
+          leftover)
+        amount)))
+
+(defun consume-inventory-item (player item-id count)
+  ;; Authoritatively remove items from PLAYER's inventory.
+  (let* ((inventory (and player (player-inventory player)))
+         (amount (max 0 (truncate count))))
+    (if inventory
+        (let ((leftover (inventory-remove inventory item-id amount)))
+          (when (< leftover amount)
+            (mark-player-inventory-dirty player))
+          leftover)
+        amount)))
+
+(defun item-equipment-slot (item-id)
+  ;; Return the equipment slot for ITEM-ID, if any.
+  (let ((item (and item-id (find-item-archetype item-id))))
+    (and item (item-archetype-equip-slot item))))
+
+(defun equipment-slot-index (slot-id &optional (slot-ids *equipment-slot-ids*))
+  ;; Return the index for SLOT-ID in SLOT-IDS.
+  (position slot-id slot-ids))
+
+(defun equipment-slot-item (equipment slot-id)
+  ;; Return the equipped item in SLOT-ID.
+  (let* ((items (and equipment (equipment-items equipment)))
+         (index (and items (equipment-slot-index slot-id))))
+    (and index (< index (length items)) (aref items index))))
+
+(defun set-equipment-slot-item (equipment slot-id item-id)
+  ;; Set the equipped ITEM-ID for SLOT-ID.
+  (let* ((items (and equipment (equipment-items equipment)))
+         (index (and items (equipment-slot-index slot-id))))
+    (when (and index (< index (length items)))
+      (setf (aref items index) item-id)
+      t)))
+
+(defun apply-item-modifiers (stats item-id direction)
+  ;; Apply item modifiers to STATS (DIRECTION is 1 or -1).
+  (let ((item (and item-id (find-item-archetype item-id)))
+        (mods (and stats (stat-block-modifiers stats))))
+    (when (and item mods)
+      (let ((attack (or (item-archetype-attack item) 0))
+            (strength (or (item-archetype-strength item) 0))
+            (defense (or (item-archetype-defense item) 0))
+            (hitpoints (or (item-archetype-hitpoints item) 0)))
+        (incf (stat-modifiers-attack mods) (* direction attack))
+        (incf (stat-modifiers-strength mods) (* direction strength))
+        (incf (stat-modifiers-defense mods) (* direction defense))
+        (incf (stat-modifiers-hitpoints mods) (* direction hitpoints)))
+      t)))
+
+(defun equip-item (player item-id)
+  ;; Equip ITEM-ID from the player's inventory, returning true when equipped.
+  (let* ((slot-id (item-equipment-slot item-id))
+         (equipment (and player (player-equipment player)))
+         (inventory (and player (player-inventory player)))
+         (stats (and player (player-stats player))))
+    (when (and slot-id equipment inventory stats)
+      (let* ((items (equipment-items equipment))
+             (index (and items (equipment-slot-index slot-id))))
+        (when (and index (< index (length items)))
+          (let ((current (aref items index)))
+            (when (zerop (consume-inventory-item player item-id 1))
+              (when current
+                (let ((leftover (grant-inventory-item player current 1)))
+                  (when (> leftover 0)
+                    (grant-inventory-item player item-id 1)
+                    (return-from equip-item nil))
+                  (apply-item-modifiers stats current -1)))
+              (setf (aref items index) item-id)
+              (apply-item-modifiers stats item-id 1)
+              (clamp-player-hp player)
+              (mark-player-hud-stats-dirty player)
+              t)))))))
+
+(defun unequip-item (player slot-id)
+  ;; Unequip SLOT-ID into the player's inventory, returning true on success.
+  (let* ((equipment (and player (player-equipment player)))
+         (inventory (and player (player-inventory player)))
+         (stats (and player (player-stats player)))
+         (items (and equipment (equipment-items equipment)))
+         (index (and items (equipment-slot-index slot-id))))
+    (when (and items index (< index (length items)))
+      (let ((current (aref items index)))
+        (when (and current inventory stats)
+          (let ((leftover (grant-inventory-item player current 1)))
+            (when (zerop leftover)
+              (setf (aref items index) nil)
+              (apply-item-modifiers stats current -1)
+              (clamp-player-hp player)
+              (mark-player-hud-stats-dirty player)
+              t)))))))
+
+(defun player-tile-coords (player world)
+  ;; Return the player's current tile coordinates.
+  (let ((tile-size (world-tile-dest-size world)))
+    (values (floor (player-x player) tile-size)
+            (floor (player-y player) tile-size))))
+
+(defun object-entry-count (object archetype)
+  ;; Return the pickup count for OBJECT and ARCHETYPE.
+  (let ((raw (getf object :count nil)))
+    (cond
+      ((and raw (numberp raw) (> raw 0)) (truncate raw))
+      (archetype (max 1 (object-archetype-count archetype)))
+      (t 1))))
+
+(defun update-object-pickups (player world)
+  ;; Award inventory items when the player stands on world objects.
+  (let* ((zone (world-zone world))
+         (objects (and zone (zone-objects zone))))
+    (when (and player zone objects)
+      (multiple-value-bind (tx ty)
+          (player-tile-coords player world)
+        (let ((remaining nil)
+              (changed nil))
+          (dolist (object objects)
+            (let ((ox (getf object :x))
+                  (oy (getf object :y)))
+              (if (and (eql ox tx) (eql oy ty))
+                  (let* ((object-id (getf object :id))
+                         (archetype (and object-id (find-object-archetype object-id)))
+                         (item-id (and archetype (object-archetype-item-id archetype))))
+                    (if item-id
+                        (let* ((count (object-entry-count object archetype))
+                               (leftover (grant-inventory-item player item-id count)))
+                          (cond
+                            ((zerop leftover)
+                             (setf changed t))
+                            (t
+                             (setf (getf object :count) leftover
+                                   changed t)
+                             (push object remaining))))
+                        (push object remaining)))
+                  (push object remaining))))
+          (when changed
+            (setf (zone-objects zone) (nreverse remaining))))))))
+
 (defun roll-loot-entry (entries)
   ;; Roll a single loot entry from ENTRIES.
   (let ((total (loop :for entry :in entries
@@ -340,4 +552,4 @@
             (when entry
               (let* ((count (roll-loot-count entry))
                      (item-id (loot-entry-item-id entry)))
-                (inventory-add inventory item-id count)))))))))
+                (grant-inventory-item player item-id count)))))))))

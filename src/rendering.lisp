@@ -55,6 +55,7 @@
          (blood-set (get-animation-set :blood))
          (npc-ids (npc-animation-set-ids))
          (npc-animations (make-hash-table :test 'eq))
+         (object-textures (make-hash-table :test 'eq))
          (tileset (raylib:load-texture *tileset-path*))
          (tileset-columns (max 1 (truncate (/ (raylib:texture-width tileset)
                                               (max 1 *tile-size*)))))
@@ -77,6 +78,12 @@
                :down-idle (raylib:load-texture (animation-path set :down-idle))
                :up-idle (raylib:load-texture (animation-path set :up-idle))
                :side-idle (raylib:load-texture (animation-path set :side-idle))))))
+    (loop :for id :across (object-archetype-ids)
+          :for archetype = (find-object-archetype id)
+          :for sprite = (and archetype (object-archetype-sprite archetype))
+          :when sprite
+            :do (setf (gethash id object-textures)
+                      (raylib:load-texture sprite)))
     (setf *tileset-columns* tileset-columns)
     (%make-assets :tileset tileset
                   :down-idle down-idle
@@ -89,6 +96,7 @@
                   :side-walk side-walk
                   :side-attack side-attack
                   :npc-animations npc-animations
+                  :object-textures object-textures
                   :blood-down blood-down
                   :blood-up blood-up
                   :blood-side blood-side
@@ -117,6 +125,12 @@
                  (raylib:unload-texture (npc-textures-up-idle textures))
                  (raylib:unload-texture (npc-textures-side-idle textures)))
                npc-animations)))
+  (let ((object-textures (assets-object-textures assets)))
+    (when object-textures
+      (maphash (lambda (_id texture)
+                 (declare (ignore _id))
+                 (raylib:unload-texture texture))
+               object-textures)))
   (raylib:unload-texture (assets-blood-down assets))
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets)))
@@ -392,6 +406,58 @@
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui))))
       ))))
+
+(defun object-texture-for (assets object-id)
+  ;; Return the texture for OBJECT-ID, if loaded.
+  (let ((textures (and assets (assets-object-textures assets))))
+    (and textures object-id (gethash object-id textures))))
+
+(defun draw-zone-objects (world render assets camera player editor)
+  ;; Draw placed zone objects in world space.
+  (let* ((zone (world-zone world))
+         (objects (and zone (zone-objects zone))))
+    (when objects
+      (multiple-value-bind (camera-x camera-y)
+          (editor-camera-target editor player)
+        (let* ((tile-size (world-tile-dest-size world))
+               (zoom (camera-zoom camera))
+               (half-view-width (/ *window-width* (* 2.0 zoom)))
+               (half-view-height (/ *window-height* (* 2.0 zoom)))
+               (view-left (- camera-x half-view-width))
+               (view-right (+ camera-x half-view-width))
+               (view-top (- camera-y half-view-height))
+               (view-bottom (+ camera-y half-view-height))
+               (tile-source (render-tile-source render))
+               (tile-dest (render-tile-dest render))
+               (origin (render-origin render)))
+          (dolist (object objects)
+            (let ((tx (getf object :x))
+                  (ty (getf object :y))
+                  (object-id (getf object :id)))
+              (when (and (numberp tx) (numberp ty))
+                (let* ((x (* tx tile-size))
+                       (y (* ty tile-size))
+                       (x2 (+ x tile-size))
+                       (y2 (+ y tile-size)))
+                  (when (and (< x view-right)
+                             (> x2 view-left)
+                             (< y view-bottom)
+                             (> y2 view-top))
+                    (let ((texture (object-texture-for assets object-id)))
+                      (when texture
+                        (let* ((src-w (float (raylib:texture-width texture) 1.0))
+                               (src-h (float (raylib:texture-height texture) 1.0))
+                               (dest-size (float tile-size 1.0))
+                               (dest-x (float x 1.0))
+                               (dest-y (float y 1.0)))
+                          (set-rectangle tile-source 0.0 0.0 src-w src-h)
+                          (set-rectangle tile-dest dest-x dest-y dest-size dest-size)
+                          (raylib:draw-texture-pro texture
+                                                   tile-source
+                                                   tile-dest
+                                                   origin
+                                                   0.0
+                                                   raylib:+white+))))))))))))))
 
 (defun draw-click-marker (player world)
   ;; Draw a fading click marker at the last target position.
@@ -696,6 +762,45 @@
           (draw-combat-log ui
                            stats-x
                            (+ stats-y (* count line-height) 6)))))))
+
+(defun draw-inventory (player ui)
+  ;; Draw the inventory overlay when enabled.
+  (when (and player (ui-inventory-open ui))
+    (ensure-player-inventory player)
+    (let* ((lines (player-inventory-lines player))
+           (count (player-inventory-count player))
+           (text-size 16)
+           (line-gap 4)
+           (line-height (+ text-size line-gap))
+           (padding 10)
+           (header-gap 6)
+           (panel-width 260)
+           (content-lines (max 1 count))
+           (panel-height (+ padding text-size header-gap
+                            (* content-lines line-height)
+                            padding))
+           (x (- *window-width* panel-width 16))
+           (y 40))
+      (raylib:draw-rectangle x y panel-width panel-height (ui-hud-bg-color ui))
+      (raylib:draw-text "Inventory (I)"
+                        (+ x padding)
+                        (+ y padding)
+                        text-size
+                        raylib:+white+)
+      (if (> count 0)
+          (loop :for i :from 0 :below count
+                :for text = (aref lines i)
+                :do (raylib:draw-text text
+                                      (+ x padding)
+                                      (+ y padding text-size header-gap
+                                         (* i line-height))
+                                      text-size
+                                      raylib:+white+))
+          (raylib:draw-text "Empty"
+                            (+ x padding)
+                            (+ y padding text-size header-gap)
+                            text-size
+                            raylib:+white+)))))
 
 (defun minimap-world-to-screen (ui world player world-x world-y)
   ;; Convert world coordinates into minimap screen space.
@@ -1104,11 +1209,13 @@
                           :zoom (camera-zoom camera))))
           (raylib:with-mode-2d camera-2d
             (draw-world world render assets camera player npcs ui editor)
+            (draw-zone-objects world render assets camera player editor)
             (loop :for entity :across entities
                   :do (draw-entity entity assets render))
             (draw-click-marker player world)
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)
+      (draw-inventory player ui)
       (draw-context-menu ui)
       (draw-minimap world player npcs ui)
       (draw-loading-overlay ui)
