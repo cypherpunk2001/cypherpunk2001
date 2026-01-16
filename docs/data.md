@@ -12,7 +12,7 @@ Key responsibilities
 - Read `data/game-data.lisp` without evaluating code, including keyword section
   headers (e.g., `:animation-sets`) and single-plist variants.
 - Apply tunables to config variables.
-- Register animation sets, NPC archetypes (including descriptions), items (including optional sprites), object archetypes, and loot tables into hash tables.
+- Register animation sets, NPC archetypes (including descriptions), items (including optional sprites and descriptions), object archetypes, and loot tables into hash tables.
 - Validate section entries so malformed data fails fast.
 - Item archetypes can include equipment slots and stat modifier values for progression.
 - Object archetypes can include respawn cooldowns for repeatable pickups.

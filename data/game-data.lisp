@@ -10,7 +10,7 @@
  (:minimap-height 220)
  (:minimap-padding 12)
  (:minimap-point-size 4)
- (:editor-start-enabled t)
+ (:editor-start-enabled nil)
  (:music-volume-steps 10)
  (:music-default-volume-level 1)
  (:tileset-path "../assets/Zelda-like/Overworld.png")
@@ -128,6 +128,7 @@
    :value 4))
  (:arrows
   (:name "Arrows"
+   :description "A bundle of mismatched arrows. Most look usable."
    :stack-size 99
    :value 1
    :sprite "../assets/1 Characters/Other/Arrow.png"))

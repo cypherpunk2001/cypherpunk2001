@@ -11,7 +11,7 @@
 
 (defstruct (item-archetype (:constructor %make-item-archetype))
   ;; Static item data for inventory and loot.
-  id name sprite stack-size value
+  id name description sprite stack-size value
   equip-slot attack strength defense hitpoints)
 
 (defstruct (object-archetype (:constructor %make-object-archetype))
@@ -137,6 +137,7 @@
   ;; Build an item-archetype from plist values.
   (let ((name (or (getf plist :name)
                   (string-capitalize (string id))))
+        (description (getf plist :description nil))
         (sprite (getf plist :sprite nil))
         (stack-size (getf plist :stack-size 1))
         (value (getf plist :value 0))
@@ -147,6 +148,7 @@
         (hitpoints (getf plist :hitpoints 0)))
     (%make-item-archetype :id id
                           :name name
+                          :description description
                           :sprite sprite
                           :stack-size (max 1 stack-size)
                           :value value

@@ -144,9 +144,12 @@
                           (when npc
                             (ui-push-hud-log ui (npc-examine-description npc)))))
                        ((eq context-type :object)
-                       (let ((object (and context-object-id
-                                          (list :id context-object-id))))
-                          (ui-push-hud-log ui (object-examine-description object))))))
+                        (let ((object (and context-object-id
+                                           (list :id context-object-id))))
+                          (ui-push-hud-log ui (object-examine-description object))))
+                       ((eq context-type :inventory)
+                        (when item-id
+                          (ui-push-hud-log ui (item-examine-description item-id))))))
                     ((eq action :drop)
                      (let* ((inventory (player-inventory player))
                             (slots (and inventory (inventory-slots inventory)))
@@ -154,7 +157,7 @@
                                        (< slot-index (length slots))
                                        (aref slots slot-index)))
                             (count (and slot (inventory-slot-count slot))))
-                       (when (and item-id count (> count 0))
+                        (when (and item-id count (> count 0))
                          (let ((dropped (drop-inventory-item player world item-id count)))
                            (when (and dropped (> dropped 0))
                              (ui-push-hud-log ui
@@ -221,10 +224,10 @@
                                                       (getf object :x)
                                                       (getf object :y)
                                                       t)
-                            (set-player-walk-target player player-intent world-x world-y t))))))
+                            (set-player-walk-target player player-intent world-x world-y t)))))
               (unless mouse-clicked
                 (update-target-from-mouse player player-intent camera dt
-                                          mouse-clicked mouse-down))))))
+                                          mouse-clicked mouse-down)))))))
       (unless (or (editor-active editor)
                   (ui-inventory-open ui))
         (update-input-direction player player-intent mouse-clicked))

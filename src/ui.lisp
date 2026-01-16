@@ -379,7 +379,8 @@
           (ui-context-has-follow ui) (eq target-type :npc)
           (ui-context-has-pickup ui) (eq target-type :object)
           (ui-context-has-examine ui) (or (eq target-type :npc)
-                                          (eq target-type :object))
+                                          (eq target-type :object)
+                                          (eq target-type :inventory))
           (ui-context-has-drop ui) (eq target-type :inventory)))
   ui)
 

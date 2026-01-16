@@ -15,7 +15,7 @@ What it does
 - Tracks inventory overlay visibility for the `I` hotkey.
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 - Caches combat log lines for the debug overlay plus a lightweight HUD feedback log with per-line fade timers.
-- Tracks a right-click context menu (position, options, target type, and Walk/Attack/Follow/Pick up/Examine/Drop labels).
+- Tracks a right-click context menu (position, options, target type, and Walk/Attack/Follow/Pick up/Examine/Drop labels, including inventory examine).
 - Tracks the hovered NPC name for top-middle HUD display.
 - Provides inventory grid layout and slot hit-testing for context menus.
 - Context menu selection logic supports follow-only layouts when attack is unavailable.

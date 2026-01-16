@@ -17,14 +17,15 @@ What it does
 - Flags the HUD stats cache to refresh when training mode changes.
 - Hitpoints auto-train from combat XP and are not a selectable hotkey.
 - Left click on NPCs attacks; left click on objects sets a pickup target; left click on ground walks.
-- Provides NPC/object hit testing plus examine descriptions for context menus.
+- Provides NPC/object/item hit testing plus examine descriptions for context menus.
 - Tracks the NPC under the cursor for a top-middle HUD name display.
 - Updates camera zoom from the mouse wheel.
 - `I` toggles the inventory overlay.
 
 Key functions
 - `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,
-  `update-input-actions`, `update-training-mode`, `update-ui-hovered-npc`.
+  `update-input-actions`, `update-training-mode`, `update-ui-hovered-npc`,
+  `npc-examine-description`, `object-examine-description`, `item-examine-description`.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.

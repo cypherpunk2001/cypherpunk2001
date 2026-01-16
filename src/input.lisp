@@ -213,6 +213,16 @@
     (or desc
         (format nil "A discarded ~a. It might be useful." name))))
 
+(defun item-examine-description (item-id)
+  ;; Return an examine description for ITEM-ID.
+  (let* ((archetype (and item-id (find-item-archetype item-id)))
+         (desc (and archetype (item-archetype-description archetype)))
+         (name (or (and archetype (item-archetype-name archetype))
+                   (and item-id (string-capitalize (string item-id)))
+                   "Item")))
+    (or desc
+        (format nil "A ~a." name))))
+
 (defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
   (when mouse-clicked
