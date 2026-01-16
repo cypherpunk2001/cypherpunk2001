@@ -131,6 +131,16 @@
             world-x
             world-y)))
 
+(defun update-ui-hovered-npc (ui npcs world player camera)
+  ;; Update the UI hover label for the NPC under the cursor.
+  (multiple-value-bind (npc _world-x _world-y)
+      (find-npc-at-screen npcs world player camera
+                          (raylib:get-mouse-x)
+                          (raylib:get-mouse-y))
+    (declare (ignore _world-x _world-y))
+    (setf (ui-hover-npc-name ui)
+          (and npc (combatant-display-name npc)))))
+
 (defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
   (when mouse-clicked

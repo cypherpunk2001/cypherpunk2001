@@ -15,13 +15,14 @@ What it does
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 - Caches combat log lines for the debug overlay and HUD text sizing for stats.
 - Tracks a right-click context menu (position, options, target id, and Walk/Attack/Follow labels).
+- Tracks the hovered NPC name for top-middle HUD display.
 - Context menu selection logic supports follow-only layouts when attack is unavailable.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.
 - `update-ui-input`, `handle-menu-click` (returns menu actions like editor toggle).
 - `ui-push-combat-log` for debug overlay logging.
-- `open-context-menu`, `close-context-menu`, `handle-context-menu-click`.
+- `open-context-menu`, `close-context-menu`, `handle-context-menu-click`, `context-menu-action-for-index`.
 - `ui-trigger-loading`, `update-ui-loading` for zone transition overlays.
 
 Walkthrough: debug toggle

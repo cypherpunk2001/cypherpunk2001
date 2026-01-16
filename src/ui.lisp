@@ -78,6 +78,7 @@
          (menu-text-color (raylib:make-color :r 235 :g 235 :b 235 :a 255))
          (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
          (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
+         (hover-npc-name nil)
          (context-open nil)
          (context-x 0)
          (context-y 0)
@@ -178,6 +179,7 @@
               :menu-text-color menu-text-color
               :menu-button-color menu-button-color
               :menu-button-hover-color menu-button-hover-color
+              :hover-npc-name hover-npc-name
               :context-open context-open
               :context-x context-x
               :context-y context-y
@@ -312,6 +314,17 @@
      (if (ui-context-has-attack ui) 1 0)
      (if (ui-context-has-follow ui) 1 0)))
 
+(defun context-menu-action-for-index (ui index)
+  ;; Map a menu INDEX to an action keyword, if valid.
+  (let ((attack-p (ui-context-has-attack ui))
+        (follow-p (ui-context-has-follow ui)))
+    (cond
+      ((= index 0) :walk)
+      ((and (= index 1) attack-p) :attack)
+      ((and (= index 1) (not attack-p) follow-p) :follow)
+      ((and (= index 2) follow-p) :follow)
+      (t nil))))
+
 (defun handle-context-menu-click (ui mouse-x mouse-y)
   ;; Handle a click against the context menu; returns :walk, :attack, :close, or nil.
   (when (ui-context-open ui)
@@ -320,17 +333,10 @@
            (width (ui-context-width ui))
            (option-height (ui-context-option-height ui))
            (count (context-menu-option-count ui))
-           (attack-p (ui-context-has-attack ui))
-           (follow-p (ui-context-has-follow ui))
            (height (* count option-height)))
       (if (point-in-rect-p mouse-x mouse-y x y width height)
           (let* ((index (floor (/ (- mouse-y y) option-height))))
-            (cond
-              ((= index 0) :walk)
-              ((and (= index 1) attack-p) :attack)
-              ((and (= index 1) (not attack-p) follow-p) :follow)
-              ((and (= index 2) follow-p) :follow)
-              (t nil)))
+            (context-menu-action-for-index ui index))
           :close))))
 
 (defun ui-trigger-loading (ui &optional (seconds *zone-loading-seconds*))

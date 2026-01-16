@@ -13,7 +13,7 @@ Pipeline overview
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
+5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -47,12 +47,14 @@ Design note
 - Zone layers can reference specific tilesets so multi-sheet maps render correctly.
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
+- The HUD shows the hovered NPC name at the top-center when the cursor is over one.
 - The minimap recenters on the player, so you can always click ahead to set a target.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
   see potential enemies before crossing. Previews render while you are pushing
   against a connected edge or standing within `*minimap-preview-edge-tiles*` tiles
   of one to avoid confusing them with in-zone NPCs.
 - Click marker line thickness is driven by `*click-marker-thickness*` so feedback remains readable.
+- Context menu options highlight on hover for clearer selection feedback.
 - When a preview zone is cached, `draw-world` renders its layers offset beyond any
   edges or corners that the camera view extends past, so approaching a boundary feels
   continuous instead of a hard cutoff.

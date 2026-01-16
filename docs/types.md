@@ -15,7 +15,7 @@ Key structs
 - `inventory`, `inventory-slot`: simple inventory storage for stackable items.
 - `id-source`: monotonic ID generator used for stable entity IDs.
 - `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
-- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, minimap layout/colors, a combat log ring buffer, and a context menu).
+- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, hovered NPC name, minimap layout/colors, a combat log ring buffer, and a context menu).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette).
 - `game`: top-level aggregator passed to update/draw functions.
 

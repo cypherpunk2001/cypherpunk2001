@@ -90,6 +90,7 @@
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
+  hover-npc-name
   context-open context-x context-y context-world-x context-world-y
   context-target-id context-has-attack context-has-follow
   context-width context-option-height context-padding context-text-size

@@ -18,11 +18,12 @@ What it does
 - Hitpoints auto-train from combat XP and are not a selectable hotkey.
 - Left click on NPCs attacks; left click on ground walks, both with click markers.
 - Right click opens a context menu with Walk here (always), Attack, and Follow (NPC only).
+- Tracks the NPC under the cursor for a top-middle HUD name display.
 - Updates camera zoom from the mouse wheel.
 
 Key functions
 - `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,
-  `update-input-actions`, `update-training-mode`.
+  `update-input-actions`, `update-training-mode`, `update-ui-hovered-npc`.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.

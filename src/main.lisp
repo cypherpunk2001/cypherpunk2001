@@ -136,7 +136,10 @@
     (unless (or (ui-menu-open ui)
                 (editor-active editor))
       (update-input-actions player-intent (not mouse-clicked))
-      (update-training-mode player))))
+      (update-training-mode player))
+    (if (or (ui-menu-open ui) (editor-active editor))
+        (setf (ui-hover-npc-name ui) nil)
+        (update-ui-hovered-npc ui npcs world player camera))))
 
 (defun reset-npc-frame-intents (npcs)
   ;; Clear per-tick intent signals for NPCs.
