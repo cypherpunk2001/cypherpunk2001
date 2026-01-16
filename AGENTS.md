@@ -30,16 +30,6 @@ mmorpg/
 
 ## Current Task - As we prepare for a future Client / Server MMO Split
 
-Followup step:
-
-Search codebase generally for more authority boundary violations / writing directly to UI. Search for authority boundary violations where client input handlers write directly to UI instead of using the event system. Be thorough.
-
----
-
-## Future Tasks / Roadmap
-
-### Near-term (foundation, priority order)
-
 5) Save/load + snapshot serialization (no rendering dependency)
 (For whatever it's worth, when we do the final server/client split, postgresql is planned.)
 - Even if the game is always-online, you still need ways to persist and restore the authoritative world state.
@@ -49,6 +39,12 @@ Minimum slice:
 Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
 Version tag in the file
 That’s enough
+
+---
+
+## Future Tasks / Roadmap
+
+### Near-term (foundation, priority order)
 
 ### Mid-term (world + UX)
 - Headless server loop in-process (client sends intents, server updates state)
