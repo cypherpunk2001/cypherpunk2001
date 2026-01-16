@@ -294,6 +294,8 @@
                         (max-seconds 0.0)
                         (max-frames 0))
   ;; Run a UDP server that simulates the game and streams snapshots.
+  ;; Scaling: This runs ONE zone. For 10k users @ 500/zone, run 20 server processes.
+  ;; See SERVER_PERFORMANCE.md for horizontal scaling strategy.
   (let* ((socket (usocket:socket-connect nil nil
                                         :protocol :datagram
                                         :local-host host
@@ -315,7 +317,8 @@
                                    (>= elapsed max-seconds))
                               (and (> max-frames 0)
                                    (>= frames max-frames)))
-                   :do (loop
+                   :do ;; 1. Receive all pending intents (non-blocking UDP receive)
+                       (loop
                          (multiple-value-bind (message host port)
                              (receive-net-message socket recv-buffer)
                            (unless message
@@ -340,7 +343,9 @@
                                 (handle-server-load game)
                                 (setf clients
                                       (reconcile-net-clients game clients)))))))
+                       ;; 2. Apply client intents to player state (O(clients), cheap)
                        (apply-client-intents clients)
+                       ;; 3. Run fixed-tick simulation (O(players * npcs), main bottleneck)
                        (let ((dt *sim-tick-seconds*))
                          (incf elapsed dt)
                          (incf frames)
@@ -349,6 +354,9 @@
                            (setf accumulator new-acc)
                            (dotimes (_ transitions)
                              (declare (ignore _)))))
+                       ;; 4. Send snapshots to all clients (serialize once, send N times)
+                       ;; OPTIMIZATION: Serialization happens once and is shared across clients.
+                       ;; For 500 clients this is much better than 500 serializations.
                        (when clients
                          (let* ((events (pop-combat-events (game-combat-events game)))
                                 (event-plists (mapcar #'combat-event->plist events))

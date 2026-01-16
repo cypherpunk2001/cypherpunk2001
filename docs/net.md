@@ -26,4 +26,10 @@ Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.
 - `*read-eval*` is disabled during message parsing for safety.
 - Snapshots include visual fields by calling `serialize-game-state` with `:include-visuals`.
-- Server installs SIGTERM/SIGINT handlers (SBCL) to exit cleanly.
+- Server uses non-blocking UDP receive via `usocket:wait-for-input` with `:timeout 0`.
+
+Performance & Scaling
+- Current server runs ONE zone (tested smooth with hundreds of entities on client).
+- For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
+- Snapshot optimization: state serialized once per frame, shared across all clients.
+- See `SERVER_PERFORMANCE.md` for detailed scaling strategies and threading considerations.
