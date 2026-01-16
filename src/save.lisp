@@ -406,6 +406,8 @@
 
 (defun save-game (game filepath)
   ;; Save game state to FILEPATH.
+  (when *verbose*
+    (format t "~&[VERBOSE] Serializing game state for save...~%"))
   (let ((state (serialize-game-state game)))
     (with-open-file (out filepath
                          :direction :output
@@ -413,18 +415,25 @@
                          :if-does-not-exist :create)
       (prin1 state out))
     (format t "~&Saved game to ~a~%" filepath)
+    (when *verbose*
+      (format t "~&[VERBOSE] Save completed successfully~%"))
     t))
 
 (defun load-game (game filepath &key (apply-zone t))
   ;; Load game state from FILEPATH into existing GAME.
   (if (probe-file filepath)
-      (let* ((state (with-open-file (in filepath :direction :input)
-                      (read in))))
-        (multiple-value-bind (loaded-zone-id _zone-loaded)
-            (apply-game-state game state :apply-zone apply-zone)
-          (declare (ignore _zone-loaded))
-          (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
-          loaded-zone-id))
+      (progn
+        (when *verbose*
+          (format t "~&[VERBOSE] Loading game from ~a...~%" filepath))
+        (let* ((state (with-open-file (in filepath :direction :input)
+                        (read in))))
+          (multiple-value-bind (loaded-zone-id _zone-loaded)
+              (apply-game-state game state :apply-zone apply-zone)
+            (declare (ignore _zone-loaded))
+            (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
+            (when *verbose*
+              (format t "~&[VERBOSE] Load completed, zone transitioned to ~a~%" loaded-zone-id))
+            loaded-zone-id)))
       (progn
         (warn "Save file not found: ~a" filepath)
         nil)))

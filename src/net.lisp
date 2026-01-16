@@ -147,6 +147,9 @@
                             (spawn-player-at-world (game-world game)
                                                    (game-id-source game)))))
                (client (make-net-client host port player)))
+          (when *verbose*
+            (format t "~&[VERBOSE] New client registered: ~a:~d -> player-id=~d~%"
+                    host port (player-id player)))
           (reset-player-for-client player)
           (setf (net-client-last-heard client) timestamp)
           (values client (cons client clients) t)))))
@@ -373,7 +376,10 @@
          (clients nil)
          (stop-flag nil)
          (stop-reason nil))
-    (format t "~&SERVER: listening on ~a:~d~%" host port)
+    (format t "~&SERVER: listening on ~a:~d (worker-threads=~d)~%" host port worker-threads)
+    (when *verbose*
+      (format t "~&[VERBOSE] Server config: tick=~,3fs buffer=~d workers=~d~%"
+              *sim-tick-seconds* *net-buffer-size* worker-threads))
     (finish-output)
     (unwind-protect
          (handler-case
@@ -446,6 +452,8 @@
                         (max-seconds 0.0)
                         (max-frames 0))
   ;; Run a client that connects to the UDP server and renders snapshots.
+  (when *verbose*
+    (format t "~&[VERBOSE] Client starting: connecting to ~a:~d~%" host port))
   (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
     (raylib:set-target-fps 60)
     (raylib:set-exit-key 0)

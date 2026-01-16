@@ -35,6 +35,10 @@
               default))
         default)))
 
+(defun env-bool (name)
+  (let ((raw (sb-ext:posix-getenv name)))
+    (and raw (not (string= raw "")) (not (string= raw "0")))))
+
 (handler-case
     (progn
       (load-quicklisp)
@@ -46,6 +50,13 @@
           (finish-output)))
       (funcall (read-from-string "ql:register-local-projects"))
       (funcall (read-from-string "ql:quickload") :mmorpg)
+      ;; Set verbose modes from environment
+      (when (env-bool "MMORPG_VERBOSE")
+        (setf (symbol-value (read-from-string "mmorpg:*verbose*")) t)
+        (format t "~&SERVER: verbose mode enabled~%"))
+      (when (env-bool "MMORPG_VERBOSE_COORDS")
+        (setf (symbol-value (read-from-string "mmorpg:*verbose-coordinates*")) t)
+        (format t "~&SERVER: verbose coordinates mode enabled~%"))
       (let ((worker-threads (env-int "MMORPG_WORKER_THREADS" 1)))
         (format t "~&SERVER: running (worker-threads=~d)~%" worker-threads)
         (finish-output)

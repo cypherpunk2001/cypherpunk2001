@@ -1,7 +1,9 @@
 ;; NOTE: If you change behavior here, update docs/config.md :)
 (in-package #:mmorpg)
 
-(defparameter *verbose-logs* nil) ;; When true, logs player position and collider info per frame.
+(defparameter *verbose* nil) ;; General verbose mode: logs network events, state changes, and diagnostic info.
+(defparameter *verbose-coordinates* nil) ;; Logs entity positions and collider info per frame (very noisy).
+(defparameter *verbose-logs* nil) ;; DEPRECATED: Use *verbose-coordinates* instead.
 (defparameter *debug-collision-overlay* nil) ;; Draws debug grid and collision overlays.
 (defparameter *debug-npc-logs* nil) ;; Logs NPC AI/combat events and enables AI debug text overlay.
 (defparameter *sim-tick-seconds* (/ 1.0 60.0)) ;; Fixed simulation tick length in seconds.

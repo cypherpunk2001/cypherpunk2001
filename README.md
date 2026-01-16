@@ -13,12 +13,38 @@
 ## Run (Client/Server UDP)
 Server must start first.
 
+### Basic Usage
 ```shell
 make server
 ```
 
 ```shell
 make client
+```
+
+### Verbose Modes
+Enable diagnostic logging for debugging:
+
+```shell
+# General verbose mode (network events, state changes)
+MMORPG_VERBOSE=1 make server
+MMORPG_VERBOSE=1 make client
+
+# Verbose coordinates mode (entity positions per frame, very noisy)
+MMORPG_VERBOSE_COORDS=1 make server
+MMORPG_VERBOSE_COORDS=1 make client
+
+# Both verbose modes
+MMORPG_VERBOSE=1 MMORPG_VERBOSE_COORDS=1 make server
+```
+
+### Performance Tuning
+```shell
+# Use multiple worker threads for parallel snapshot sending
+MMORPG_WORKER_THREADS=4 make server
+
+# Use all CPU cores
+MMORPG_WORKER_THREADS=$(nproc) make server
 ```
 
 SLIME (two Emacs sessions, one per process):
