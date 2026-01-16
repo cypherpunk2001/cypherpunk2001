@@ -15,6 +15,7 @@ What it does
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 - Caches combat log lines for the debug overlay and HUD text sizing for stats.
 - Tracks a right-click context menu (position, options, target id, and Walk/Attack/Follow labels).
+- Context menu selection logic supports follow-only layouts when attack is unavailable.
 
 Key functions
 - `make-ui`, `make-stamina-labels`.

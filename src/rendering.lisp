@@ -391,8 +391,7 @@
                 (ih (round (* 2.0 ahh))))
             (raylib:draw-rectangle-lines ix iy iw ih
                                          (ui-debug-collision-color ui))))
-      )
-    (draw-click-marker player world))))
+      ))))
 
 (defun draw-click-marker (player world)
   ;; Draw a fading click marker at the last target position.
@@ -1070,6 +1069,7 @@
             (draw-world world render assets camera player npcs ui editor)
             (loop :for entity :across entities
                   :do (draw-entity entity assets render))
+            (draw-click-marker player world)
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)
       (draw-context-menu ui)

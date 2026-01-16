@@ -30,16 +30,7 @@ mmorpg/
 
 ## Current Task
 
-Fixing regression:
-
-Clicking with left mouse on non enemies no longer shows the yellow X that fades out
-Clicking with left mouse on enemy npcs no longer follows auto attacking them, and no long shows the red X that fades out
-Right clicking attack on an enemy should also make the red X and follow auto attacking them
-
-TL;DR We want a streamlined system:
-
-- You can right click on other players or npcs and click follow, it will simply follow
-- You can left click or right click context and choose Attack which will follow + auto attack repeatedly unending
+Make red X (left click npc enemy) thicker / easier to see. Likewise yellow left click walking X should be shifted similarly.
 
 ---
 

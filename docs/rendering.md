@@ -13,7 +13,7 @@ Pipeline overview
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw entities via `draw-entity` (NPCs and player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw HUD (stamina + zone label + stats), click markers, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
+5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats), minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -28,7 +28,8 @@ Walkthrough: world rendering
 2) Draw floor tiles and zone layers; wall map tiles render only when no zone is loaded.
 3) If debug is enabled, overlay collision/bounds grid.
 4) Draw player and NPCs in world space.
-5) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
+5) Draw click markers in world space above entities.
+6) Draw HUD, minimap, loading overlay, editor overlays, and pause menu in screen space.
 
 Example: draw flow
 ```lisp

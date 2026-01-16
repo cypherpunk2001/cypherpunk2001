@@ -320,13 +320,16 @@
            (width (ui-context-width ui))
            (option-height (ui-context-option-height ui))
            (count (context-menu-option-count ui))
+           (attack-p (ui-context-has-attack ui))
+           (follow-p (ui-context-has-follow ui))
            (height (* count option-height)))
       (if (point-in-rect-p mouse-x mouse-y x y width height)
           (let* ((index (floor (/ (- mouse-y y) option-height))))
             (cond
               ((= index 0) :walk)
-              ((and (= index 1) (ui-context-has-attack ui)) :attack)
-              ((and (= index 2) (ui-context-has-follow ui)) :follow)
+              ((and (= index 1) attack-p) :attack)
+              ((and (= index 1) (not attack-p) follow-p) :follow)
+              ((and (= index 2) follow-p) :follow)
               (t nil)))
           :close))))
 

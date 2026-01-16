@@ -87,22 +87,26 @@
       (when (and (ui-context-open ui) mouse-clicked)
         (let ((action (handle-context-menu-click ui mouse-x mouse-y)))
           (when action
-            (setf click-consumed t)
-            (close-context-menu ui)
-            (cond
-              ((eq action :walk)
-               (set-player-walk-target player player-intent
-                                       (ui-context-world-x ui)
-                                       (ui-context-world-y ui)
-                                       t))
-              ((eq action :attack)
-               (let ((npc (find-npc-by-id npcs (ui-context-target-id ui))))
-                 (when npc
-                   (set-player-attack-target player player-intent npc t))))
-              ((eq action :follow)
-               (let ((npc (find-npc-by-id npcs (ui-context-target-id ui))))
-                 (when npc
-                   (set-player-follow-target player player-intent npc t))))))))
+            (let ((context-x (ui-context-world-x ui))
+                  (context-y (ui-context-world-y ui))
+                  (context-id (ui-context-target-id ui)))
+              (close-context-menu ui)
+              (unless (eq action :close)
+                (setf click-consumed t)
+                (cond
+                  ((eq action :walk)
+                   (set-player-walk-target player player-intent
+                                           context-x
+                                           context-y
+                                           t))
+                  ((eq action :attack)
+                   (let ((npc (find-npc-by-id npcs context-id)))
+                     (when npc
+                       (set-player-attack-target player player-intent npc t))))
+                  ((eq action :follow)
+                   (let ((npc (find-npc-by-id npcs context-id)))
+                     (when npc
+                       (set-player-follow-target player player-intent npc t))))))))))
       (when (and (not click-consumed)
                  (not (ui-menu-open ui))
                  (not (editor-active editor))
