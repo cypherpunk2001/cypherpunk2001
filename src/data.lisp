@@ -318,15 +318,22 @@
 
 (defun read-game-data (path)
   ;; Read one or more forms from PATH without evaluation.
+  ;; Returns parsed data on success, NIL on failure (non-fatal).
   (when (and path (probe-file path))
-    (with-open-file (in path :direction :input)
-      (with-standard-io-syntax
-        (let ((*read-eval* nil)
-              (forms nil))
-          (loop :for form = (read in nil :eof)
-                :until (eq form :eof)
-                :do (push form forms))
-          (parse-game-data-forms (nreverse forms)))))))
+    (handler-case
+        (with-open-file (in path :direction :input)
+          (with-standard-io-syntax
+            (let ((*read-eval* nil)
+                  (forms nil))
+              (loop :for form = (read in nil :eof)
+                    :until (eq form :eof)
+                    :do (push form forms))
+              (parse-game-data-forms (nreverse forms)))))
+      (error (e)
+        (warn "Failed to read game data from ~a: ~a" path e)
+        (when *verbose*
+          (format t "~&[VERBOSE] Game data read error: ~a~%" e))
+        nil))))
 
 (defun apply-tunables (tunables)
   ;; Apply tunable overrides from data to known config variables.

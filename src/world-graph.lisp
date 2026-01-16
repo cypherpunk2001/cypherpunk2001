@@ -13,12 +13,19 @@
 
 (defun read-world-graph-data (path)
   ;; Read a world graph data form without evaluation.
+  ;; Returns world graph data on success, NIL on failure (non-fatal).
   (let* ((full-path (resolve-world-graph-path path)))
     (when (and full-path (probe-file full-path))
-      (with-open-file (in full-path :direction :input)
-        (with-standard-io-syntax
-          (let ((*read-eval* nil))
-            (read in nil nil)))))))
+      (handler-case
+          (with-open-file (in full-path :direction :input)
+            (with-standard-io-syntax
+              (let ((*read-eval* nil))
+                (read in nil nil))))
+        (error (e)
+          (warn "Failed to read world graph data from ~a: ~a" full-path e)
+          (when *verbose*
+            (format t "~&[VERBOSE] World graph read error: ~a~%" e))
+          nil)))))
 
 (defun world-graph-data-plist (data)
   ;; Normalize world graph data to a plist.

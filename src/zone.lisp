@@ -40,14 +40,21 @@
 
 (defun read-zone-data (path)
   ;; Read a single zone data form without evaluation.
+  ;; Returns zone data on success, NIL on failure (non-fatal).
   (let* ((full-path (if (and path (not (pathnamep path)))
                         (merge-pathnames path (asdf:system-source-directory :mmorpg))
                         path)))
     (when (and full-path (probe-file full-path))
-      (with-open-file (in full-path :direction :input)
-        (with-standard-io-syntax
-          (let ((*read-eval* nil))
-            (read in nil nil)))))))
+      (handler-case
+          (with-open-file (in full-path :direction :input)
+            (with-standard-io-syntax
+              (let ((*read-eval* nil))
+                (read in nil nil))))
+        (error (e)
+          (warn "Failed to read zone data from ~a: ~a" full-path e)
+          (when *verbose*
+            (format t "~&[VERBOSE] Zone data read error: ~a~%" e))
+          nil)))))
 
 (defun zone-data-plist (data)
   ;; Normalize zone data to a plist.
@@ -409,17 +416,26 @@
 
 (defun write-zone (zone path)
   ;; Write ZONE data to PATH, ensuring the destination directory exists.
+  ;; Returns T on success, NIL on failure (non-fatal).
   (let* ((full-path (resolve-zone-path path)))
     (when full-path
-      (ensure-directories-exist full-path)
-      (with-open-file (out full-path
-                           :direction :output
-                           :if-exists :supersede
-                           :if-does-not-exist :create)
-        (with-standard-io-syntax
-          (let ((*print-pretty* t)
-                (*print-right-margin* 100))
-            (pprint (zone-to-plist zone) out)))))))
+      (handler-case
+          (progn
+            (ensure-directories-exist full-path)
+            (with-open-file (out full-path
+                                 :direction :output
+                                 :if-exists :supersede
+                                 :if-does-not-exist :create)
+              (with-standard-io-syntax
+                (let ((*print-pretty* t)
+                      (*print-right-margin* 100))
+                  (pprint (zone-to-plist zone) out))))
+            t)
+        (error (e)
+          (warn "Failed to write zone to ~a: ~a" full-path e)
+          (when *verbose*
+            (format t "~&[VERBOSE] Zone write error: ~a~%" e))
+          nil)))))
 
 (defun load-zone (path)
   ;; Load a zone from PATH, returning a zone struct or nil.
