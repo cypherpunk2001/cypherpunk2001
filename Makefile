@@ -1,4 +1,4 @@
-.PHONY: ci smoke start server client checkparens checkdocs
+.PHONY: ci smoke server client checkparens checkdocs
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 ci:
@@ -6,9 +6,6 @@ ci:
 
 smoke:
 	MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp
-
-start:
-	sbcl --script scripts/start.lisp
 
 server:
 	sbcl --script scripts/server.lisp

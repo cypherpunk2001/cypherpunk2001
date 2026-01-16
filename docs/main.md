@@ -1,71 +1,41 @@
 # main.lisp
 
 Purpose
-- Build the game and orchestrate the update/render loop.
+- Build the client game state and provide core client-side utilities.
+- The actual game loop is in net.lisp (`run-client`) for networked play.
 
 Why we do it this way
-- The main loop should be a conductor, not a composer. It wires systems
-  together and calls them in a consistent order.
+- Client/server architecture keeps authority on the server.
+- The client is a thin rendering layer that sends intents and displays snapshots.
 
-Update flow (high level)
+Client update flow (high level)
 1) Input/UI -> client intent, camera/UI updates, preview cache
-2) Server fixed-tick simulation -> follow/attack/pickup sync, movement, combat, AI, respawns
-3) Combat events -> process event queue and write to UI (client-side rendering)
-4) Zone transitions (edge exits) -> load new zone if needed
-5) Animation/effects -> visuals ready to render
-6) UI timers (loading overlay, menus) -> update per frame
-7) Editor mode (when enabled) overrides gameplay updates
+2) Send intent to server via UDP
+3) Receive snapshot from server
+4) Apply snapshot to local game state
+5) Process combat events and write to UI (client-side rendering)
+6) Zone transitions (edge exits) -> load new zone if needed
+7) Animation/effects -> visuals ready to render
+8) UI timers (loading overlay, menus) -> update per frame
+9) Editor mode (when enabled in local testing, disabled in client mode)
 
 Key functions
-- `make-game`: assembles the authoritative sim state plus audio/UI/render subsystems; defaults the net role to `:local`.
-- `make-sim-state` (server.lisp): builds world, player + players array, NPCs, entities, and combat events without client-only subsystems.
-- Uses world bounds and collision data to choose a safe spawn center.
-- Ensures player/NPC spawns land on open tiles sized to their colliders.
-- Refreshes adjacent minimap spawn previews after the player spawn is known.
+- `make-game`: assembles the client game state with audio/UI/render subsystems; defaults the net role to `:client`.
+- `make-sim-state` (server.lisp): builds world, player + players array, NPCs, entities, and combat events without client-only subsystems (server-side only).
 - `shutdown-game`: unloads editor tilesets and rendering assets.
-- Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
-- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode.
-- `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts.
-- `update-sim`: runs one fixed-tick simulation step across all players, resolves object pickups, processes chat broadcasts, and feeds UI combat logging.
-- `update-game`: orchestrates input + server-step simulation and returns the accumulator.
-- `run`: owns the raylib window lifecycle and can auto-exit for smoke tests.
+- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests to server when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode.
+- `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts (server-side only).
+- `update-sim`: runs one fixed-tick simulation step across all players, resolves object pickups, processes chat broadcasts, and feeds UI combat logging (server-side only).
+- `process-combat-events`: reads combat event queue from server snapshots and writes to UI (client-side rendering).
 
-Walkthrough: one frame
-1) Read input and UI; write intent for the local player and NPCs.
-2) If editor mode is active, update editor camera/painting/zone tools and skip gameplay.
-3) Otherwise, run as many fixed-tick simulation steps as the accumulator allows (including follow sync and NPC respawns).
-4) Advance animation/effect timers during simulation ticks.
-5) Update UI timers for loading overlays.
-6) Render the frame (world -> entities -> HUD/loading/menu/editor overlay).
-
-Example: core loop
-```lisp
-(loop :with sim-accumulator = 0.0
-      :until (or (raylib:window-should-close)
-                 (ui-exit-requested (game-ui game)))
-      :do (let ((dt (raylib:get-frame-time)))
-            (setf sim-accumulator
-                  (update-game game dt sim-accumulator))
-            (draw-game game)))
-```
-
-Run options (smoke testing)
-- `run` accepts `:max-seconds` and `:max-frames`. Values <= 0 disable the limit.
-- This lets us open the game, collect runtime output, and exit automatically.
-
-Example: auto-exit
-```lisp
-(mmorpg:run :max-seconds 5.0)
-(mmorpg:run :max-frames 300)
-```
+Client/Server Architecture
+- See `net.lisp` for `run-client` (client entry point) and `run-server` (server entry point)
+- Client sends intents to server via UDP
+- Server runs authoritative simulation and sends snapshots to all clients
+- Client receives snapshot and applies to local game state for rendering
+- Combat functions emit events (:combat-log, :hud-message) to the queue instead of writing UI directly
+- This enforces: client sends intent → server validates → server updates state → server emits events → client renders result
 
 Design note
-- Keeping gameplay logic out of the main loop makes it easier to test and
-  to introduce networking or replay systems later.
-
-Client/Server Separation (preparation for future networking)
-- `make-game` initializes a combat event queue for decoupling simulation from UI
-- `update-sim` calls sync functions (`sync-player-attack-target`, `sync-player-follow-target`, `sync-player-pickup-target`) for each player to validate client intent requests and set authoritative state (server-side)
-- Combat functions emit events (:combat-log, :hud-message) to the queue instead of writing UI directly
-- `process-combat-events` reads the event queue and writes to UI (client-side rendering)
-- This enforces: client sends intent → server validates → server updates state → server emits events → client renders result
+- Keeping gameplay logic on the server makes it easier to prevent cheating and
+  ensures all players see the same authoritative game state.

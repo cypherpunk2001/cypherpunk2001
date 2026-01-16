@@ -28,46 +28,26 @@ mmorpg/
 
 ---
 
-## Current Task
-~~Real client/server split (server-authoritative simulation, snapshot sync)~~ DONE
+## Current Tasks / TODO
+- Ensure there is no remaining single player code in the codebase, we will be doing all development and testing with the new make server and make client infrastructure going forwards.
+If you make a change, pass tests, stage and commit this one.
 
-Now that we have working UDP with make server and make client with a save/load working...
+- New performance optimization: Consider multi-threading on the server side, but only where it is safe and makes sense. Imagine 10,000 users connected simultaneously, with 500 players active in each zone.
+I do think the client is probably safe? I have tested single player already with my character and hundreds of npcs in a zone and it was smooth and did not experience any hiccups -- so if you agree with that logic, lets just focus on server optimizations.
+Pass tests, stage and commit this issue as well
 
-- let's ensure the server correctly handles SIGTERM because I Control-C'd it earlier and threw scary errors but I think it was fine, but if there's a proper a shutdown mechanism let's build it. It'd be wise to do that before we have serious database things and so forth.
+- Prediction + interpolation for smooth client UX
+This client optimization idea has me intrigued, while we don't have any known issues, explore this rabbit trail, leave the work staged, I'll test and review with you when I get back later.
+I know we use UDP, maybe we can take advtantage of this fact, or is it a given?
 
-- let's do what it takes to ensure multiple clients can connect simultaneously and stay updated.
+- Consider best practices, we are data driven functional with some use of objects where they suit us, I am wondering how we're doing meeting these goals? Leave a file in the repo root: CodeQualityReview.md
 
-Currently,
-
-make server #term 0
-
-make client #term 1
-make client #term 2
-
-The result here is that the same character shows in both clients. Your choice, this might be a good first test, do the terminals track with each other?
-
-But I'm wondering if this could be causing some kind of infinite crazy server loads with two clients yelling at the server simultaneously about the same exact character?
-
-I notice that it does track the active client i am controlling the character with, but it's definitely not smooth the second one just teleports to the correct place every few seconds. A real test I think would be to introduce a second character id maybe and see if I can play with them together smoothly in two windows? Can you arrange this and tell me how to do it?
-
+- Consider ECS architecture, does this fit with what we are doing, should we consider it in some refactor, does it help or hurt us, are we already doing this? Leave a file in the repo root: ECSShouldWeDoIt.md
 
 ## Future Tasks / Roadmap
-
-### Long-term (MMO readiness)
-- Prediction + interpolation for smooth client UX
 - Persistent world storage and migrations
 - Editor upgrades for world-graph, spawns, and content validation
 - Asset pipeline for animation sets, atlases, and build-time validation
-
----
-
-## Client/Server Timing Guidance
-
-- Until we do the full network split: enforce server-authoritative boundaries now.
-- Keep all gameplay in pure state updates driven by intents; rendering reads only.
-- Add save/load + snapshot serialization early; it becomes the future net format.
-- Prove a local headless "server loop" before committing to real networking.
-- Add real networking only after core progression systems are stable.
 
 ---
 
