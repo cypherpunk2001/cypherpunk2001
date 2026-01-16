@@ -33,13 +33,42 @@
                    tile-size-f
                    tile-size-f)))
 
+(defun image-border-color-key (image)
+  ;; Choose a color key from the image border when the top-left is transparent.
+  (let ((width (raylib:image-width image))
+        (height (raylib:image-height image)))
+    (when (and (> width 0) (> height 0))
+      (let ((corner (raylib:get-image-color image 0 0)))
+        (if (> (raylib:color-a corner) 0)
+            corner
+            (let ((counts (make-hash-table :test 'eql))
+                  (best nil)
+                  (best-count 0))
+              (labels ((tally (x y)
+                         (let ((color (raylib:get-image-color image x y)))
+                           (when (> (raylib:color-a color) 0)
+                             (let* ((key (raylib:color-to-int color))
+                                    (count (1+ (gethash key counts 0))))
+                               (setf (gethash key counts) count)
+                               (when (> count best-count)
+                                 (setf best-count count
+                                       best color)))))))
+                (dotimes (x width)
+                  (tally x 0)
+                  (tally x (1- height)))
+                (dotimes (y height)
+                  (tally 0 y)
+                  (tally (1- width) y))
+                best)))))))
+
 (defun load-texture-with-color-key (path)
-  ;; Load a texture and treat the top-left pixel as the transparent key.
+  ;; Load a texture and replace a detected border color with transparency.
   (let ((image (raylib:load-image path)))
     (when image
-      (let* ((key (raylib:get-image-color image 0 0))
+      (let* ((key (image-border-color-key image))
              (transparent (raylib:make-color :r 0 :g 0 :b 0 :a 0)))
-        (raylib:image-color-replace image key transparent)
+        (when key
+          (raylib:image-color-replace image key transparent))
         (let ((texture (raylib:load-texture-from-image image)))
           (raylib:unload-image image)
           texture)))))
@@ -751,21 +780,31 @@
 (defun draw-hud-log (ui start-x start-y)
   ;; Draw HUD feedback lines in screen space.
   (let* ((buffer (ui-hud-log-buffer ui))
+         (times (ui-hud-log-times ui))
          (count (ui-hud-log-count ui))
          (cap (length buffer))
          (text-size (ui-hud-log-text-size ui))
          (line-height (+ text-size (ui-hud-log-line-gap ui))))
     (when (and (> cap 0) (> count 0))
       (let ((start (mod (- (ui-hud-log-index ui) count) cap)))
-        (loop :for i :from 0 :below count
-              :for index = (mod (+ start i) cap)
-              :for text = (aref buffer index)
-              :when (and text (not (string= text "")))
-                :do (raylib:draw-text text
-                                      start-x
-                                      (+ start-y (* i line-height))
-                                      text-size
-                                      raylib:+white+))))))
+        (let ((drawn 0))
+          (loop :for i :from 0 :below count
+                :for index = (mod (+ start i) cap)
+                :for text = (aref buffer index)
+                :for timer = (if times (aref times index) 0.0)
+                :when (and text (not (string= text ""))
+                           (> timer 0.0))
+                  :do (let* ((fade (max 0.01 *hud-log-fade-seconds*))
+                             (alpha (if (> timer fade)
+                                        1.0
+                                        (clamp (/ timer fade) 0.0 1.0)))
+                             (color (raylib:fade raylib:+white+ alpha)))
+                        (raylib:draw-text text
+                                          start-x
+                                          (+ start-y (* drawn line-height))
+                                          text-size
+                                          color)
+                        (incf drawn))))))))
 
 (defun draw-hud (player ui world)
   ;; Draw stamina HUD, zone label, and player stats.

@@ -60,6 +60,8 @@
     (:click-marker-duration . *click-marker-duration*)
     (:click-marker-size-scale . *click-marker-size-scale*)
     (:click-marker-thickness . *click-marker-thickness*)
+    (:hud-log-line-seconds . *hud-log-line-seconds*)
+    (:hud-log-fade-seconds . *hud-log-fade-seconds*)
     (:inventory-size . *inventory-size*)
     (:inventory-grid-columns . *inventory-grid-columns*)
     (:inventory-slot-gap . *inventory-slot-gap*)

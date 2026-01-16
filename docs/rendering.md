@@ -49,10 +49,10 @@ Design note
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
 - The HUD shows the hovered NPC name at the top-center when the cursor is over one.
-- The HUD log area shows gameplay feedback when the debug overlay is off.
+- The HUD log area shows gameplay feedback when the debug overlay is off, fading lines out over time.
 - The inventory overlay renders a grid panel with item sprites and stack counts.
 - The minimap recenters on the player, so you can always click ahead to set a target.
-- Object/item sprites treat the top-left pixel as a color key to remove opaque backgrounds.
+- Object/item sprites treat an opaque border color as a transparency key to remove solid backdrops.
 - Zone objects render only when active (count > 0 and no respawn timer) so pickups can disappear.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
   see potential enemies before crossing. Previews render while you are pushing

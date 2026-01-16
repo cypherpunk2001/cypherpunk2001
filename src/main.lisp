@@ -73,6 +73,7 @@
     (update-audio audio)
     (update-camera-zoom camera)
     (update-ui-loading ui dt)
+    (update-ui-hud-log ui dt)
     (update-click-marker player dt)
     (ensure-preview-zones world player camera editor)
     (let ((menu-action (update-ui-input ui audio mouse-clicked)))

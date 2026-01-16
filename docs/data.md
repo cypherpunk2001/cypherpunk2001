@@ -41,6 +41,7 @@ Common tunables
   `:stat-xp-per-level`, `:stat-max-level`, `:xp-per-damage`.
 - `:combat-hitpoints-xp-multiplier` to auto-train hitpoints on all combat XP awards.
 - `:click-marker-duration`, `:click-marker-size-scale`, and `:click-marker-thickness` for target feedback markers.
+- `:hud-log-line-seconds` and `:hud-log-fade-seconds` for HUD feedback timing.
 - `:inventory-size` to control player inventory slots.
 - `:inventory-grid-columns` and `:inventory-slot-gap` to tune the inventory grid layout.
 - `:zone-path` to load a zone file from `data/`.

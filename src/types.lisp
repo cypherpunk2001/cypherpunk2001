@@ -111,7 +111,8 @@
   debug-grid-color debug-wall-color debug-collision-color debug-collider-color
   stamina-labels
   hud-stats-text-size hud-stats-line-gap
-  hud-log-text-size hud-log-line-gap hud-log-lines hud-log-buffer hud-log-index hud-log-count
+  hud-log-text-size hud-log-line-gap hud-log-lines hud-log-buffer hud-log-times
+  hud-log-index hud-log-count
   combat-log-text-size combat-log-line-gap
   combat-log-lines combat-log-index combat-log-count combat-log-buffer)
 

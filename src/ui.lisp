@@ -128,6 +128,8 @@
          (hud-log-lines 4)
          (hud-log-buffer (make-array (max 1 hud-log-lines)
                                       :initial-element ""))
+         (hud-log-times (make-array (max 1 hud-log-lines)
+                                    :initial-element 0.0))
          (hud-log-index 0)
          (hud-log-count 0)
          (combat-log-text-size 14)
@@ -249,6 +251,7 @@
               :hud-log-index hud-log-index
               :hud-log-count hud-log-count
               :hud-log-buffer hud-log-buffer
+              :hud-log-times hud-log-times
               :combat-log-text-size combat-log-text-size
               :combat-log-line-gap combat-log-line-gap
               :combat-log-lines combat-log-lines
@@ -272,16 +275,32 @@
   ;; Append TEXT to the HUD feedback ring buffer.
   (when (and ui text (not (string= text "")))
     (let* ((buffer (ui-hud-log-buffer ui))
+           (times (ui-hud-log-times ui))
            (cap (length buffer)))
       (when (> cap 0)
         (let* ((index (ui-hud-log-index ui))
+               (prev-index (mod (- index 1) cap))
                (prev (if (> (ui-hud-log-count ui) 0)
-                         (aref buffer (mod (- index 1) cap))
+                         (aref buffer prev-index)
                          nil)))
-          (unless (and prev (string= prev text))
-            (setf (aref buffer index) text
-                  (ui-hud-log-index ui) (mod (1+ index) cap)
-                  (ui-hud-log-count ui) (min cap (1+ (ui-hud-log-count ui)))))))))
+          (if (and prev (string= prev text))
+              (setf (aref times prev-index) *hud-log-line-seconds*)
+              (progn
+                (setf (aref buffer index) text
+                      (aref times index) *hud-log-line-seconds*
+                      (ui-hud-log-index ui) (mod (1+ index) cap)
+                      (ui-hud-log-count ui) (min cap (1+ (ui-hud-log-count ui))))))))))
+  ui)
+
+(defun update-ui-hud-log (ui dt)
+  ;; Tick down HUD log message timers.
+  (let* ((times (and ui (ui-hud-log-times ui)))
+         (cap (and times (length times))))
+    (when (and cap (> cap 0))
+      (dotimes (i cap)
+        (let ((timer (aref times i)))
+          (when (> timer 0.0)
+            (setf (aref times i) (max 0.0 (- timer dt))))))))
   ui)
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)

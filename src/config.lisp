@@ -33,6 +33,8 @@
 ;; Marker color for walk targets.
 (defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))
 ;; Marker color for attack targets.
+(defparameter *hud-log-line-seconds* 3.0) ;; Seconds a HUD log line stays visible.
+(defparameter *hud-log-fade-seconds* 0.6) ;; Seconds to fade out HUD log lines.
 (defparameter *inventory-size* 20) ;; Player inventory slots.
 (defparameter *inventory-grid-columns* 5) ;; Inventory grid columns.
 (defparameter *inventory-slot-gap* 8) ;; Inventory slot gap in pixels.

@@ -14,6 +14,7 @@ What lives here
 - Fixed simulation timing (tick length and max catch-up steps).
 - Player stat defaults, XP tuning (including hitpoints share), inventory sizing, grid layout, and equipment slot order.
 - Click marker sizing, duration, thickness, and base colors for left/right click feedback.
+- HUD log timing for gameplay feedback fade-out.
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Music volume steps and the default startup level.
 - Floor fill tile index for the base map; set to `0` to skip drawing a fill tile.
