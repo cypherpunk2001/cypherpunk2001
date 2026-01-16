@@ -17,14 +17,14 @@ Update flow (high level)
 7) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
-- `make-game`: assembles the authoritative sim state plus audio/UI/render subsystems.
+- `make-game`: assembles the authoritative sim state plus audio/UI/render subsystems; defaults the net role to `:local`.
 - `make-sim-state` (server.lisp): builds world, player, NPCs, entities, and combat events without client-only subsystems.
 - Uses world bounds and collision data to choose a safe spawn center.
 - Ensures player/NPC spawns land on open tiles sized to their colliders.
 - Refreshes adjacent minimap spawn previews after the player spawn is known.
 - `shutdown-game`: unloads editor tilesets and rendering assets.
 - Uses `*editor-start-enabled*` to optionally boot straight into editor mode.
-- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions, and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly.
+- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode.
 - `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts.
 - `update-sim`: runs one fixed-tick simulation step from server intent, resolves object pickups, processes chat broadcasts, and feeds UI combat logging.
 - `update-game`: orchestrates input + server-step simulation and returns the accumulator.

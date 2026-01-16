@@ -6,6 +6,10 @@
 (defparameter *debug-npc-logs* nil) ;; Logs NPC AI/combat events and enables AI debug text overlay.
 (defparameter *sim-tick-seconds* (/ 1.0 60.0)) ;; Fixed simulation tick length in seconds.
 (defparameter *sim-max-steps-per-frame* 5) ;; Max sim ticks per frame to avoid spiral of death.
+(defparameter *net-default-host* "127.0.0.1") ;; Default UDP host for client/server.
+(defparameter *net-default-port* 1337) ;; Default UDP port for client/server.
+(defparameter *net-buffer-size* usocket:+max-datagram-packet-size+)
+;; Max UDP payload size for snapshot messages.
 
 (defparameter *window-width* 1280) ;; Window width in pixels.
 (defparameter *window-height* 720) ;; Window height in pixels.

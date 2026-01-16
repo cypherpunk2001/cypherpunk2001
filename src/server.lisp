@@ -48,7 +48,9 @@
                 :camera nil
                 :editor nil
                 :combat-events combat-events
-                :client-intent nil)))
+                :client-intent nil
+                :net-role :server
+                :net-requests nil)))
 
 (defun apply-client-intent (server-intent client-intent)
   ;; Copy the client intent payload into the server intent for this frame.

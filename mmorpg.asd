@@ -1,6 +1,6 @@
 (asdf:defsystem #:mmorpg
   :description "Minimal Common Lisp + raylib proof"
-  :depends-on (#:claw-raylib)
+  :depends-on (#:claw-raylib #:usocket)
   :serial t
   :components ((:file "src/package")
                (:file "src/config")
@@ -22,4 +22,5 @@
                (:file "src/editor")
                (:file "src/rendering")
                (:file "src/server")
-               (:file "src/main")))
+               (:file "src/main")
+               (:file "src/net")))

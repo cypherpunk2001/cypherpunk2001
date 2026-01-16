@@ -30,7 +30,26 @@ mmorpg/
 
 ## Current Task
 
-Can you add a chat system where if I press 't' it allows me to type sentences and they show up in the status area below the stats. (the one that has status messages that fade. I guess reduce the fade time, you know, like let stuff appear in the area for a good 30 seconds before fading. This can be zone messages. Anyone chatting in the zone sees the message theoretically, remember we have client/server split and intent authority stuff going on here that we are midway through with.)
+Finish up the initial client/server udp split and do it for real.
+
+For now, the server will just listen on some localhost:1337 or similar
+
+give me two new things in the makefile:
+
+make server
+make client
+
+make server must start first
+
+make client will just auto connect to the server
+
+from here I should still be able to play the game, save and load like normal.
+
+after that we'll discuss some character setup and minimal poc registration type of system so that we can have multiple clients connecting in a way that is sane and doesnt corrupt the save file?
+
+Adjust this if I am missing something or you need to correct my plan.
+
+
 
 ## Future Tasks / Roadmap
 
@@ -132,13 +151,16 @@ This is the agent’s most useful quick check alongside `make ci`.
 - (ql:quickload :mmorpg)
 - compiles system
 - no window, no GPU
+- runs a UDP handshake smoke test (server thread + client receive)
+- env overrides: `MMORPG_NET_TEST_PORT`, `MMORPG_NET_TEST_SECONDS`
 
 #### make smoke
 
 - loads system
-- runs (mmorpg:run :max-seconds … :max-frames …)
-- opens a real window briefly
+- runs server + client (mmorpg:run-server + mmorpg:run-client)
+- opens a real client window briefly
 - exits automatically
+- env overrides: `MMORPG_NET_TEST_PORT`, `MMORPG_SMOKE_SECONDS`, `MMORPG_SMOKE_FRAMES`
 
 #### make checkdocs
 

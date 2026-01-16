@@ -27,7 +27,9 @@
                   :camera camera
                   :editor editor
                   :combat-events combat-events
-                  :client-intent client-intent))))
+                  :client-intent client-intent
+                  :net-role :local
+                  :net-requests nil))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
@@ -57,39 +59,48 @@
     (update-ui-hud-log ui dt)
     (update-click-marker player dt)
     (ensure-preview-zones world player camera editor)
-    (let ((menu-action (update-ui-input ui audio mouse-clicked)))
+    (let ((menu-action (update-ui-input ui audio mouse-clicked))
+          (net-role (game-net-role game)))
       (when menu-action
         (case menu-action
           (:toggle-editor
-           (toggle-editor-mode editor player)
-           (setf (ui-menu-open ui) nil))
+           (if (eq net-role :client)
+               (emit-hud-message-event event-queue
+                                       "Editor disabled in client mode.")
+               (progn
+                 (toggle-editor-mode editor player)
+                 (setf (ui-menu-open ui) nil))))
           (:save-game
-           (when (save-game game *save-filepath*)
-             (emit-hud-message-event event-queue "Game saved.")))
+           (if (eq net-role :client)
+               (queue-net-request game (list :type :save))
+               (when (save-game game *save-filepath*)
+                 (emit-hud-message-event event-queue "Game saved."))))
           (:load-game
-           (let ((zone-id (load-game game *save-filepath*)))
-             (if zone-id
-                 (progn
-                   (let ((server-intent (and player (player-intent player))))
-                     (when server-intent
-                       (reset-frame-intent server-intent)
-                       (clear-intent-target server-intent)))
-                   (when client-intent
-                     (reset-frame-intent client-intent)
-                     (clear-intent-target client-intent))
-                   (clear-player-auto-walk player)
-                   (setf (player-attacking player) nil
-                         (player-attack-hit player) nil
-                         (player-hit-active player) nil)
-                   (mark-player-hud-stats-dirty player)
-                   (mark-player-inventory-dirty player)
-                   (setf (world-minimap-spawns world)
-                         (build-adjacent-minimap-spawns world player))
-                   (setf (world-minimap-collisions world)
-                         (build-minimap-collisions world))
-                   (emit-hud-message-event event-queue
-                                           (format nil "Game loaded (~a)." zone-id)))
-                 (emit-hud-message-event event-queue "Load failed.")))))))
+           (if (eq net-role :client)
+               (queue-net-request game (list :type :load))
+               (let ((zone-id (load-game game *save-filepath*)))
+                 (if zone-id
+                     (progn
+                       (let ((server-intent (and player (player-intent player))))
+                         (when server-intent
+                           (reset-frame-intent server-intent)
+                           (clear-intent-target server-intent)))
+                       (when client-intent
+                         (reset-frame-intent client-intent)
+                         (clear-intent-target client-intent))
+                       (clear-player-auto-walk player)
+                       (setf (player-attacking player) nil
+                             (player-attack-hit player) nil
+                             (player-hit-active player) nil)
+                       (mark-player-hud-stats-dirty player)
+                       (mark-player-inventory-dirty player)
+                       (setf (world-minimap-spawns world)
+                             (build-adjacent-minimap-spawns world player))
+                       (setf (world-minimap-collisions world)
+                             (build-minimap-collisions world))
+                       (emit-hud-message-event event-queue
+                                               (format nil "Game loaded (~a)." zone-id)))
+                     (emit-hud-message-event event-queue "Load failed."))))))))
     (let ((chat-opened nil))
       (when (and (not (ui-chat-active ui))
                  (not (ui-menu-open ui))

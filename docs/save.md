@@ -15,10 +15,12 @@ What it serializes
 - Object state: position, count, respawn timer, respawnable flag
 - World context: current zone ID, entity ID source
 - Version tag: format version for migration support
+- Optional visual fields (facing/frames/hit state) when `:include-visuals` is true for snapshot streaming
 
 Key functions
-- `serialize-game-state`: converts game to plist snapshot
+- `serialize-game-state`: converts game to plist snapshot (optionally `:include-visuals`)
 - `deserialize-game-state`: restores game from plist snapshot
+- `apply-game-state`: applies a snapshot into an existing game, loading zones if needed
 - `save-game`: writes game state to file
 - `load-game`: reads game state from file, optionally applying the saved zone before deserializing
 
@@ -56,7 +58,7 @@ Save format (plist structure)
 Design note
 - Only server-authoritative state is saved (no UI, no rendering state).
 - Intent is NOT saved (it's ephemeral per-frame input).
-- Animation state is NOT saved (it's derived from current action).
+- Save files omit visual fields; network snapshots can opt in to visuals via `:include-visuals`.
 - This format becomes the future snapshot sync format for networking.
 
 Client/Server Preparation

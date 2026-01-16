@@ -167,7 +167,19 @@
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
   world player npcs entities id-source audio ui render assets camera editor
-  combat-events client-intent)
+  combat-events client-intent net-role net-requests)
+
+(defun queue-net-request (game request)
+  ;; Queue a network request for the client to send.
+  (when (and game request)
+    (push request (game-net-requests game)))
+  request)
+
+(defun drain-net-requests (game)
+  ;; Return queued net requests in FIFO order and clear the queue.
+  (let ((requests (nreverse (game-net-requests game))))
+    (setf (game-net-requests game) nil)
+    requests))
 
 (defun allocate-entity-id (id-source)
   ;; Return the next entity id and advance the counter.

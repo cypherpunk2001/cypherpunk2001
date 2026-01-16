@@ -57,12 +57,23 @@
       (funcall (read-from-string "ql:register-local-projects"))
       (funcall (read-from-string "ql:quickload") :mmorpg)
       (let ((seconds (env-float "MMORPG_SMOKE_SECONDS" 5.0))
-            (frames (env-int "MMORPG_SMOKE_FRAMES" 0)))
+            (frames (env-int "MMORPG_SMOKE_FRAMES" 0))
+            (port (env-int "MMORPG_NET_TEST_PORT" 1337)))
         (format t "~&SMOKE: starting (seconds=~a frames=~a)~%" seconds frames)
         (finish-output)
-        (funcall (read-from-string "mmorpg:run")
-                 :max-seconds seconds
-                 :max-frames frames))
+        (let ((server-thread (sb-thread:make-thread
+                              (lambda ()
+                                (funcall (read-from-string "mmorpg:run-server")
+                                         :host "127.0.0.1"
+                                         :port port
+                                         :max-seconds (+ seconds 1.0))))))
+          (sleep 0.1)
+          (funcall (read-from-string "mmorpg:run-client")
+                   :host "127.0.0.1"
+                   :port port
+                   :max-seconds seconds
+                   :max-frames frames)
+          (sb-thread:join-thread server-thread)))
       (format t "~&SMOKE: ok~%")
       (sb-ext:exit :code 0))
   (error (e)

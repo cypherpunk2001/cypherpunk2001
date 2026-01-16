@@ -2,6 +2,8 @@
 (defpackage #:mmorpg
   (:use #:cl)
   (:export #:run
-           #:run-headless))
+           #:run-headless
+           #:run-server
+           #:run-client))
 
 (in-package #:mmorpg)

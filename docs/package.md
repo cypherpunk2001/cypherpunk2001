@@ -9,12 +9,14 @@ Why we do it this way
   coupling between modules.
 
 Key idea
-- Only entry points are exported (`run`, `run-headless`). Everything else stays
-  internal until it becomes a deliberate API.
+- Only entry points are exported (`run`, `run-headless`, `run-server`, `run-client`).
+  Everything else stays internal until it becomes a deliberate API.
 
 Example
 ```lisp
 (ql:quickload :mmorpg)
 (mmorpg:run)
 (mmorpg:run-headless :max-seconds 2.0)
+(mmorpg:run-server)
+(mmorpg:run-client)
 ```
