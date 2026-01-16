@@ -129,7 +129,8 @@
  (:arrows
   (:name "Arrows"
    :stack-size 99
-   :value 1))
+   :value 1
+   :sprite "../assets/1 Characters/Other/Arrow.png"))
  (:leather-cap
   (:name "Leather Cap"
    :stack-size 1
@@ -144,11 +145,13 @@
    :attack 1))
 
 :object-archetypes
- (:arrows
+(:arrows
   (:name "Arrows"
+   :description "A bundle of mismatched arrows. Most look usable."
    :sprite "../assets/1 Characters/Other/Arrow.png"
    :item-id :arrows
-   :count 1))
+   :count 5
+   :respawn-seconds 5.0))
 
 :loot-tables
  (:rat
@@ -179,6 +182,7 @@
 :npc-archetypes
  (:rat
   (:name "Dungeon Rat"
+   :description "A twitchy rat with more confidence than it deserves."
    :animation-set-id :npc-rat
    :max-hits 3
    :attack-level 1
@@ -201,6 +205,7 @@
    :perception-tiles 4.0))
  (:goblin
   (:name "Goblin"
+   :description "A scrawny goblin with a grin full of bad ideas."
    :animation-set-id :npc-goblin
    :max-hits 4
    :attack-level 3
@@ -223,6 +228,7 @@
    :perception-tiles 6.0))
  (:orc
   (:name "Orc"
+   :description "A hulking orc that smells like trouble and wet armor."
    :animation-set-id :npc-orc
    :max-hits 6
    :attack-level 5
@@ -245,6 +251,7 @@
    :perception-tiles 7.0))
  (:witch-doctor
   (:name "Witch Doctor"
+   :description "A cackling healer with pockets full of questionable powders."
    :animation-set-id :npc-witch-doctor
    :max-hits 5
    :attack-level 4

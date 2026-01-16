@@ -5,6 +5,7 @@
   ;; Player state used by update/draw loops.
   id x y dx dy intent stats inventory equipment
   attack-target-id follow-target-id
+  pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
   click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
   facing-sign class hp
@@ -98,15 +99,19 @@
   inventory-open
   hover-npc-name
   context-open context-x context-y context-world-x context-world-y
-  context-target-id context-has-attack context-has-follow
+  context-target-id context-target-type context-object-id context-slot-index context-item-id
+  context-has-walk context-has-attack context-has-follow context-has-pickup
+  context-has-examine context-has-drop
   context-width context-option-height context-padding context-text-size
   context-walk-label context-attack-label context-follow-label
+  context-pickup-label context-examine-label context-drop-label
   minimap-x minimap-y minimap-width minimap-height minimap-point-size
   minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
   minimap-collision-color
   debug-grid-color debug-wall-color debug-collision-color debug-collider-color
   stamina-labels
   hud-stats-text-size hud-stats-line-gap
+  hud-log-text-size hud-log-line-gap hud-log-lines hud-log-buffer hud-log-index hud-log-count
   combat-log-text-size combat-log-line-gap
   combat-log-lines combat-log-index combat-log-count combat-log-buffer)
 
@@ -124,7 +129,7 @@
   down-idle down-walk down-attack
   up-idle up-walk up-attack
   side-idle side-walk side-attack
-  npc-animations object-textures
+  npc-animations object-textures item-textures
   blood-down blood-up blood-side
   scaled-width scaled-height half-sprite-width half-sprite-height)
 
@@ -240,6 +245,10 @@
                   :equipment (make-equipment)
                   :attack-target-id 0
                   :follow-target-id 0
+                  :pickup-target-id nil
+                  :pickup-target-tx 0
+                  :pickup-target-ty 0
+                  :pickup-target-active nil
                   :click-marker-x 0.0
                   :click-marker-y 0.0
                   :click-marker-timer 0.0

@@ -34,6 +34,8 @@
 (defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))
 ;; Marker color for attack targets.
 (defparameter *inventory-size* 20) ;; Player inventory slots.
+(defparameter *inventory-grid-columns* 5) ;; Inventory grid columns.
+(defparameter *inventory-slot-gap* 8) ;; Inventory slot gap in pixels.
 (defparameter *equipment-slot-ids* #(:head :body :legs :weapon :offhand :accessory))
 ;; Equipment slot order used by the equipment vector.
 (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
@@ -146,6 +148,7 @@
 (defclass npc-archetype ()
   ;; Static NPC archetype data (durability, temperament, perception).
   ((name :initarg :name :reader npc-archetype-name)
+   (description :initarg :description :initform nil :reader npc-archetype-description)
    (max-hits :initarg :max-hits :reader npc-archetype-max-hits)
    (attack-level :initarg :attack-level :initform 1 :reader npc-archetype-attack-level)
    (strength-level :initarg :strength-level :initform 1 :reader npc-archetype-strength-level)

@@ -188,20 +188,34 @@
          (attack-xp 0)
          (strength-xp 0)
          (defense-xp 0)
-         (hitpoints-xp 0))
+         (hitpoints-xp 0)
+         (level-ups nil))
     (when (and stats (> xp 0))
       (multiple-value-setq (attack-xp strength-xp defense-xp hitpoints-xp)
         (split-combat-xp player xp))
       (when (> attack-xp 0)
-        (award-skill-xp (stat-block-attack stats) attack-xp))
+        (multiple-value-bind (old new)
+            (award-skill-xp (stat-block-attack stats) attack-xp)
+          (when (> new old)
+            (push (cons :attack new) level-ups))))
       (when (> strength-xp 0)
-        (award-skill-xp (stat-block-strength stats) strength-xp))
+        (multiple-value-bind (old new)
+            (award-skill-xp (stat-block-strength stats) strength-xp)
+          (when (> new old)
+            (push (cons :strength new) level-ups))))
       (when (> defense-xp 0)
-        (award-skill-xp (stat-block-defense stats) defense-xp))
+        (multiple-value-bind (old new)
+            (award-skill-xp (stat-block-defense stats) defense-xp)
+          (when (> new old)
+            (push (cons :defense new) level-ups))))
       (when (> hitpoints-xp 0)
-        (award-hitpoints-xp player hitpoints-xp))
+        (multiple-value-bind (old new)
+            (award-hitpoints-xp player hitpoints-xp)
+          (when (and old new (> new old))
+            (push (cons :hitpoints new) level-ups))))
       (mark-player-hud-stats-dirty player))
-    (values attack-xp strength-xp defense-xp hitpoints-xp)))
+    (values attack-xp strength-xp defense-xp hitpoints-xp
+            (nreverse level-ups))))
 
 (defun mark-player-hud-stats-dirty (player)
   ;; Flag the player's HUD stats cache for refresh.
@@ -269,12 +283,16 @@
   (when (and player (player-hud-stats-dirty player))
     (refresh-player-hud-stats player)))
 
+(defun item-display-name (item-id)
+  ;; Return a display-friendly name for ITEM-ID.
+  (let ((item (and item-id (find-item-archetype item-id))))
+    (or (and item (item-archetype-name item))
+        (and item-id (string-capitalize (string item-id)))
+        "Unknown")))
+
 (defun inventory-slot-label (item-id count)
   ;; Build a label for ITEM-ID with COUNT.
-  (let* ((item (and item-id (find-item-archetype item-id)))
-         (name (or (and item (item-archetype-name item))
-                   (and item-id (string-capitalize (string item-id)))
-                   "Unknown")))
+  (let ((name (item-display-name item-id)))
     (if (> count 1)
         (format nil "~a x~d" name count)
         name)))
@@ -485,40 +503,128 @@
   ;; Return the pickup count for OBJECT and ARCHETYPE.
   (let ((raw (getf object :count nil)))
     (cond
-      ((and raw (numberp raw) (> raw 0)) (truncate raw))
+      ((and raw (numberp raw) (>= raw 0)) (truncate raw))
       (archetype (max 1 (object-archetype-count archetype)))
       (t 1))))
 
-(defun update-object-pickups (player world)
-  ;; Award inventory items when the player stands on world objects.
+(defun object-respawn-seconds (archetype)
+  ;; Return the respawn cooldown for ARCHETYPE.
+  (let ((seconds (and archetype (object-archetype-respawn-seconds archetype))))
+    (if (and seconds (> seconds 0.0))
+        (max 0.0 seconds)
+        0.0)))
+
+(defun object-respawn-timer (object)
+  ;; Return the active respawn timer for OBJECT, if any.
+  (let ((timer (getf object :respawn nil)))
+    (if (and timer (numberp timer))
+        (max 0.0 (float timer 1.0))
+        0.0)))
+
+(defun object-respawning-p (object)
+  ;; Return true when OBJECT is waiting to respawn.
+  (> (object-respawn-timer object) 0.0))
+
+(defun update-object-respawns (world dt)
+  ;; Tick down respawn timers and restore object counts when ready.
+  (let* ((zone (world-zone world))
+         (objects (and zone (zone-objects zone))))
+    (when objects
+      (dolist (object objects)
+        (let* ((timer (object-respawn-timer object)))
+          (when (> timer 0.0)
+            (setf timer (max 0.0 (- timer dt))
+                  (getf object :respawn) timer)
+            (when (<= timer 0.0)
+              (let* ((object-id (getf object :id))
+                     (archetype (and object-id (find-object-archetype object-id))))
+                (when archetype
+                  (setf (getf object :count) (object-archetype-count archetype)
+                        (getf object :respawn) 0.0))))))))))
+
+(defun pickup-object-at-tile (player world tx ty object-id)
+  ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
   (let* ((zone (world-zone world))
          (objects (and zone (zone-objects zone))))
     (when (and player zone objects)
-      (multiple-value-bind (tx ty)
-          (player-tile-coords player world)
-        (let ((remaining nil)
-              (changed nil))
-          (dolist (object objects)
-            (let ((ox (getf object :x))
-                  (oy (getf object :y)))
-              (if (and (eql ox tx) (eql oy ty))
-                  (let* ((object-id (getf object :id))
-                         (archetype (and object-id (find-object-archetype object-id)))
-                         (item-id (and archetype (object-archetype-item-id archetype))))
-                    (if item-id
-                        (let* ((count (object-entry-count object archetype))
-                               (leftover (grant-inventory-item player item-id count)))
-                          (cond
-                            ((zerop leftover)
-                             (setf changed t))
-                            (t
-                             (setf (getf object :count) leftover
-                                   changed t)
-                             (push object remaining))))
-                        (push object remaining)))
-                  (push object remaining))))
-          (when changed
-            (setf (zone-objects zone) (nreverse remaining))))))))
+      (let ((remaining nil)
+            (picked nil))
+        (dolist (object objects)
+          (let ((ox (getf object :x))
+                (oy (getf object :y))
+                (id (getf object :id)))
+            (if (and (eql ox tx)
+                     (eql oy ty)
+                     (or (null object-id) (eq id object-id)))
+                (let* ((archetype (and id (find-object-archetype id)))
+                       (item-id (and archetype (object-archetype-item-id archetype)))
+                       (count (object-entry-count object archetype))
+                       (respawn (object-respawn-seconds archetype)))
+                  (if (and item-id (> count 0) (not (object-respawning-p object)))
+                      (let ((leftover (grant-inventory-item player item-id count)))
+                        (setf picked t)
+                        (cond
+                          ((zerop leftover)
+                           (if (> respawn 0.0)
+                               (progn
+                                 (setf (getf object :count) 0
+                                       (getf object :respawn) respawn)
+                                 (push object remaining))
+                               nil))
+                          (t
+                           (setf (getf object :count) leftover)
+                           (push object remaining))))
+                      (push object remaining)))
+                (push object remaining))))
+        (when picked
+          (setf (zone-objects zone) (nreverse remaining)))
+        picked))))
+
+(defun update-player-pickup-target (player world)
+  ;; Resolve explicit pickup targets once the player reaches the tile.
+  (when (and player (player-pickup-target-active player))
+    (multiple-value-bind (tx ty)
+        (player-tile-coords player world)
+      (let ((target-x (player-pickup-target-tx player))
+            (target-y (player-pickup-target-ty player))
+            (target-id (player-pickup-target-id player)))
+        (when (and (eql tx target-x) (eql ty target-y))
+          (pickup-object-at-tile player world target-x target-y target-id)
+          (setf (player-pickup-target-active player) nil
+                (player-pickup-target-id player) nil))))))
+
+(defun drop-inventory-item (player world item-id count)
+  ;; Drop COUNT of ITEM-ID onto the player's current tile.
+  (let* ((zone (world-zone world))
+         (amount (max 0 (truncate count))))
+    (when (and player zone item-id (> amount 0))
+      (let* ((archetype (find-object-archetype-by-item item-id))
+             (object-id (and archetype (object-archetype-id archetype))))
+        (when object-id
+          (multiple-value-bind (tx ty)
+              (player-tile-coords player world)
+            (let* ((objects (zone-objects zone))
+                   (existing (and objects
+                                  (find-if (lambda (obj)
+                                             (and (eql (getf obj :x) tx)
+                                                  (eql (getf obj :y) ty)))
+                                           objects))))
+              (when (or (null existing)
+                        (eq (getf existing :id) object-id))
+                (let ((leftover (consume-inventory-item player item-id amount)))
+                  (let ((dropped (- amount leftover)))
+                    (when (> dropped 0)
+                      (let ((base-count (if existing
+                                            (object-entry-count existing archetype)
+                                            0)))
+                        (if existing
+                            (setf (getf existing :count) (+ base-count dropped)
+                                  (getf existing :respawn) 0.0)
+                            (zone-add-object zone (list :id object-id
+                                                        :x tx
+                                                        :y ty
+                                                        :count (+ base-count dropped)))))
+                      dropped)))))))))))
 
 (defun roll-loot-entry (entries)
   ;; Roll a single loot entry from ENTRIES.

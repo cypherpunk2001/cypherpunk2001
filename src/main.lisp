@@ -82,14 +82,20 @@
     (when (and (not (ui-menu-open ui))
                (not (editor-active editor))
                (raylib:is-key-pressed +key-i+))
-      (setf (ui-inventory-open ui) (not (ui-inventory-open ui))))
+      (setf (ui-inventory-open ui) (not (ui-inventory-open ui)))
+      (close-context-menu ui))
     (when (or (ui-menu-open ui)
               (editor-active editor))
       (setf (ui-inventory-open ui) nil))
-    (let ((input-blocked (or (ui-menu-open ui)
-                             (editor-active editor)
-                             (ui-inventory-open ui))))
-      (when input-blocked
+    (let* ((menu-blocked (or (ui-menu-open ui)
+                             (editor-active editor)))
+           (inventory-open (ui-inventory-open ui))
+           (input-blocked (or menu-blocked inventory-open)))
+      (when menu-blocked
+        (close-context-menu ui))
+      (when (and inventory-open
+                 (ui-context-open ui)
+                 (not (eq (ui-context-target-type ui) :inventory)))
         (close-context-menu ui))
       (reset-frame-intent player-intent)
       (let ((click-consumed nil))
@@ -98,7 +104,11 @@
             (when action
               (let ((context-x (ui-context-world-x ui))
                     (context-y (ui-context-world-y ui))
-                    (context-id (ui-context-target-id ui)))
+                    (context-id (ui-context-target-id ui))
+                    (context-type (ui-context-target-type ui))
+                    (context-object-id (ui-context-object-id ui))
+                    (slot-index (ui-context-slot-index ui))
+                    (item-id (ui-context-item-id ui)))
                 (close-context-menu ui)
                 (unless (eq action :close)
                   (setf click-consumed t)
@@ -115,14 +125,81 @@
                     ((eq action :follow)
                      (let ((npc (find-npc-by-id npcs context-id)))
                        (when npc
-                         (set-player-follow-target player player-intent npc t))))))))))
+                         (set-player-follow-target player player-intent npc t))))
+                    ((eq action :pickup)
+                     (let* ((tile-size (world-tile-dest-size world))
+                            (tx (floor context-x tile-size))
+                            (ty (floor context-y tile-size)))
+                       (when context-object-id
+                         (set-player-pickup-target player player-intent world
+                                                   context-object-id
+                                                   tx
+                                                   ty
+                                                   t))))
+                    ((eq action :examine)
+                     (cond
+                       ((eq context-type :npc)
+                        (let ((npc (find-npc-by-id npcs context-id)))
+                          (when npc
+                            (ui-push-hud-log ui (npc-examine-description npc)))))
+                       ((eq context-type :object)
+                       (let ((object (and context-object-id
+                                          (list :id context-object-id))))
+                          (ui-push-hud-log ui (object-examine-description object))))))
+                    ((eq action :drop)
+                     (let* ((inventory (player-inventory player))
+                            (slots (and inventory (inventory-slots inventory)))
+                            (slot (and slot-index slots
+                                       (< slot-index (length slots))
+                                       (aref slots slot-index)))
+                            (count (and slot (inventory-slot-count slot))))
+                       (when (and item-id count (> count 0))
+                         (let ((dropped (drop-inventory-item player world item-id count)))
+                           (when (and dropped (> dropped 0))
+                             (ui-push-hud-log ui
+                                              (format nil "Dropped ~a x~d."
+                                                      (item-display-name item-id)
+                                                      dropped)))))))))))))
+        (when (and (not click-consumed)
+                   inventory-open
+                   mouse-right-clicked)
+          (let* ((inventory (player-inventory player))
+                 (slots (and inventory (inventory-slots inventory)))
+                 (slot-count (if slots (length slots) 0))
+                 (slot-index (and (> slot-count 0)
+                                  (inventory-slot-at-screen ui mouse-x mouse-y
+                                                            slot-count))))
+            (when (and slot-index slots (< slot-index (length slots)))
+              (let* ((slot (aref slots slot-index))
+                     (slot-item (inventory-slot-item-id slot))
+                     (item-count (inventory-slot-count slot)))
+                (when (and slot-item (> item-count 0))
+                  (open-context-menu ui mouse-x mouse-y
+                                     (player-x player)
+                                     (player-y player)
+                                     :target-type :inventory
+                                     :slot-index slot-index
+                                     :item-id slot-item)
+                  (setf click-consumed t))))))
         (when (and (not click-consumed)
                    (not input-blocked)
                    mouse-right-clicked)
-          (multiple-value-bind (npc world-x world-y)
-              (find-npc-at-screen npcs world player camera mouse-x mouse-y)
-            (open-context-menu ui mouse-x mouse-y world-x world-y
-                               :target-id (and npc (npc-id npc))))
+          (multiple-value-bind (object object-world-x object-world-y)
+              (find-object-at-screen world player camera mouse-x mouse-y)
+            (declare (ignore object-world-x object-world-y))
+            (if object
+                (multiple-value-bind (cx cy)
+                    (tile-center-position (world-tile-dest-size world)
+                                          (getf object :x)
+                                          (getf object :y))
+                  (open-context-menu ui mouse-x mouse-y cx cy
+                                     :target-type :object
+                                     :object-id (getf object :id)))
+                (multiple-value-bind (npc world-x world-y)
+                    (find-npc-at-screen npcs world player camera mouse-x mouse-y)
+                  (open-context-menu ui mouse-x mouse-y world-x world-y
+                                     :target-id (and npc (npc-id npc))
+                                     :target-type (if npc :npc :world)))))
           (setf click-consumed t))
         (unless input-blocked
           (let ((minimap-handled (and (not click-consumed)
@@ -134,7 +211,16 @@
                     (find-npc-at-screen npcs world player camera mouse-x mouse-y)
                   (if npc
                       (set-player-attack-target player player-intent npc t)
-                      (set-player-walk-target player player-intent world-x world-y t))))
+                      (multiple-value-bind (object obj-world-x obj-world-y)
+                          (find-object-at-screen world player camera mouse-x mouse-y)
+                        (declare (ignore obj-world-x obj-world-y))
+                        (if object
+                            (set-player-pickup-target player player-intent world
+                                                      (getf object :id)
+                                                      (getf object :x)
+                                                      (getf object :y)
+                                                      t)
+                            (set-player-walk-target player player-intent world-x world-y t))))))
               (unless mouse-clicked
                 (update-target-from-mouse player player-intent camera dt
                                           mouse-clicked mouse-down))))))
@@ -181,7 +267,8 @@
              (speed-mult (update-running-state player dt moving
                                                (intent-run-toggle player-intent))))
         (update-player-position player player-intent world speed-mult dt)
-        (update-object-pickups player world)))
+        (update-player-pickup-target player world)))
+    (update-object-respawns world dt)
     (let ((transitioned (and allow-player-control
                              (update-zone-transition game))))
       (when transitioned

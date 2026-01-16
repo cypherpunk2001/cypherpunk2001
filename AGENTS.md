@@ -61,7 +61,7 @@ I consider that we already have developed this with the mele system and the run/
 - server updates state
 - client renders result
 
-Just ensure we already follow the authority/intents boundary in code.
+Just ensure we already follow the authority/intents boundary in mele/stamina code.
 
 5) Save/load + snapshot serialization (no rendering dependency)
 - Even if the game is always-online, you still need ways to persist and restore the authoritative world state.
@@ -76,7 +76,7 @@ That’s enough
 
 We have already built a real AI. Let's ensure that our current npc spawn mechanisms are ready for the client/server split as much as we can per usual principles of server authority, etc.
 
-Just ensure we already follow the authority/intents boundary in code.
+Just ensure we already follow the authority/intents boundary in npc/item spawn code.
 
 ### Mid-term (world + UX)
 - Headless server loop in-process (client sends intents, server updates state)

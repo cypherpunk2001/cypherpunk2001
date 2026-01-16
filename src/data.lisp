@@ -11,12 +11,12 @@
 
 (defstruct (item-archetype (:constructor %make-item-archetype))
   ;; Static item data for inventory and loot.
-  id name stack-size value
+  id name sprite stack-size value
   equip-slot attack strength defense hitpoints)
 
 (defstruct (object-archetype (:constructor %make-object-archetype))
   ;; Static object data for world pickups.
-  id name sprite item-id count)
+  id name description sprite item-id count respawn-seconds)
 
 (defstruct (loot-entry (:constructor %make-loot-entry))
   ;; Single weighted loot entry.
@@ -61,6 +61,8 @@
     (:click-marker-size-scale . *click-marker-size-scale*)
     (:click-marker-thickness . *click-marker-thickness*)
     (:inventory-size . *inventory-size*)
+    (:inventory-grid-columns . *inventory-grid-columns*)
+    (:inventory-slot-gap . *inventory-slot-gap*)
     (:mouse-hold-repeat-seconds . *mouse-hold-repeat-seconds*)
     (:editor-move-speed . *editor-move-speed*)
     (:editor-start-enabled . *editor-start-enabled*)
@@ -133,6 +135,7 @@
   ;; Build an item-archetype from plist values.
   (let ((name (or (getf plist :name)
                   (string-capitalize (string id))))
+        (sprite (getf plist :sprite nil))
         (stack-size (getf plist :stack-size 1))
         (value (getf plist :value 0))
         (equip-slot (getf plist :equip-slot nil))
@@ -142,6 +145,7 @@
         (hitpoints (getf plist :hitpoints 0)))
     (%make-item-archetype :id id
                           :name name
+                          :sprite sprite
                           :stack-size (max 1 stack-size)
                           :value value
                           :equip-slot equip-slot
@@ -154,17 +158,24 @@
   ;; Build an object-archetype from plist values.
   (let* ((name (or (getf plist :name)
                    (string-capitalize (string id))))
+         (description (getf plist :description nil))
          (sprite (getf plist :sprite nil))
          (item-id (getf plist :item-id nil))
          (raw-count (getf plist :count nil))
          (count (if (and raw-count (numberp raw-count))
                     (max 1 (truncate raw-count))
-                    1)))
+                    1))
+         (respawn (getf plist :respawn-seconds nil))
+         (respawn-seconds (if (and respawn (numberp respawn) (> respawn 0.0))
+                              (float respawn 1.0)
+                              0.0)))
     (%make-object-archetype :id id
                             :name name
+                            :description description
                             :sprite sprite
                             :item-id item-id
-                            :count count)))
+                            :count count
+                            :respawn-seconds respawn-seconds)))
 
 (defun register-item-archetype (id item)
   ;; Store ITEM under ID.
@@ -178,9 +189,35 @@
   ;; Lookup item archetype by ID.
   (gethash id *item-archetypes*))
 
+(defun item-archetype-ids ()
+  ;; Return a vector of available item archetype IDs sorted by name.
+  (let ((ids nil))
+    (maphash (lambda (id _value)
+               (declare (ignore _value))
+               (push id ids))
+             *item-archetypes*)
+    (when ids
+      (setf ids (sort ids #'string< :key #'symbol-name)))
+    (if ids
+        (coerce ids 'vector)
+        (make-array 0))))
+
 (defun find-object-archetype (id)
   ;; Lookup object archetype by ID.
   (gethash id *object-archetypes*))
+
+(defun find-object-archetype-by-item (item-id)
+  ;; Lookup an object archetype that yields ITEM-ID.
+  (let ((result nil))
+    (when item-id
+      (maphash (lambda (_id archetype)
+                 (declare (ignore _id))
+                 (when (and archetype
+                            (eq (object-archetype-item-id archetype) item-id)
+                            (null result))
+                   (setf result archetype)))
+               *object-archetypes*))
+    result))
 
 (defun object-archetype-ids ()
   ;; Return a vector of available object archetype IDs sorted by name.
@@ -419,6 +456,7 @@
                (if (eq value :missing) fallback value))))
     (make-instance 'npc-archetype
                    :name (getf-or :name "NPC")
+                   :description (getf-or :description nil)
                    :max-hits (getf-or :max-hits *npc-max-hits*)
                    :attack-level (getf-or :attack-level 1)
                    :strength-level (getf-or :strength-level 1)
@@ -496,6 +534,7 @@
      :default
      (make-instance 'npc-archetype
                     :name "Default NPC"
+                    :description "A forgettable creature with a blank stare."
                     :max-hits *npc-max-hits*
                     :attack-level 1
                     :strength-level 1

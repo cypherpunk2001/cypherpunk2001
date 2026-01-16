@@ -16,7 +16,9 @@ What it does
 - Applies equipment stat modifiers when items are equipped or unequipped.
 - Clamps current HP to the effective max after equipment modifier changes.
 - Refreshes cached inventory lines for the inventory overlay.
-- Picks up placed world objects into inventory when the player steps on them.
+- Resolves explicit pickup targets and respawns world objects on cooldown.
+- Drops inventory items back into the world as object spawns when requested.
+- Returns level-up summaries from `award-combat-xp` for HUD feedback.
 
 Key functions
 - `xp->level`, `level->xp`, `award-combat-xp`
@@ -24,7 +26,8 @@ Key functions
 - `ensure-player-hud-stats`, `refresh-player-hud-stats`
 - `combat-level`, `combatant-max-hp`
 - `inventory-add`, `inventory-remove`, `equip-item`, `unequip-item`, `award-npc-loot`
-- `ensure-player-inventory`, `update-object-pickups`
+- `ensure-player-inventory`, `update-player-pickup-target`,
+  `update-object-respawns`, `drop-inventory-item`
 
 Walkthrough: awarding XP on a hit
 1) A successful hit computes damage.

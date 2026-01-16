@@ -14,7 +14,9 @@ Data format (zone file)
 - Layers are plists with `:id`, optional `:tileset`, `:collision`, and `:chunks`.
 - Chunks are plists with `:x`, `:y`, and either `:tiles` or `:fill` + `:overrides`.
 - `:overrides` entries are `(x y value)` in chunk-local tile coordinates.
-- `:objects` is optional and stores placed object pickups as `(:id :arrows :x 3 :y 3 :count 1)` entries.
+- `:objects` is optional and stores placed object pickups as `(:id :arrows :x 3 :y 3 :count 5)` entries.
+  `:count` is optional; if omitted, the object archetype count is used. Respawn timers
+  are runtime-only and never serialized in zone files.
 - `:spawns` is optional and stores NPC spawn points as `(:id :rat :x 4 :y 2)` entries.
 
 Example zone

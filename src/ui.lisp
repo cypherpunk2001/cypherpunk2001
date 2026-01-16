@@ -86,8 +86,16 @@
          (context-world-x 0.0)
          (context-world-y 0.0)
          (context-target-id 0)
+         (context-target-type nil)
+         (context-object-id nil)
+         (context-slot-index nil)
+         (context-item-id nil)
+         (context-has-walk t)
          (context-has-attack nil)
          (context-has-follow nil)
+         (context-has-pickup nil)
+         (context-has-examine nil)
+         (context-has-drop nil)
          (context-width 160)
          (context-option-height 28)
          (context-padding 6)
@@ -95,6 +103,9 @@
          (context-walk-label "Walk here")
          (context-attack-label "Attack")
          (context-follow-label "Follow")
+         (context-pickup-label "Pick up")
+         (context-examine-label "Examine")
+         (context-drop-label "Drop")
          (minimap-width *minimap-width*)
          (minimap-height *minimap-height*)
          (minimap-point-size *minimap-point-size*)
@@ -112,6 +123,13 @@
          (stamina-labels (make-stamina-labels))
          (hud-stats-text-size 16)
          (hud-stats-line-gap 4)
+         (hud-log-text-size 14)
+         (hud-log-line-gap 2)
+         (hud-log-lines 4)
+         (hud-log-buffer (make-array (max 1 hud-log-lines)
+                                      :initial-element ""))
+         (hud-log-index 0)
+         (hud-log-count 0)
          (combat-log-text-size 14)
          (combat-log-line-gap 2)
          (combat-log-lines 10)
@@ -188,8 +206,16 @@
               :context-world-x context-world-x
               :context-world-y context-world-y
               :context-target-id context-target-id
+              :context-target-type context-target-type
+              :context-object-id context-object-id
+              :context-slot-index context-slot-index
+              :context-item-id context-item-id
+              :context-has-walk context-has-walk
               :context-has-attack context-has-attack
               :context-has-follow context-has-follow
+              :context-has-pickup context-has-pickup
+              :context-has-examine context-has-examine
+              :context-has-drop context-has-drop
               :context-width context-width
               :context-option-height context-option-height
               :context-padding context-padding
@@ -197,6 +223,9 @@
               :context-walk-label context-walk-label
               :context-attack-label context-attack-label
               :context-follow-label context-follow-label
+              :context-pickup-label context-pickup-label
+              :context-examine-label context-examine-label
+              :context-drop-label context-drop-label
               :minimap-x minimap-x
               :minimap-y minimap-y
               :minimap-width minimap-width
@@ -214,6 +243,12 @@
               :stamina-labels stamina-labels
               :hud-stats-text-size hud-stats-text-size
               :hud-stats-line-gap hud-stats-line-gap
+              :hud-log-text-size hud-log-text-size
+              :hud-log-line-gap hud-log-line-gap
+              :hud-log-lines hud-log-lines
+              :hud-log-index hud-log-index
+              :hud-log-count hud-log-count
+              :hud-log-buffer hud-log-buffer
               :combat-log-text-size combat-log-text-size
               :combat-log-line-gap combat-log-line-gap
               :combat-log-lines combat-log-lines
@@ -231,6 +266,22 @@
           (setf (aref buffer index) text
                 (ui-combat-log-index ui) (mod (1+ index) cap)
                 (ui-combat-log-count ui) (min cap (1+ (ui-combat-log-count ui))))))))
+  ui)
+
+(defun ui-push-hud-log (ui text)
+  ;; Append TEXT to the HUD feedback ring buffer.
+  (when (and ui text (not (string= text "")))
+    (let* ((buffer (ui-hud-log-buffer ui))
+           (cap (length buffer)))
+      (when (> cap 0)
+        (let* ((index (ui-hud-log-index ui))
+               (prev (if (> (ui-hud-log-count ui) 0)
+                         (aref buffer (mod (- index 1) cap))
+                         nil)))
+          (unless (and prev (string= prev text))
+            (setf (aref buffer index) text
+                  (ui-hud-log-index ui) (mod (1+ index) cap)
+                  (ui-hud-log-count ui) (min cap (1+ (ui-hud-log-count ui)))))))))
   ui)
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
@@ -289,46 +340,75 @@
                                     (raylib:get-mouse-y))))
     action))
 
-(defun open-context-menu (ui screen-x screen-y world-x world-y &key target-id)
+(defun open-context-menu (ui screen-x screen-y world-x world-y
+                             &key target-id target-type object-id slot-index item-id)
   ;; Open a context menu anchored at the screen coordinates.
-  (let ((id (or target-id 0)))
+  (let ((id (or target-id 0))
+        (target-type (or target-type :world)))
     (setf (ui-context-open ui) t
           (ui-context-x ui) (truncate screen-x)
           (ui-context-y ui) (truncate screen-y)
           (ui-context-world-x ui) world-x
           (ui-context-world-y ui) world-y
           (ui-context-target-id ui) id
-          (ui-context-has-attack ui) (> id 0)
-          (ui-context-has-follow ui) (> id 0)))
+          (ui-context-target-type ui) target-type
+          (ui-context-object-id ui) object-id
+          (ui-context-slot-index ui) slot-index
+          (ui-context-item-id ui) item-id
+          (ui-context-has-walk ui) (not (eq target-type :inventory))
+          (ui-context-has-attack ui) (eq target-type :npc)
+          (ui-context-has-follow ui) (eq target-type :npc)
+          (ui-context-has-pickup ui) (eq target-type :object)
+          (ui-context-has-examine ui) (or (eq target-type :npc)
+                                          (eq target-type :object))
+          (ui-context-has-drop ui) (eq target-type :inventory)))
   ui)
 
 (defun close-context-menu (ui)
   ;; Close any open context menu.
   (setf (ui-context-open ui) nil
         (ui-context-target-id ui) 0
+        (ui-context-target-type ui) nil
+        (ui-context-object-id ui) nil
+        (ui-context-slot-index ui) nil
+        (ui-context-item-id ui) nil
+        (ui-context-has-walk ui) t
         (ui-context-has-attack ui) nil
-        (ui-context-has-follow ui) nil)
+        (ui-context-has-follow ui) nil
+        (ui-context-has-pickup ui) nil
+        (ui-context-has-examine ui) nil
+        (ui-context-has-drop ui) nil)
   ui)
+
+(defun context-menu-actions (ui)
+  ;; Return the ordered list of context menu actions.
+  (let ((actions nil))
+    (when (ui-context-has-walk ui)
+      (push :walk actions))
+    (when (ui-context-has-attack ui)
+      (push :attack actions))
+    (when (ui-context-has-follow ui)
+      (push :follow actions))
+    (when (ui-context-has-pickup ui)
+      (push :pickup actions))
+    (when (ui-context-has-examine ui)
+      (push :examine actions))
+    (when (ui-context-has-drop ui)
+      (push :drop actions))
+    (nreverse actions)))
 
 (defun context-menu-option-count (ui)
   ;; Return the number of context menu options.
-  (+ 1
-     (if (ui-context-has-attack ui) 1 0)
-     (if (ui-context-has-follow ui) 1 0)))
+  (length (context-menu-actions ui)))
 
 (defun context-menu-action-for-index (ui index)
   ;; Map a menu INDEX to an action keyword, if valid.
-  (let ((attack-p (ui-context-has-attack ui))
-        (follow-p (ui-context-has-follow ui)))
-    (cond
-      ((= index 0) :walk)
-      ((and (= index 1) attack-p) :attack)
-      ((and (= index 1) (not attack-p) follow-p) :follow)
-      ((and (= index 2) follow-p) :follow)
-      (t nil))))
+  (let ((actions (context-menu-actions ui)))
+    (when (and actions (<= 0 index) (< index (length actions)))
+      (nth index actions))))
 
 (defun handle-context-menu-click (ui mouse-x mouse-y)
-  ;; Handle a click against the context menu; returns :walk, :attack, :close, or nil.
+  ;; Handle a click against the context menu; returns an action, :close, or nil.
   (when (ui-context-open ui)
     (let* ((x (ui-context-x ui))
            (y (ui-context-y ui))
@@ -340,6 +420,49 @@
           (let* ((index (floor (/ (- mouse-y y) option-height))))
             (context-menu-action-for-index ui index))
           :close))))
+
+(defun inventory-grid-layout (ui &optional (slot-count *inventory-size*)
+                                        (columns *inventory-grid-columns*))
+  ;; Return layout values for the inventory grid.
+  (let* ((columns (max 1 columns))
+         (rows (max 1 (ceiling slot-count columns)))
+         (panel-x (ui-menu-panel-x ui))
+         (panel-y (ui-menu-panel-y ui))
+         (panel-width (ui-menu-panel-width ui))
+         (panel-height (ui-menu-panel-height ui))
+         (padding (ui-menu-padding ui))
+         (header-height 36)
+         (gap (max 0 *inventory-slot-gap*))
+         (grid-width (- panel-width (* 2 padding)))
+         (grid-height (- panel-height (* 2 padding) header-height))
+         (slot-size (max 16 (floor (min (/ (- grid-width (* gap (1- columns))) columns)
+                                          (/ (- grid-height (* gap (1- rows))) rows)))))
+         (grid-x (+ panel-x padding))
+         (grid-y (+ panel-y padding header-height)))
+    (values grid-x grid-y slot-size gap columns rows
+            panel-x panel-y panel-width panel-height header-height padding)))
+
+(defun inventory-slot-at-screen (ui screen-x screen-y
+                                    &optional (slot-count *inventory-size*)
+                                    (columns *inventory-grid-columns*))
+  ;; Return the inventory slot index at SCREEN-X/Y, or nil.
+  (multiple-value-bind (grid-x grid-y slot-size gap columns rows)
+      (inventory-grid-layout ui slot-count columns)
+    (let* ((spacing (+ slot-size gap))
+           (local-x (- screen-x grid-x))
+           (local-y (- screen-y grid-y)))
+      (when (and (>= local-x 0) (>= local-y 0))
+        (let* ((col (floor (/ local-x spacing)))
+               (row (floor (/ local-y spacing)))
+               (offset-x (- local-x (* col spacing)))
+               (offset-y (- local-y (* row spacing)))
+               (index (+ (* row columns) col)))
+          (when (and (< col columns)
+                     (< row rows)
+                     (< offset-x slot-size)
+                     (< offset-y slot-size)
+                     (< index slot-count))
+            index))))))
 
 (defun ui-trigger-loading (ui &optional (seconds *zone-loading-seconds*))
   ;; Ensure the loading overlay stays visible for at least SECONDS.

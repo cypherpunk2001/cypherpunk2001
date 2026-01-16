@@ -13,6 +13,8 @@ What it does
 - Applies hits once per attack window.
 - Rolls hit/miss and damage based on attack/strength/defense stats.
 - Emits combat log lines (hit/miss, chance/roll, XP) to HUD + stdout when debug overlay is enabled.
+- Formats combat log lines with the per-hit attack/defense levels.
+- Emits HUD feedback for level-ups, combat level increases, and "under attack" alerts.
 - Runs attack cooldowns and hit effect animations.
 - Emits NPC hit logs when `*debug-npc-logs*` is enabled.
 - Supports attack-target follow (auto-move + auto-attack while in range).

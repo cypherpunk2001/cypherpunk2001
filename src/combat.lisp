@@ -141,6 +141,26 @@
     (format t "~&COMBAT ~a~%" text)
     (finish-output)))
 
+(defun emit-hud-message (ui text)
+  ;; Emit a HUD feedback message.
+  (when (and ui text)
+    (ui-push-hud-log ui text)))
+
+(defun emit-level-up-messages (ui level-ups)
+  ;; Emit HUD messages for stat level-ups.
+  (dolist (entry level-ups)
+    (let* ((stat (car entry))
+           (level (cdr entry))
+           (label (case stat
+                    (:attack "Attack")
+                    (:strength "Strength")
+                    (:defense "Defense")
+                    (:hitpoints "Hitpoints")
+                    (t "Skill"))))
+      (emit-hud-message ui
+                        (format nil "Congratulations! ~a level ~d."
+                                label level)))))
+
 (defun push-combat-log (ui attacker defender hit chance roll attack-level defense-level
                            &key damage xp-text killed)
   ;; Build and emit a combat log line when debug is enabled.
@@ -359,37 +379,56 @@
             (setf (player-attack-hit player) t)
             (multiple-value-bind (hit chance roll)
                 (roll-melee-hit player target)
-              (let ((attack-level (combatant-attack-level player))
-                    (defense-level (combatant-defense-level target)))
+              (let ((damage nil)
+                    (killed nil)
+                    (xp-text nil))
                 (if hit
-                    (let* ((damage (roll-melee-damage player))
-                           (killed (combatant-apply-hit target damage))
-                           (xp-text nil))
+                    (progn
+                      (setf damage (roll-melee-damage player)
+                            killed (combatant-apply-hit target damage))
                       (combatant-trigger-hit-effect target)
-                      (multiple-value-bind (attack-xp strength-xp defense-xp hitpoints-xp)
-                          (award-combat-xp player (* damage *xp-per-damage*))
-                        (setf xp-text (format-xp-awards attack-xp strength-xp
-                                                       defense-xp hitpoints-xp)))
+                      (let ((old-combat (combat-level (player-stats player))))
+                        (multiple-value-bind (attack-xp strength-xp defense-xp hitpoints-xp level-ups)
+                            (award-combat-xp player (* damage *xp-per-damage*))
+                          (setf xp-text (format-xp-awards attack-xp strength-xp
+                                                          defense-xp hitpoints-xp))
+                          (emit-level-up-messages ui level-ups)
+                          (let ((new-combat (combat-level (player-stats player))))
+                            (when (> new-combat old-combat)
+                              (emit-hud-message ui
+                                                (format nil
+                                                        "Congratulations! Combat level ~d."
+                                                        new-combat))))))
                       (push-combat-log ui player target t chance roll
-                                       attack-level defense-level
+                                       (combatant-attack-level player)
+                                       (combatant-defense-level target)
                                        :damage damage
                                        :xp-text xp-text
                                        :killed killed)
                       (when killed
                         (let ((kill-xp (npc-kill-xp target)))
                           (when (> kill-xp 0)
-                            (multiple-value-bind (k-attack k-strength k-defense k-hp)
-                                (award-combat-xp player kill-xp)
-                              (let ((kill-text (format-xp-awards k-attack k-strength
-                                                                 k-defense k-hp)))
-                                (when kill-text
-                                  (emit-combat-log ui
-                                                   (format nil "Kill XP: ~a"
-                                                           kill-text)))))))
-                        (award-npc-loot player target)))
+                            (let ((old-combat (combat-level (player-stats player))))
+                              (multiple-value-bind (k-attack k-strength k-defense k-hp level-ups)
+                                  (award-combat-xp player kill-xp)
+                                (let ((kill-text (format-xp-awards k-attack k-strength
+                                                                   k-defense k-hp)))
+                                  (when kill-text
+                                    (emit-combat-log ui
+                                                     (format nil "Kill XP: ~a"
+                                                             kill-text))))
+                                (emit-level-up-messages ui level-ups)
+                                (let ((new-combat (combat-level (player-stats player))))
+                                  (when (> new-combat old-combat)
+                                    (emit-hud-message ui
+                                                      (format nil
+                                                              "Congratulations! Combat level ~d."
+                                                              new-combat))))))))
+                          (award-npc-loot player target)))))
                     (push-combat-log ui player target nil chance roll
-                                     attack-level defense-level
-                                     :xp-text "XP 0"))))))))))
+                                     (combatant-attack-level player)
+                                     (combatant-defense-level target)
+                                     :xp-text "XP 0"))))))))
 
 (defun update-player-animation (player dt)
   ;; Advance animation timers and set facing/state.
@@ -465,19 +504,20 @@
           (when (<= dist-sq attack-range-sq)
             (multiple-value-bind (hit chance roll)
                 (roll-melee-hit npc player)
-              (let ((attack-level (combatant-attack-level npc))
-                    (defense-level (combatant-defense-level player)))
-                (if hit
-                    (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
-                      (combatant-apply-hit player damage)
-                      (combatant-trigger-hit-effect player)
-                      (push-combat-log ui npc player t chance roll
-                                       attack-level defense-level
-                                       :damage damage))
-                    (push-combat-log ui npc player nil chance roll
-                                     attack-level defense-level
-                                     :xp-text "XP 0")))))
-            (setf (npc-attack-timer npc) (npc-attack-cooldown npc)))))))
+              (if hit
+                  (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
+                    (combatant-apply-hit player damage)
+                    (combatant-trigger-hit-effect player)
+                    (emit-hud-message ui "You are under attack!")
+                    (push-combat-log ui npc player t chance roll
+                                     (combatant-attack-level npc)
+                                     (combatant-defense-level player)
+                                     :damage damage))
+                  (push-combat-log ui npc player nil chance roll
+                                   (combatant-attack-level npc)
+                                   (combatant-defense-level player)
+                                   :xp-text "XP 0"))))
+          (setf (npc-attack-timer npc) (npc-attack-cooldown npc)))))))
 
 (defun update-npc-animation (npc dt)
   ;; Advance idle animation frames for the NPC.

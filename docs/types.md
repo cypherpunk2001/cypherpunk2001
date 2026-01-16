@@ -10,13 +10,13 @@ Why we do it this way
   without forcing an inheritance-heavy object model.
 
 Key structs
-- `player`, `npc`: runtime entities with an `id`, `intent`, stats, inventory/equipment, animation/combat state, cached HUD stats and inventory lines, attack/follow targets, click markers, and NPC respawn timers.
+- `player`, `npc`: runtime entities with an `id`, `intent`, stats, inventory/equipment, animation/combat state, cached HUD stats and inventory lines, attack/follow/pickup targets, click markers, and NPC respawn timers.
 - `skill`, `stat-block`, `stat-modifiers`: reusable stat containers for combat progression.
 - `inventory`, `inventory-slot`: simple inventory storage for stackable items.
 - `equipment`: equipped item IDs aligned to `*equipment-slot-ids*`.
 - `id-source`: monotonic ID generator used for stable entity IDs.
 - `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
-- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, hovered NPC name, minimap layout/colors, a combat log ring buffer, and a context menu; assets include object textures).
+- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, hovered NPC name, HUD/combat log ring buffers, minimap layout/colors, and a context menu with target metadata; assets include object and item textures).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette, object palette).
 - `game`: top-level aggregator passed to update/draw functions.
 

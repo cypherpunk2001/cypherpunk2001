@@ -45,6 +45,11 @@
   ;; Clear any active follow target.
   (setf (player-follow-target-id player) 0))
 
+(defun clear-player-pickup-target (player)
+  ;; Clear any active pickup target.
+  (setf (player-pickup-target-active player) nil
+        (player-pickup-target-id player) nil))
+
 (defun trigger-click-marker (player world-x world-y kind)
   ;; Set a fading click marker at the given world position.
   (setf (player-click-marker-x player) world-x
@@ -66,6 +71,7 @@
   (clear-player-auto-walk player)
   (clear-player-attack-target player)
   (clear-player-follow-target player)
+  (clear-player-pickup-target player)
   (set-intent-target intent world-x world-y)
   (when mark-p
     (trigger-click-marker player world-x world-y :walk)))
@@ -75,6 +81,7 @@
   (when npc
     (clear-player-auto-walk player)
     (clear-player-follow-target player)
+    (clear-player-pickup-target player)
     (setf (player-attack-target-id player) (npc-id npc))
     (set-intent-target intent (npc-x npc) (npc-y npc))
     (when mark-p
@@ -85,10 +92,26 @@
   (when npc
     (clear-player-auto-walk player)
     (clear-player-attack-target player)
+    (clear-player-pickup-target player)
     (setf (player-follow-target-id player) (npc-id npc))
     (set-intent-target intent (npc-x npc) (npc-y npc))
     (when mark-p
       (trigger-click-marker player (npc-x npc) (npc-y npc) :walk))))
+
+(defun set-player-pickup-target (player intent world object-id tx ty &optional (mark-p t))
+  ;; Set a pickup target on a specific tile.
+  (clear-player-auto-walk player)
+  (clear-player-attack-target player)
+  (clear-player-follow-target player)
+  (setf (player-pickup-target-id player) object-id
+        (player-pickup-target-tx player) tx
+        (player-pickup-target-ty player) ty
+        (player-pickup-target-active player) t)
+  (multiple-value-bind (world-x world-y)
+      (tile-center-position (world-tile-dest-size world) tx ty)
+    (set-intent-target intent world-x world-y)
+    (when mark-p
+      (trigger-click-marker player world-x world-y :walk))))
 
 (defun npc-hit-test-p (npc world world-x world-y)
   ;; Return true when WORLD-X/WORLD-Y overlap the NPC collider.
@@ -131,6 +154,36 @@
             world-x
             world-y)))
 
+(defun find-object-at-world (world world-x world-y)
+  ;; Return the object at WORLD-X/WORLD-Y, if any.
+  (let* ((zone (world-zone world))
+         (objects (and zone (zone-objects zone))))
+    (when objects
+      (let* ((tile-size (world-tile-dest-size world))
+             (tx (floor world-x tile-size))
+             (ty (floor world-y tile-size)))
+        (loop :for object :in objects
+              :for count = (and object (getf object :count nil))
+              :for respawn = (and object (getf object :respawn nil))
+              :for active = (and (or (null count) (> count 0))
+                                 (or (null respawn) (<= respawn 0.0)))
+              :when (and active
+                         (eql (getf object :x) tx)
+                         (eql (getf object :y) ty))
+                :do (return object))))))
+
+(defun find-object-at-screen (world player camera screen-x screen-y)
+  ;; Return object under the cursor and the world coordinates.
+  (multiple-value-bind (world-x world-y)
+      (screen-to-world screen-x screen-y
+                       (player-x player)
+                       (player-y player)
+                       (camera-offset camera)
+                       (camera-zoom camera))
+    (values (find-object-at-world world world-x world-y)
+            world-x
+            world-y)))
+
 (defun update-ui-hovered-npc (ui npcs world player camera)
   ;; Update the UI hover label for the NPC under the cursor.
   (multiple-value-bind (npc _world-x _world-y)
@@ -140,6 +193,25 @@
     (declare (ignore _world-x _world-y))
     (setf (ui-hover-npc-name ui)
           (and npc (combatant-display-name npc)))))
+
+(defun npc-examine-description (npc)
+  ;; Return an examine description for NPC.
+  (let* ((archetype (and npc (npc-archetype npc)))
+         (desc (and archetype (npc-archetype-description archetype)))
+         (name (combatant-display-name npc)))
+    (or desc
+        (format nil "A sketchy ~a that looks ready for trouble." name))))
+
+(defun object-examine-description (object)
+  ;; Return an examine description for OBJECT.
+  (let* ((object-id (and object (getf object :id)))
+         (archetype (and object-id (find-object-archetype object-id)))
+         (desc (and archetype (object-archetype-description archetype)))
+         (name (or (and archetype (object-archetype-name archetype))
+                   (and object-id (string-capitalize (string object-id)))
+                   "Object")))
+    (or desc
+        (format nil "A discarded ~a. It might be useful." name))))
 
 (defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
   ;; Handle click/hold to update the player target position.
@@ -272,7 +344,8 @@
     (set-intent-move intent input-dx input-dy)
     (when (or (not (zerop input-dx)) (not (zerop input-dy)))
       (clear-player-attack-target player)
-      (clear-player-follow-target player))
+      (clear-player-follow-target player)
+      (clear-player-pickup-target player))
     (values input-dx input-dy)))
 
 (defun update-input-actions (intent allow-run-toggle)

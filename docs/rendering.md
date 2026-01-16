@@ -13,7 +13,7 @@ Pipeline overview
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw placed zone objects and entities (NPCs + player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
-5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name), inventory overlay, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
+5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name + HUD log), inventory overlay, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
 - `load-assets`, `unload-assets`.
@@ -49,8 +49,11 @@ Design note
 - The camera target follows the editor camera when Editor Mode is active.
 - The HUD reads the world zone label so you always know which zone is active.
 - The HUD shows the hovered NPC name at the top-center when the cursor is over one.
-- The inventory overlay renders from the cached inventory lines when `I` is toggled on.
+- The HUD log area shows gameplay feedback when the debug overlay is off.
+- The inventory overlay renders a grid panel with item sprites and stack counts.
 - The minimap recenters on the player, so you can always click ahead to set a target.
+- Object/item sprites treat the top-left pixel as a color key to remove opaque backgrounds.
+- Zone objects render only when active (count > 0 and no respawn timer) so pickups can disappear.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
   see potential enemies before crossing. Previews render while you are pushing
   against a connected edge or standing within `*minimap-preview-edge-tiles*` tiles

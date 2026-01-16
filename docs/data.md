@@ -12,15 +12,17 @@ Key responsibilities
 - Read `data/game-data.lisp` without evaluating code, including keyword section
   headers (e.g., `:animation-sets`) and single-plist variants.
 - Apply tunables to config variables.
-- Register animation sets, NPC archetypes, items, object archetypes, and loot tables into hash tables.
+- Register animation sets, NPC archetypes (including descriptions), items (including optional sprites), object archetypes, and loot tables into hash tables.
 - Validate section entries so malformed data fails fast.
 - Item archetypes can include equipment slots and stat modifier values for progression.
+- Object archetypes can include respawn cooldowns for repeatable pickups.
 
 Key functions
 - `load-game-data`: entry point; clears registries, loads data, registers defaults.
 - `ensure-game-data`: guard that loads once when needed.
 - `get-animation-set`, `find-npc-archetype`, `npc-archetype-ids`: lookup helpers.
-- `find-item-archetype`, `find-object-archetype`, `find-loot-table`: loot/inventory lookups.
+- `find-item-archetype`, `item-archetype-ids`, `find-object-archetype`, `find-object-archetype-by-item`,
+  `find-loot-table`: loot/inventory lookups.
 
 Walkthrough: startup data load
 1) `load-game-data` reads `data/game-data.lisp` as plain data (single plist or
@@ -40,6 +42,7 @@ Common tunables
 - `:combat-hitpoints-xp-multiplier` to auto-train hitpoints on all combat XP awards.
 - `:click-marker-duration`, `:click-marker-size-scale`, and `:click-marker-thickness` for target feedback markers.
 - `:inventory-size` to control player inventory slots.
+- `:inventory-grid-columns` and `:inventory-slot-gap` to tune the inventory grid layout.
 - `:zone-path` to load a zone file from `data/`.
 - `:zone-root` for editor zone file discovery and creation.
 - `:zone-default-width`, `:zone-default-height`, `:zone-default-chunk-size` for new zones.
@@ -79,7 +82,9 @@ Example: item + loot table
  (:arrows
   (:name "Arrows"
    :sprite "../assets/1 Characters/Other/Arrow.png"
-   :item-id :arrows))
+   :item-id :arrows
+   :count 5
+   :respawn-seconds 5.0))
 
 :loot-tables
  (:rat
