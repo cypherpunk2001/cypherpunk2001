@@ -29,20 +29,33 @@ mmorpg/
 ---
 
 ## Current Tasks / TODO
-- Ensure there is no remaining single player code in the codebase, we will be doing all development and testing with the new make server and make client infrastructure going forwards.
-If you make a change, pass tests, stage and commit this one.
 
-- New performance optimization: Consider multi-threading on the server side, but only where it is safe and makes sense. Imagine 10,000 users connected simultaneously, with 500 players active in each zone.
-I do think the client is probably safe? I have tested single player already with my character and hundreds of npcs in a zone and it was smooth and did not experience any hiccups -- so if you agree with that logic, lets just focus on server optimizations.
-Pass tests, stage and commit this issue as well
+1. performance
 
-- Prediction + interpolation for smooth client UX
-This client optimization idea has me intrigued, while we don't have any known issues, explore this rabbit trail, leave the work staged, I'll test and review with you when I get back later.
-I know we use UDP, maybe we can take advtantage of this fact, or is it a given?
+Do this if it's not done already: per your SERVER_PERFORMANCE.md file.
 
-- Consider best practices, we are data driven functional with some use of objects where they suit us, I am wondering how we're doing meeting these goals? Leave a file in the repo root: CodeQualityReview.md
++## Immediate Optimizations (Low-Hanging Fruit)
++
++### 1. Non-Blocking UDP Receive
++**Current**: Tight loop with blocking receive
++**Fix**: Add timeout to `usocket:wait-for-input`
++
++```lisp
++(when (usocket:wait-for-input socket :timeout 0.001 :ready-only t)
++  (receive-net-message socket recv-buffer))
++```
 
-- Consider ECS architecture, does this fit with what we are doing, should we consider it in some refactor, does it help or hurt us, are we already doing this? Leave a file in the repo root: ECSShouldWeDoIt.md
+- I note that you say - Bottleneck would be network bandwidth, not CPU
+but i'm probably going to run this on a monolith so if there's a way to make server run the server taking optional argument from nproc
+to use my threads that would be helpful, if it's low hanging and smart?
+
+- stage and commit anything at this point from above.
+
+2. Go ahead and make sure you add an optional verbose mode to the client and the server runtimes. Leave the visual collision debug mode alone, that is useful for me to keep. But the other verbose mode is more verbose about coordinates so it should be a very particular verbose coordinates option. A brand new verbose mode needs to be created which is just standard that our server and client will log what is occuring in a very noisy way when this is enabled, to be the typical thing when we are chasing after gremlins later. So go through every line of code in the codebase and make sure that we are outputting additional useful information if we have this new verbose mode enabled.
+
+stage and commit this option and update README.md about how to run server and client with make in optional verbose mode.
+
+3. Similarly, we need to make sure that we have all possible exceptions covered, and determine as much as possible what should be a fatal exception vs what should not be a fatal exception, lets just do our best to follow best programming practices and cover our exceptions code-base-wide.
 
 ## Future Tasks / Roadmap
 - Persistent world storage and migrations

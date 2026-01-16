@@ -26,6 +26,15 @@
         (when (probe-file src)
           src)))))
 
+(defun env-int (name default)
+  (let ((raw (sb-ext:posix-getenv name)))
+    (if raw
+        (let ((value (ignore-errors (parse-integer raw :junk-allowed t))))
+          (if (and value (integerp value))
+              value
+              default))
+        default)))
+
 (handler-case
     (progn
       (load-quicklisp)
@@ -37,9 +46,11 @@
           (finish-output)))
       (funcall (read-from-string "ql:register-local-projects"))
       (funcall (read-from-string "ql:quickload") :mmorpg)
-      (format t "~&SERVER: running~%")
-      (finish-output)
-      (funcall (read-from-string "mmorpg:run-server"))
+      (let ((worker-threads (env-int "MMORPG_WORKER_THREADS" 1)))
+        (format t "~&SERVER: running (worker-threads=~d)~%" worker-threads)
+        (finish-output)
+        (funcall (read-from-string "mmorpg:run-server")
+                 :worker-threads worker-threads))
       (format t "~&SERVER: ok~%")
       (sb-ext:exit :code 0))
   (error (e)

@@ -32,4 +32,8 @@ Performance & Scaling
 - Current server runs ONE zone (tested smooth with hundreds of entities on client).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
 - Snapshot optimization: state serialized once per frame, shared across all clients.
+- Optional parallel snapshot sending: Use `worker-threads` parameter to parallelize network sends across multiple threads.
+  - Default: 1 (serial sending, simple)
+  - Recommended for high client counts: `(get-nproc)` to use all CPU cores
+  - Safe: Only network I/O is parallelized, simulation remains deterministic and serial
 - See `SERVER_PERFORMANCE.md` for detailed scaling strategies and threading considerations.

@@ -45,6 +45,18 @@
       (return-from send-net-message nil))
     (usocket:socket-send socket octets size :host host :port port)))
 
+(defun get-nproc ()
+  ;; Return number of CPU cores, or 1 if unable to determine.
+  #+sbcl
+  (or (ignore-errors
+       (parse-integer
+        (with-output-to-string (s)
+          (sb-ext:run-program "nproc" nil :output s :search t))
+        :junk-allowed t))
+      1)
+  #-sbcl
+  1)
+
 (defun host-to-string (host)
   ;; Convert a host (byte vector or string) to string.
   (if (stringp host)
@@ -232,6 +244,55 @@
     (make-combat-event :type (getf plist :type)
                        :text (getf plist :text))))
 
+(defun send-snapshots-parallel (socket clients state event-plists worker-threads)
+  ;; Send snapshots to clients using WORKER-THREADS parallel threads.
+  ;; Falls back to serial sending if worker-threads <= 1.
+  (if (<= worker-threads 1)
+      ;; Serial: Send to each client in order
+      (dolist (client clients)
+        (send-net-message socket
+                          (list :type :snapshot
+                                :state state
+                                :events event-plists
+                                :player-id (player-id (net-client-player client)))
+                          :host (net-client-host client)
+                          :port (net-client-port client)))
+      ;; Parallel: Distribute clients across worker threads
+      #+sbcl
+      (let* ((client-count (length clients))
+             (chunk-size (ceiling client-count worker-threads))
+             (threads nil))
+        (loop :for start :from 0 :below client-count :by chunk-size
+              :do (let ((end (min (+ start chunk-size) client-count)))
+                    (push
+                     (sb-thread:make-thread
+                      (lambda ()
+                        (loop :for i :from start :below end
+                              :for client = (nth i clients)
+                              :do (send-net-message socket
+                                                    (list :type :snapshot
+                                                          :state state
+                                                          :events event-plists
+                                                          :player-id (player-id
+                                                                      (net-client-player client)))
+                                                    :host (net-client-host client)
+                                                    :port (net-client-port client))))
+                      :name (format nil "snapshot-sender-~d" start))
+                     threads)))
+        ;; Wait for all threads to complete
+        (dolist (thread threads)
+          (sb-thread:join-thread thread)))
+      #-sbcl
+      ;; Non-SBCL: Fall back to serial
+      (dolist (client clients)
+        (send-net-message socket
+                          (list :type :snapshot
+                                :state state
+                                :events event-plists
+                                :player-id (player-id (net-client-player client)))
+                          :host (net-client-host client)
+                          :port (net-client-port client)))))
+
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
   (when player-id
@@ -292,10 +353,17 @@
 (defun run-server (&key (host *net-default-host*)
                         (port *net-default-port*)
                         (max-seconds 0.0)
-                        (max-frames 0))
+                        (max-frames 0)
+                        (worker-threads 1))
   ;; Run a UDP server that simulates the game and streams snapshots.
   ;; Scaling: This runs ONE zone. For 10k users @ 500/zone, run 20 server processes.
   ;; See SERVER_PERFORMANCE.md for horizontal scaling strategy.
+  ;;
+  ;; WORKER-THREADS: Number of threads for parallel snapshot sending (default 1).
+  ;;   - 1 = serial sending (simple, default)
+  ;;   - N = parallel sending across N threads (for high client counts)
+  ;;   - Recommended: (get-nproc) on multi-core machines
+  ;;   - Safe: Only parallelizes network I/O, simulation remains serial
   (let* ((socket (usocket:socket-connect nil nil
                                         :protocol :datagram
                                         :local-host host
@@ -357,19 +425,13 @@
                        ;; 4. Send snapshots to all clients (serialize once, send N times)
                        ;; OPTIMIZATION: Serialization happens once and is shared across clients.
                        ;; For 500 clients this is much better than 500 serializations.
+                       ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
                        (when clients
                          (let* ((events (pop-combat-events (game-combat-events game)))
                                 (event-plists (mapcar #'combat-event->plist events))
                                 (state (serialize-game-state game :include-visuals t)))
-                           (dolist (client clients)
-                             (send-net-message socket
-                                               (list :type :snapshot
-                                                     :state state
-                                                     :events event-plists
-                                                     :player-id (player-id
-                                                                 (net-client-player client)))
-                                               :host (net-client-host client)
-                                               :port (net-client-port client)))))
+                           (send-snapshots-parallel socket clients state event-plists
+                                                    worker-threads)))
                        (sleep *sim-tick-seconds*))
            #+sbcl
            (sb-sys:interactive-interrupt ()
