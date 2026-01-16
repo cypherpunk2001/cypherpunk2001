@@ -47,7 +47,8 @@
                   :render render
                   :assets assets
                   :camera camera
-                  :editor editor))))
+                  :editor editor
+                  :combat-events (make-combat-event-queue)))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
@@ -269,12 +270,13 @@
          (npcs (game-npcs game))
          (entities (game-entities game))
          (world (game-world game))
-         (ui (game-ui game))
+         (event-queue (game-combat-events game))
          (player-intent (player-intent player)))
     (reset-npc-frame-intents npcs)
     (when allow-player-control
       (sync-player-follow-target player player-intent npcs)
       (sync-player-attack-target player player-intent npcs)
+      (sync-player-pickup-target player player-intent world)
       (let* ((moving (or (not (zerop (intent-move-dx player-intent)))
                          (not (zerop (intent-move-dy player-intent)))
                          (intent-target-active player-intent)))
@@ -302,16 +304,30 @@
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))
       (loop :for npc :across npcs
-            :do (apply-melee-hit player npc world ui))
+            :do (apply-melee-hit player npc world event-queue))
       (loop :for npc :across npcs
             :do (update-npc-behavior npc player world)
                 (update-npc-intent npc player world dt)
                 (update-npc-movement npc world dt)
-                (update-npc-attack npc player world dt ui))
+                (update-npc-attack npc player world dt event-queue))
       (loop :for entity :across entities
             :do (combatant-update-hit-effect entity dt))
       (consume-intent-actions player-intent)
       transitioned)))
+
+(defun process-combat-events (game)
+  ;; Process combat events from simulation and write to UI (client-side rendering).
+  (let* ((event-queue (game-combat-events game))
+         (ui (game-ui game))
+         (events (pop-combat-events event-queue)))
+    (dolist (event events)
+      (let ((type (combat-event-type event))
+            (text (combat-event-text event)))
+        (cond
+          ((eq type :combat-log)
+           (ui-push-combat-log ui text))
+          ((eq type :hud-message)
+           (ui-push-hud-log ui text)))))))
 
 (defun update-game (game dt accumulator)
   ;; Run one frame of input/audio and fixed-tick simulation updates.
@@ -336,7 +352,8 @@
                 :do (when (update-sim game step allow-player-control)
                       (handle-zone-transition game))
                     (decf accumulator step)
-                    (incf steps)))))
+                    (incf steps))
+          (process-combat-events game))))
   (update-editor (game-editor game) game dt)
   accumulator)
 

@@ -67,46 +67,39 @@
         (setf (player-click-marker-kind player) nil)))))
 
 (defun set-player-walk-target (player intent world-x world-y &optional (mark-p t))
-  ;; Set a walk target and clear any attack target.
-  (clear-player-auto-walk player)
-  (clear-player-attack-target player)
-  (clear-player-follow-target player)
-  (clear-player-pickup-target player)
+  ;; Request a walk target via intent (server validates and clears conflicting targets).
   (set-intent-target intent world-x world-y)
+  (clear-requested-attack-target intent)
+  (clear-requested-follow-target intent)
+  (clear-requested-pickup-target intent)
   (when mark-p
     (trigger-click-marker player world-x world-y :walk)))
 
 (defun set-player-attack-target (player intent npc &optional (mark-p t))
-  ;; Set an NPC attack target and optional marker.
+  ;; Request an NPC attack target via intent (server validates and sets authoritative target).
   (when npc
-    (clear-player-auto-walk player)
-    (clear-player-follow-target player)
-    (clear-player-pickup-target player)
-    (setf (player-attack-target-id player) (npc-id npc))
+    (request-attack-target intent (npc-id npc))
+    (clear-requested-follow-target intent)
+    (clear-requested-pickup-target intent)
     (set-intent-target intent (npc-x npc) (npc-y npc))
     (when mark-p
       (trigger-click-marker player (npc-x npc) (npc-y npc) :attack))))
 
 (defun set-player-follow-target (player intent npc &optional (mark-p t))
-  ;; Set an NPC follow target without attacking.
+  ;; Request an NPC follow target via intent (server validates and sets authoritative target).
   (when npc
-    (clear-player-auto-walk player)
-    (clear-player-attack-target player)
-    (clear-player-pickup-target player)
-    (setf (player-follow-target-id player) (npc-id npc))
+    (request-follow-target intent (npc-id npc))
+    (clear-requested-attack-target intent)
+    (clear-requested-pickup-target intent)
     (set-intent-target intent (npc-x npc) (npc-y npc))
     (when mark-p
       (trigger-click-marker player (npc-x npc) (npc-y npc) :walk))))
 
 (defun set-player-pickup-target (player intent world object-id tx ty &optional (mark-p t))
-  ;; Set a pickup target on a specific tile.
-  (clear-player-auto-walk player)
-  (clear-player-attack-target player)
-  (clear-player-follow-target player)
-  (setf (player-pickup-target-id player) object-id
-        (player-pickup-target-tx player) tx
-        (player-pickup-target-ty player) ty
-        (player-pickup-target-active player) t)
+  ;; Request a pickup target via intent (server validates and sets authoritative target).
+  (request-pickup-target intent object-id tx ty)
+  (clear-requested-attack-target intent)
+  (clear-requested-follow-target intent)
   (multiple-value-bind (world-x world-y)
       (tile-center-position (world-tile-dest-size world) tx ty)
     (set-intent-target intent world-x world-y)
@@ -353,9 +346,9 @@
               (read-input-direction)))))
     (set-intent-move intent input-dx input-dy)
     (when (or (not (zerop input-dx)) (not (zerop input-dy)))
-      (clear-player-attack-target player)
-      (clear-player-follow-target player)
-      (clear-player-pickup-target player))
+      (clear-requested-attack-target intent)
+      (clear-requested-follow-target intent)
+      (clear-requested-pickup-target intent))
     (values input-dx input-dy)))
 
 (defun update-input-actions (intent allow-run-toggle)

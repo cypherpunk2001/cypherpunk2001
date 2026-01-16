@@ -50,3 +50,15 @@ Example: applying a melee hit
 Design note
 - Damage is applied by systems, not by rendering or input.
 - Stats are used for hit chance and max hit, keeping combat data-driven.
+
+Client/Server Authority Boundaries (preparation for future networking)
+- Sync functions validate client-requested targets and set authoritative state:
+  - `sync-player-attack-target`: validates `requested-attack-target-id`, sets `player-attack-target-id`
+  - `sync-player-follow-target`: validates `requested-follow-target-id`, sets `player-follow-target-id`
+  - `sync-player-pickup-target`: validates `requested-pickup-target-id`, sets `player-pickup-target-*`
+- Combat functions emit events to a queue instead of writing UI directly:
+  - `emit-combat-log`: emits :combat-log events
+  - `emit-hud-message`: emits :hud-message events
+  - Events are processed after simulation and written to UI (client-side rendering)
+- This enforces: server updates state → server emits events → client renders result
+- Server never touches UI state; client never modifies authoritative game state

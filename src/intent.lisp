@@ -7,7 +7,13 @@
   face-dx face-dy
   target-x target-y target-active
   attack
-  run-toggle)
+  run-toggle
+  ;; Client-requested targets (server validates and sets authoritative state)
+  requested-attack-target-id
+  requested-follow-target-id
+  requested-pickup-target-id
+  requested-pickup-tx
+  requested-pickup-ty)
 
 (defun make-intent (&key (target-x 0.0) (target-y 0.0))
   ;; Create a reusable intent with optional target coordinates.
@@ -19,7 +25,12 @@
                 :target-y target-y
                 :target-active nil
                 :attack nil
-                :run-toggle nil))
+                :run-toggle nil
+                :requested-attack-target-id 0
+                :requested-follow-target-id 0
+                :requested-pickup-target-id nil
+                :requested-pickup-tx nil
+                :requested-pickup-ty nil))
 
 (defun reset-frame-intent (intent)
   ;; Clear per-frame intent signals without touching persistent targets.
@@ -64,3 +75,31 @@
 (defun request-intent-run-toggle (intent)
   ;; Request a run toggle this frame.
   (setf (intent-run-toggle intent) t))
+
+(defun request-attack-target (intent target-id)
+  ;; Request an attack target by entity ID (client sends, server validates).
+  (setf (intent-requested-attack-target-id intent) (or target-id 0)))
+
+(defun request-follow-target (intent target-id)
+  ;; Request a follow target by entity ID (client sends, server validates).
+  (setf (intent-requested-follow-target-id intent) (or target-id 0)))
+
+(defun request-pickup-target (intent object-id tx ty)
+  ;; Request a pickup target by object ID and tile coordinates.
+  (setf (intent-requested-pickup-target-id intent) object-id
+        (intent-requested-pickup-tx intent) tx
+        (intent-requested-pickup-ty intent) ty))
+
+(defun clear-requested-attack-target (intent)
+  ;; Clear the requested attack target.
+  (setf (intent-requested-attack-target-id intent) 0))
+
+(defun clear-requested-follow-target (intent)
+  ;; Clear the requested follow target.
+  (setf (intent-requested-follow-target-id intent) 0))
+
+(defun clear-requested-pickup-target (intent)
+  ;; Clear the requested pickup target.
+  (setf (intent-requested-pickup-target-id intent) nil
+        (intent-requested-pickup-tx intent) nil
+        (intent-requested-pickup-ty intent) nil))

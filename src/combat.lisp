@@ -134,20 +134,21 @@
                 attacker defender chance-pct roll-pct
                 attack-level defense-level xp-text))))
 
-(defun emit-combat-log (ui text)
-  ;; Emit combat log lines to the UI buffer and stdout in debug mode.
-  (when (and ui *debug-collision-overlay* text)
-    (ui-push-combat-log ui text)
-    (format t "~&COMBAT ~a~%" text)
-    (finish-output)))
+(defun emit-combat-log (event-queue text)
+  ;; Emit combat log events to the queue and stdout in debug mode (server-side).
+  (when (and event-queue text)
+    (emit-combat-log-event event-queue text)
+    (when *debug-collision-overlay*
+      (format t "~&COMBAT ~a~%" text)
+      (finish-output))))
 
-(defun emit-hud-message (ui text)
-  ;; Emit a HUD feedback message.
-  (when (and ui text)
-    (ui-push-hud-log ui text)))
+(defun emit-hud-message (event-queue text)
+  ;; Emit a HUD feedback event to the queue (server-side).
+  (when (and event-queue text)
+    (emit-hud-message-event event-queue text)))
 
-(defun emit-level-up-messages (ui level-ups)
-  ;; Emit HUD messages for stat level-ups.
+(defun emit-level-up-messages (event-queue level-ups)
+  ;; Emit HUD message events for stat level-ups (server-side).
   (dolist (entry level-ups)
     (let* ((stat (car entry))
            (level (cdr entry))
@@ -157,14 +158,14 @@
                     (:defense "Defense")
                     (:hitpoints "Hitpoints")
                     (t "Skill"))))
-      (emit-hud-message ui
+      (emit-hud-message event-queue
                         (format nil "Congratulations! ~a level ~d."
                                 label level)))))
 
-(defun push-combat-log (ui attacker defender hit chance roll attack-level defense-level
+(defun push-combat-log (event-queue attacker defender hit chance roll attack-level defense-level
                            &key damage xp-text killed)
-  ;; Build and emit a combat log line when debug is enabled.
-  (emit-combat-log ui
+  ;; Build and emit a combat log event (server-side).
+  (emit-combat-log event-queue
                    (format-combat-log
                     (combatant-display-name attacker)
                     (combatant-display-name defender)
@@ -255,22 +256,87 @@
       npc)))
 
 (defun sync-player-attack-target (player intent npcs)
-  ;; Sync intent target to the active attack target.
-  (let ((target (player-attack-target player npcs)))
-    (if target
-        (set-intent-target intent (npc-x target) (npc-y target))
-        (when (> (player-attack-target-id player) 0)
-          (setf (player-attack-target-id player) 0)
-          (clear-intent-target intent)))))
+  ;; Validate requested attack target and set authoritative state (server authority).
+  (let* ((requested-id (intent-requested-attack-target-id intent))
+         (current-id (player-attack-target-id player)))
+    ;; Process clear request (requested-id = 0 means client wants to cancel)
+    (when (and requested-id (= requested-id 0) (> current-id 0))
+      (setf (player-attack-target-id player) 0)
+      (clear-intent-target intent))
+    ;; Process new attack target request
+    (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
+      (let ((npc (find-npc-by-id npcs requested-id)))
+        (if (and npc (combatant-alive-p npc))
+            (progn
+              ;; Valid target: set authoritative state and clear conflicting targets
+              (setf (player-attack-target-id player) requested-id
+                    (player-follow-target-id player) 0
+                    (player-pickup-target-id player) nil
+                    (player-pickup-target-active player) nil)
+              (clear-player-auto-walk player))
+            ;; Invalid target: reject request
+            (clear-requested-attack-target intent))))
+    ;; Sync current authoritative target to intent position
+    (let ((target (player-attack-target player npcs)))
+      (if target
+          (set-intent-target intent (npc-x target) (npc-y target))
+          (when (> (player-attack-target-id player) 0)
+            (setf (player-attack-target-id player) 0)
+            (clear-intent-target intent))))))
 
 (defun sync-player-follow-target (player intent npcs)
-  ;; Sync intent target to the active follow target.
-  (let ((target (player-follow-target player npcs)))
-    (if target
-        (set-intent-target intent (npc-x target) (npc-y target))
-        (when (> (player-follow-target-id player) 0)
-          (setf (player-follow-target-id player) 0)
-          (clear-intent-target intent)))))
+  ;; Validate requested follow target and set authoritative state (server authority).
+  (let* ((requested-id (intent-requested-follow-target-id intent))
+         (current-id (player-follow-target-id player)))
+    ;; Process clear request (requested-id = 0 means client wants to cancel)
+    (when (and requested-id (= requested-id 0) (> current-id 0))
+      (setf (player-follow-target-id player) 0)
+      (clear-intent-target intent))
+    ;; Process new follow target request
+    (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
+      (let ((npc (find-npc-by-id npcs requested-id)))
+        (if (and npc (combatant-alive-p npc))
+            (progn
+              ;; Valid target: set authoritative state and clear conflicting targets
+              (setf (player-follow-target-id player) requested-id
+                    (player-attack-target-id player) 0
+                    (player-pickup-target-id player) nil
+                    (player-pickup-target-active player) nil)
+              (clear-player-auto-walk player))
+            ;; Invalid target: reject request
+            (clear-requested-follow-target intent))))
+    ;; Sync current authoritative target to intent position
+    (let ((target (player-follow-target player npcs)))
+      (if target
+          (set-intent-target intent (npc-x target) (npc-y target))
+          (when (> (player-follow-target-id player) 0)
+            (setf (player-follow-target-id player) 0)
+            (clear-intent-target intent))))))
+
+(defun sync-player-pickup-target (player intent world)
+  ;; Validate requested pickup target and set authoritative state (server authority).
+  (let* ((requested-id (intent-requested-pickup-target-id intent))
+         (requested-tx (intent-requested-pickup-tx intent))
+         (requested-ty (intent-requested-pickup-ty intent))
+         (current-id (player-pickup-target-id player)))
+    ;; Process clear request (requested-id = nil means client wants to cancel)
+    (when (and (not requested-id) current-id)
+      (setf (player-pickup-target-id player) nil
+            (player-pickup-target-active player) nil))
+    ;; Process new pickup target request
+    (when (and requested-id requested-tx requested-ty
+               (not (and (eql requested-id current-id)
+                         (eql requested-tx (player-pickup-target-tx player))
+                         (eql requested-ty (player-pickup-target-ty player)))))
+      ;; Trust client request - actual pickup validation happens in update-player-pickup-target
+      ;; This allows pickup targets to be set even if object is temporarily unavailable
+      (setf (player-pickup-target-id player) requested-id
+            (player-pickup-target-tx player) requested-tx
+            (player-pickup-target-ty player) requested-ty
+            (player-pickup-target-active player) t
+            (player-attack-target-id player) 0
+            (player-follow-target-id player) 0)
+      (clear-player-auto-walk player))))
 
 (defun player-attack-target-in-range-p (player target world)
   ;; Return true when TARGET is inside the player's melee hitbox.
@@ -363,8 +429,8 @@
           (player-attack-timer player) 0.0
           (player-attack-hit player) nil)))
 
-(defun apply-melee-hit (player target world ui)
-  ;; Apply melee damage once per attack if the hitbox overlaps the target.
+(defun apply-melee-hit (player target world event-queue)
+  ;; Apply melee damage once per attack if the hitbox overlaps the target (server-side).
   (when (and (player-attacking player)
              (not (player-attack-hit player))
              (combatant-alive-p target))
@@ -392,14 +458,14 @@
                             (award-combat-xp player (* damage *xp-per-damage*))
                           (setf xp-text (format-xp-awards attack-xp strength-xp
                                                           defense-xp hitpoints-xp))
-                          (emit-level-up-messages ui level-ups)
+                          (emit-level-up-messages event-queue level-ups)
                           (let ((new-combat (combat-level (player-stats player))))
                             (when (> new-combat old-combat)
-                              (emit-hud-message ui
+                              (emit-hud-message event-queue
                                                 (format nil
                                                         "Congratulations! Combat level ~d."
                                                         new-combat))))))
-                      (push-combat-log ui player target t chance roll
+                      (push-combat-log event-queue player target t chance roll
                                        (combatant-attack-level player)
                                        (combatant-defense-level target)
                                        :damage damage
@@ -414,18 +480,18 @@
                                 (let ((kill-text (format-xp-awards k-attack k-strength
                                                                    k-defense k-hp)))
                                   (when kill-text
-                                    (emit-combat-log ui
+                                    (emit-combat-log event-queue
                                                      (format nil "Kill XP: ~a"
                                                              kill-text))))
-                                (emit-level-up-messages ui level-ups)
+                                (emit-level-up-messages event-queue level-ups)
                                 (let ((new-combat (combat-level (player-stats player))))
                                   (when (> new-combat old-combat)
-                                    (emit-hud-message ui
+                                    (emit-hud-message event-queue
                                                       (format nil
                                                               "Congratulations! Combat level ~d."
                                                               new-combat))))))))
                           (award-npc-loot player target)))))
-                    (push-combat-log ui player target nil chance roll
+                    (push-combat-log event-queue player target nil chance roll
                                      (combatant-attack-level player)
                                      (combatant-defense-level target)
                                      :xp-text "XP 0"))))))))
@@ -485,8 +551,8 @@
         (setf (player-frame-index player) frame-index
               (player-frame-timer player) frame-timer)))))
 
-(defun update-npc-attack (npc player world dt ui)
-  ;; Handle NPC melee attacks and cooldowns.
+(defun update-npc-attack (npc player world dt event-queue)
+  ;; Handle NPC melee attacks and cooldowns (server-side).
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
            (timer (max 0.0 (- (npc-attack-timer npc) dt)))
@@ -508,12 +574,12 @@
                   (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
                     (combatant-apply-hit player damage)
                     (combatant-trigger-hit-effect player)
-                    (emit-hud-message ui "You are under attack!")
-                    (push-combat-log ui npc player t chance roll
+                    (emit-hud-message event-queue "You are under attack!")
+                    (push-combat-log event-queue npc player t chance roll
                                      (combatant-attack-level npc)
                                      (combatant-defense-level player)
                                      :damage damage))
-                  (push-combat-log ui npc player nil chance roll
+                  (push-combat-log event-queue npc player nil chance roll
                                    (combatant-attack-level npc)
                                    (combatant-defense-level player)
                                    :xp-text "XP 0"))))

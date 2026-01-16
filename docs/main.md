@@ -9,11 +9,12 @@ Why we do it this way
 
 Update flow (high level)
 1) Input/UI -> intent, camera/UI updates, preview cache
-2) Fixed-tick simulation -> follow/attack sync, movement, combat, AI, respawns
-3) Zone transitions (edge exits) -> load new zone if needed
-4) Animation/effects -> visuals ready to render
-5) UI timers (loading overlay, menus) -> update per frame
-6) Editor mode (when enabled) overrides gameplay updates
+2) Fixed-tick simulation -> follow/attack/pickup sync, movement, combat, AI, respawns
+3) Combat events -> process event queue and write to UI (client-side rendering)
+4) Zone transitions (edge exits) -> load new zone if needed
+5) Animation/effects -> visuals ready to render
+6) UI timers (loading overlay, menus) -> update per frame
+7) Editor mode (when enabled) overrides gameplay updates
 
 Key functions
 - `make-game`: assembles world, entities, audio, UI, render, assets, camera, editor.
@@ -59,3 +60,10 @@ Example: auto-exit
 Design note
 - Keeping gameplay logic out of the main loop makes it easier to test and
   to introduce networking or replay systems later.
+
+Client/Server Separation (preparation for future networking)
+- `make-game` initializes a combat event queue for decoupling simulation from UI
+- `update-sim` calls sync functions (`sync-player-attack-target`, `sync-player-follow-target`, `sync-player-pickup-target`) that validate client intent requests and set authoritative state (server-side)
+- Combat functions emit events (:combat-log, :hud-message) to the queue instead of writing UI directly
+- `process-combat-events` reads the event queue and writes to UI (client-side rendering)
+- This enforces: client sends intent → server validates → server updates state → server emits events → client renders result

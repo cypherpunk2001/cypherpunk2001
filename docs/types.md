@@ -18,7 +18,8 @@ Key structs
 - `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, hovered NPC name, HUD/combat log ring buffers with HUD fade timers, minimap layout/colors, and a context menu with target metadata; assets include object and item textures).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette, object palette).
-- `game`: top-level aggregator passed to update/draw functions.
+- `combat-event`, `combat-event-queue`: event system for decoupling simulation from UI (server emits events, client renders them).
+- `game`: top-level aggregator passed to update/draw functions (includes combat-events queue).
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
@@ -38,6 +39,13 @@ Walkthrough: entity lifecycle
 2) Input/AI populates intent each frame.
 3) Systems update position, health, and animation fields.
 4) Rendering reads the state to draw.
+
+Combat event queue (client/server separation)
+- `make-combat-event`: creates an event with :type and :text
+- `emit-combat-log-event`: queues a :combat-log event
+- `emit-hud-message-event`: queues a :hud-message event
+- `pop-combat-events`: returns all events and clears the queue
+- This decouples server-side simulation from client-side UI rendering
 
 Design note
 - Arrays are used for entity collections to keep iteration fast and predictable.

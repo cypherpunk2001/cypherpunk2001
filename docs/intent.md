@@ -15,6 +15,10 @@ What an intent contains
 - Facing direction (face-dx, face-dy)
 - A target point (for click-to-move)
 - One-frame actions (attack, run toggle)
+- Client-requested targets (for server validation):
+  - `requested-attack-target-id`: NPC id the client wants to attack
+  - `requested-follow-target-id`: NPC id the client wants to follow
+  - `requested-pickup-target-id`, `requested-pickup-tx`, `requested-pickup-ty`: Object the client wants to pick up
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
@@ -22,6 +26,8 @@ Key functions
 - `set-intent-move`, `set-intent-face`: standardize motion signals.
 - `set-intent-target`, `clear-intent-target`: manage click-to-move.
 - `request-intent-attack`, `request-intent-run-toggle`.
+- `request-attack-target`, `request-follow-target`, `request-pickup-target`: client sends target requests for server validation.
+- `clear-requested-attack-target`, `clear-requested-follow-target`, `clear-requested-pickup-target`: clear target requests.
 
 Walkthrough: click-to-move
 1) Mouse click is converted to a world-space target.
@@ -40,3 +46,12 @@ Example flow
 
 Design note
 - Think of intent as a "what I want" packet. Systems decide "what happens."
+
+Client/Server Separation (preparation for future networking)
+- Input functions (client-side) only set intent fields, never authoritative player state
+- Sync functions in combat.lisp (server-side) validate requested targets and set authoritative state
+- This enforces: client sends intent → server validates → server updates state → client renders result
+- Examples:
+  - `set-player-attack-target` sets `requested-attack-target-id` in intent
+  - `sync-player-attack-target` validates the NPC exists/is alive, then sets `player-attack-target-id`
+  - Invalid requests are rejected (cleared) without modifying authoritative state

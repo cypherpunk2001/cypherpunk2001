@@ -49,3 +49,11 @@ Example flow
 
 Design note
 - All logic here is input-to-intent. Movement happens elsewhere.
+
+Client/Server Authority Boundaries (preparation for future networking)
+- Input functions only write to intent fields, never to authoritative player state
+- Functions like `set-player-attack-target`, `set-player-follow-target`, `set-player-pickup-target`:
+  - Set `requested-*-target-id` fields in intent (client request)
+  - Do NOT set `player-attack-target-id` or other authoritative state directly
+- The server (sync functions in combat.lisp) validates requests and sets authoritative state
+- This enforces: client sends intent → server validates → server updates state

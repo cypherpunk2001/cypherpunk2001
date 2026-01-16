@@ -151,9 +151,19 @@
   mode-label tile-label object-label-text status-label status-timer
   export-path dirty)
 
+(defstruct (combat-event (:constructor make-combat-event (&key type text)))
+  ;; Event emitted by simulation for UI/logging (decouples server from client).
+  type  ; :combat-log, :hud-message
+  text)
+
+(defstruct (combat-event-queue (:constructor make-combat-event-queue ()))
+  ;; Queue of combat events for the UI to process.
+  (events nil))
+
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player npcs entities id-source audio ui render assets camera editor)
+  world player npcs entities id-source audio ui render assets camera editor
+  combat-events)
 
 (defun allocate-entity-id (id-source)
   ;; Return the next entity id and advance the counter.
@@ -401,3 +411,26 @@
 
 (defgeneric draw-entity (entity assets render)
   (:documentation "Render ENTITY using ASSETS and RENDER helpers."))
+
+(defun push-combat-event (queue event)
+  ;; Add EVENT to the combat event queue.
+  (when (and queue event)
+    (setf (combat-event-queue-events queue)
+          (nconc (combat-event-queue-events queue) (list event)))))
+
+(defun emit-combat-log-event (queue text)
+  ;; Emit a combat log event to the queue.
+  (when (and queue text)
+    (push-combat-event queue (make-combat-event :type :combat-log :text text))))
+
+(defun emit-hud-message-event (queue text)
+  ;; Emit a HUD message event to the queue.
+  (when (and queue text)
+    (push-combat-event queue (make-combat-event :type :hud-message :text text))))
+
+(defun pop-combat-events (queue)
+  ;; Return all events and clear the queue.
+  (when queue
+    (let ((events (combat-event-queue-events queue)))
+      (setf (combat-event-queue-events queue) nil)
+      events)))

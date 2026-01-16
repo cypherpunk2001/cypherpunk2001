@@ -28,11 +28,7 @@ mmorpg/
 
 ---
 
-## Current Task
-
-Regression discovered:
-
-We used to be able to hold down the mouse click button anywhere on the world tiles and it would continually walk in that direction. It no longer works. I mean, yes we want the yellow X and so forth to behave the same, when click it makes yellow x and moves char there, but without breaking that -- if player continues to hold down the mouse button, it just continue walking around and refresh with the mouse every X second of (defparameter *mouse-hold-repeat-seconds* 0.25) ;; Repeat rate for mouse-held updates.
+## Current Task - As we prepare for a future Client / Server MMO Split
 
 
 ---
@@ -40,16 +36,6 @@ We used to be able to hold down the mouse click button anywhere on the world til
 ## Future Tasks / Roadmap
 
 ### Near-term (foundation, priority order)
-
-4) Ability/skill system built on intent (cooldowns, cast times, resource costs)
-
-I consider that we already have developed this with the mele system and the run/stamina timer cooldown system. Therefore, I believe we can skip developing further in 4, if you agree Chat, just double check over that our mele and stamina systems do observe the following principles in preparation for the upcoming client/server split.
-- client sends intent
-- server validates
-- server updates state
-- client renders result
-
-Just ensure we already follow the authority/intents boundary in mele/stamina code.
 
 5) Save/load + snapshot serialization (no rendering dependency)
 (For whatever it's worth, when we do the final server/client split, postgresql is planned.)
