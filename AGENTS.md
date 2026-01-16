@@ -28,7 +28,7 @@ mmorpg/
 
 ---
 
-## Current Task - As we prepare for a future Client / Server MMO Split
+## Previous Task (Completed)
 
 5) Save/load + snapshot serialization (no rendering dependency)
 (For whatever it's worth, when we do the final server/client split, postgresql is planned.)
@@ -39,6 +39,12 @@ Minimum slice:
 Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
 Version tag in the file
 That’s enough
+
+## Current Task - As we prepare for a future Client / Server MMO Split
+
+Put easy one click Save | Load buttons (use same style as the music player buttons) on the ESC menu below the fullscreen | windowed button, based on save.lisp | save.md which should already be completed... I need to test that it works.
+
+Also confirm whether the current implementation of save.lisp / save.md. looks good to you in the context of the broader codebase and design / game goals, and let me know if it needs any further changes. Otherwise, I'm getting excited about moving to the mid-term tasks! Let's talk first, though.
 
 ---
 
