@@ -16,6 +16,7 @@ Key functions
 - `make-sim-state`: build world/player/NPCs/entities/id-source/combat-events without client subsystems.
 - `make-server-game`: construct a headless game struct (audio/ui/render/assets/camera/editor are nil).
 - `apply-client-intent`: copy the client intent payload into the server intent.
+- One-shot requests like chat are cleared from the client intent after being applied.
 - `server-step`: apply client intent and run fixed-tick simulation steps.
 - `run-headless`: convenience loop for headless simulation (no rendering).
 

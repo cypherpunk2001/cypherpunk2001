@@ -79,8 +79,12 @@
 (defun server-step (game client-intent dt accumulator &key (allow-player-control t))
   ;; Apply client intent and run the fixed-tick server simulation.
   (let* ((player (game-player game))
-         (server-intent (and player (player-intent player))))
+         (server-intent (and player (player-intent player)))
+         (chat-message (and client-intent
+                            (intent-requested-chat-message client-intent))))
     (apply-client-intent server-intent client-intent)
+    (when chat-message
+      (clear-requested-chat-message client-intent))
     (let* ((step *sim-tick-seconds*)
            (max-steps (max 1 *sim-max-steps-per-frame*))
            (transition-count 0))
