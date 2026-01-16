@@ -514,6 +514,19 @@
         (max 0.0 seconds)
         0.0)))
 
+(defun object-respawnable-p (object)
+  ;; Return true when OBJECT should use respawn cooldowns.
+  (not (eq (getf object :respawnable t) nil)))
+
+(defun object-entry-respawn-seconds (object archetype)
+  ;; Return the respawn cooldown for a specific OBJECT entry.
+  (if (and object (not (object-respawnable-p object)))
+      0.0
+      (let ((override (getf object :respawn-seconds nil)))
+        (if (and override (numberp override))
+            (max 0.0 (float override 1.0))
+            (object-respawn-seconds archetype)))))
+
 (defun object-respawn-timer (object)
   ;; Return the active respawn timer for OBJECT, if any.
   (let ((timer (getf object :respawn nil)))
@@ -531,16 +544,17 @@
          (objects (and zone (zone-objects zone))))
     (when objects
       (dolist (object objects)
-        (let* ((timer (object-respawn-timer object)))
-          (when (> timer 0.0)
-            (setf timer (max 0.0 (- timer dt))
-                  (getf object :respawn) timer)
-            (when (<= timer 0.0)
-              (let* ((object-id (getf object :id))
-                     (archetype (and object-id (find-object-archetype object-id))))
-                (when archetype
-                  (setf (getf object :count) (object-archetype-count archetype)
-                        (getf object :respawn) 0.0))))))))))
+        (when (object-respawnable-p object)
+          (let* ((timer (object-respawn-timer object)))
+            (when (> timer 0.0)
+              (setf timer (max 0.0 (- timer dt))
+                    (getf object :respawn) timer)
+              (when (<= timer 0.0)
+                (let* ((object-id (getf object :id))
+                       (archetype (and object-id (find-object-archetype object-id))))
+                  (when archetype
+                    (setf (getf object :count) (object-archetype-count archetype)
+                          (getf object :respawn) 0.0)))))))))))
 
 (defun pickup-object-at-tile (player world tx ty object-id)
   ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
@@ -559,7 +573,7 @@
                 (let* ((archetype (and id (find-object-archetype id)))
                        (item-id (and archetype (object-archetype-item-id archetype)))
                        (count (object-entry-count object archetype))
-                       (respawn (object-respawn-seconds archetype)))
+                       (respawn (object-entry-respawn-seconds object archetype)))
                   (if (and item-id (> count 0) (not (object-respawning-p object)))
                       (let ((leftover (grant-inventory-item player item-id count)))
                         (setf picked t)
@@ -608,22 +622,30 @@
                                   (find-if (lambda (obj)
                                              (and (eql (getf obj :x) tx)
                                                   (eql (getf obj :y) ty)))
-                                           objects))))
+                                           objects)))
+                   (existing-id (and existing (getf existing :id)))
+                   (existing-respawnable (and existing (object-respawnable-p existing))))
               (when (or (null existing)
-                        (eq (getf existing :id) object-id))
+                        (eq existing-id object-id))
                 (let ((leftover (consume-inventory-item player item-id amount)))
                   (let ((dropped (- amount leftover)))
                     (when (> dropped 0)
-                      (let ((base-count (if existing
-                                            (object-entry-count existing archetype)
-                                            0)))
-                        (if existing
-                            (setf (getf existing :count) (+ base-count dropped)
-                                  (getf existing :respawn) 0.0)
-                            (zone-add-object zone (list :id object-id
-                                                        :x tx
-                                                        :y ty
-                                                        :count (+ base-count dropped)))))
+                      (cond
+                        ((and existing (not existing-respawnable))
+                         (let ((base-count (object-entry-count existing archetype)))
+                           (setf (getf existing :count) (+ base-count dropped))))
+                        ((and existing existing-respawnable)
+                         (zone-add-object zone (list :id object-id
+                                                     :x tx
+                                                     :y ty
+                                                     :count dropped
+                                                     :respawnable nil)))
+                        (t
+                         (zone-add-object zone (list :id object-id
+                                                     :x tx
+                                                     :y ty
+                                                     :count dropped
+                                                     :respawnable nil))))
                       dropped)))))))))))
 
 (defun roll-loot-entry (entries)

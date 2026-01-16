@@ -17,7 +17,7 @@ What it does
 - Clamps current HP to the effective max after equipment modifier changes.
 - Refreshes cached inventory lines for the inventory overlay.
 - Resolves explicit pickup targets and respawns world objects on cooldown.
-- Drops inventory items back into the world as object spawns when requested.
+- Drops inventory items back into the world as non-respawning objects.
 - Returns level-up summaries from `award-combat-xp` for HUD feedback.
 
 Key functions
