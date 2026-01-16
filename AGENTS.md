@@ -40,22 +40,17 @@ Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
 Version tag in the file
 That’s enough
 
-## Current Task - As we prepare for a future Client / Server MMO Split
-
 Put easy one click Save | Load buttons (use same style as the music player buttons) on the ESC menu below the fullscreen | windowed button, based on save.lisp | save.md which should already be completed... I need to test that it works.
 
-Also confirm whether the current implementation of save.lisp / save.md. looks good to you in the context of the broader codebase and design / game goals, and let me know if it needs any further changes. Otherwise, I'm getting excited about moving to the mid-term tasks! Let's talk first, though.
+## Current Task - As we prepare for a future Client / Server MMO Split
+(world + UX)
+- Headless server loop in-process (client sends intents, server updates state)
+This is the split, just without sockets. Not optional.
+Do this ASAP after save/load.
 
 ---
 
 ## Future Tasks / Roadmap
-
-### Near-term (foundation, priority order)
-
-### Mid-term (world + UX)
-- Headless server loop in-process (client sends intents, server updates state)
-This is the split, just without sockets. Not optional.
-Do this ASAP after save/load.
 
 ### Long-term (MMO readiness)
 - Real client/server split (server-authoritative simulation, snapshot sync)
