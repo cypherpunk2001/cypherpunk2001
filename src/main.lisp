@@ -79,9 +79,33 @@
     (update-click-marker player dt)
     (ensure-preview-zones world player camera editor)
     (let ((menu-action (update-ui-input ui audio mouse-clicked)))
-      (when (eq menu-action :toggle-editor)
-        (toggle-editor-mode editor player)
-        (setf (ui-menu-open ui) nil)))
+      (when menu-action
+        (case menu-action
+          (:toggle-editor
+           (toggle-editor-mode editor player)
+           (setf (ui-menu-open ui) nil))
+          (:save-game
+           (when (save-game game *save-filepath*)
+             (emit-hud-message-event event-queue "Game saved.")))
+          (:load-game
+           (let ((zone-id (load-game game *save-filepath*)))
+             (if zone-id
+                 (progn
+                   (reset-frame-intent player-intent)
+                   (clear-intent-target player-intent)
+                   (clear-player-auto-walk player)
+                   (setf (player-attacking player) nil
+                         (player-attack-hit player) nil
+                         (player-hit-active player) nil)
+                   (mark-player-hud-stats-dirty player)
+                   (mark-player-inventory-dirty player)
+                   (setf (world-minimap-spawns world)
+                         (build-adjacent-minimap-spawns world player))
+                   (setf (world-minimap-collisions world)
+                         (build-minimap-collisions world))
+                   (emit-hud-message-event event-queue
+                                           (format nil "Game loaded (~a)." zone-id)))
+                 (emit-hud-message-event event-queue "Load failed.")))))))
     (when (and (not (ui-menu-open ui))
                (not (editor-active editor))
                (raylib:is-key-pressed +key-i+))

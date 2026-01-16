@@ -20,7 +20,7 @@ Key functions
 - `serialize-game-state`: converts game to plist snapshot
 - `deserialize-game-state`: restores game from plist snapshot
 - `save-game`: writes game state to file
-- `load-game`: reads game state from file
+- `load-game`: reads game state from file, optionally applying the saved zone before deserializing
 
 Walkthrough: save game
 1) Player triggers save action

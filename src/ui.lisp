@@ -24,6 +24,8 @@
          (menu-hint "Press Esc to close")
          (menu-track-title "Music")
          (menu-button-label "Quit")
+         (menu-save-label "Save")
+         (menu-load-label "Load")
          (menu-prev-label "Prev")
          (menu-next-label "Next")
          (menu-vol-down-label "Vol -")
@@ -40,6 +42,7 @@
          (menu-button-y (- (+ menu-panel-y menu-panel-height)
                            menu-padding
                            menu-button-height))
+         (menu-action-gap 12)
          (menu-nav-button-width 140)
          (menu-nav-button-height 44)
          (menu-nav-gap 16)
@@ -72,6 +75,10 @@
          (menu-fullscreen-x menu-debug-x)
          (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
+         (menu-save-x (+ menu-panel-x menu-padding))
+         (menu-save-y (+ menu-fullscreen-y menu-fullscreen-size menu-action-gap))
+         (menu-load-x (+ menu-save-x menu-nav-button-width menu-nav-gap))
+         (menu-load-y menu-save-y)
          (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
          (menu-overlay-color (raylib:make-color :r 0 :g 0 :b 0 :a 110))
          (menu-panel-color (raylib:make-color :r 18 :g 18 :b 18 :a 200))
@@ -152,6 +159,8 @@
               :menu-hint menu-hint
               :menu-track-title menu-track-title
               :menu-button-label menu-button-label
+              :menu-save-label menu-save-label
+              :menu-load-label menu-load-label
               :menu-prev-label menu-prev-label
               :menu-next-label menu-next-label
               :menu-vol-down-label menu-vol-down-label
@@ -166,6 +175,10 @@
               :menu-button-height menu-button-height
               :menu-button-x menu-button-x
               :menu-button-y menu-button-y
+              :menu-save-x menu-save-x
+              :menu-save-y menu-save-y
+              :menu-load-x menu-load-x
+              :menu-load-y menu-load-y
               :menu-nav-button-width menu-nav-button-width
               :menu-nav-button-height menu-nav-button-height
               :menu-nav-gap menu-nav-gap
@@ -306,6 +319,16 @@
 (defun handle-menu-click (ui audio mouse-x mouse-y)
   ;; Process menu clicks for quit, music, volume, and toggles.
   (cond
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-save-x ui) (ui-menu-save-y ui)
+                      (ui-menu-nav-button-width ui)
+                      (ui-menu-nav-button-height ui))
+     :save-game)
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-load-x ui) (ui-menu-load-y ui)
+                      (ui-menu-nav-button-width ui)
+                      (ui-menu-nav-button-height ui))
+     :load-game)
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-button-x ui) (ui-menu-button-y ui)
                       (ui-menu-button-width ui) (ui-menu-button-height ui))

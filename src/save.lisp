@@ -229,8 +229,8 @@
     ;; Restore player
     (when player-plist
       (let ((restored-player (deserialize-player player-plist
-                                                 *player-inventory-size*
-                                                 *equipment-slot-count*)))
+                                                 *inventory-size*
+                                                 (length *equipment-slot-ids*))))
         (setf (player-x player) (player-x restored-player)
               (player-y player) (player-y restored-player)
               (player-hp player) (player-hp restored-player)
@@ -264,14 +264,35 @@
     (format t "~&Saved game to ~a~%" filepath)
     t))
 
-(defun load-game (game filepath)
+(defun load-game (game filepath &key (apply-zone t))
   ;; Load game state from FILEPATH into existing GAME.
   (if (probe-file filepath)
-      (let ((state (with-open-file (in filepath :direction :input)
-                     (read in))))
-        (let ((zone-id (deserialize-game-state state game)))
-          (format t "~&Loaded game from ~a (zone: ~a)~%" filepath zone-id)
-          zone-id))
+      (let* ((state (with-open-file (in filepath :direction :input)
+                      (read in)))
+             (zone-id (getf state :zone-id))
+             (world (game-world game))
+             (current-zone (and world (world-zone world)))
+             (current-zone-id (and current-zone (zone-id current-zone)))
+             (zone-loaded nil))
+        (when (and apply-zone zone-id (not (eql zone-id current-zone-id)))
+          (let* ((graph (and world (world-world-graph world)))
+                 (path (and graph (world-graph-zone-path graph zone-id))))
+            (when (and path (probe-file path))
+              (let ((zone (load-zone path)))
+                (when zone
+                  (setf *zone-path* path)
+                  (apply-zone-to-world world zone)
+                  (setf zone-loaded t))))))
+        (when zone-loaded
+          (let* ((player (game-player game))
+                 (npcs (make-npcs player world
+                                  :id-source (game-id-source game))))
+            (ensure-npcs-open-spawn npcs world)
+            (setf (game-npcs game) npcs
+                  (game-entities game) (make-entities player npcs))))
+        (let ((loaded-zone-id (deserialize-game-state state game)))
+          (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
+          loaded-zone-id))
       (progn
         (warn "Save file not found: ~a" filepath)
         nil)))

@@ -63,6 +63,10 @@
 (defparameter *zone-default-height* 64) ;; Default zone height in tiles for new zones.
 (defparameter *zone-default-chunk-size* 8) ;; Default chunk size in tiles for new zones.
 (defparameter *world-graph-path* "data/world-graph.lisp") ;; World graph data path relative to repo.
+(defparameter *save-filepath*
+  (merge-pathnames "data/savegame.lisp"
+                   (asdf:system-source-directory :mmorpg)))
+;; Default save file path used by the ESC menu Save/Load.
 (defparameter *zone-loading-seconds* 0.35) ;; Seconds to show the zone loading overlay after transitions.
 (defparameter *editor-tileset-paths* nil) ;; Optional list of tileset sheets to use in the editor.
 (defparameter *editor-tileset-root* "../assets/Zelda-like") ;; Directory that holds editor tileset sheets.

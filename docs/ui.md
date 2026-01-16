@@ -10,6 +10,7 @@ Why we do it this way
 What it does
 - Builds layout constants (panel sizes, button positions, labels).
 - Handles menu click actions (quit, music, volume, debug, editor mode, fullscreen).
+- Exposes Save/Load menu actions for snapshot testing.
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Tracks inventory overlay visibility for the `I` hotkey.

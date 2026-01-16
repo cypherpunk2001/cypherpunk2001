@@ -87,6 +87,9 @@
   menu-title-size menu-hint-size menu-track-size menu-button-text-size
   menu-nav-text-size menu-volume-text-size
   menu-button-width menu-button-height menu-button-x menu-button-y
+  menu-save-label menu-load-label
+  menu-save-x menu-save-y
+  menu-load-x menu-load-y
   menu-nav-button-width menu-nav-button-height menu-nav-gap menu-nav-y menu-prev-x menu-next-x
   menu-track-text-x menu-track-text-y
   menu-volume-button-width menu-volume-button-height menu-volume-gap menu-volume-y

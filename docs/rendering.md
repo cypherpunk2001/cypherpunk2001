@@ -52,6 +52,7 @@ Design note
 - The HUD log area shows gameplay feedback when the debug overlay is off, fading lines out over time.
 - The inventory overlay renders a grid panel with item sprites and stack counts.
 - The minimap recenters on the player, so you can always click ahead to set a target.
+- The pause menu includes Save/Load buttons below the fullscreen toggle, styled like the music controls for quick snapshot tests.
 - Object/item sprites treat an opaque border color as a transparency key to remove solid backdrops.
 - Zone objects render only when active (count > 0 and no respawn timer) so pickups can disappear.
 - The minimap draws small preview markers for spawns in adjacent zones so you can
