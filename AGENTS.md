@@ -30,6 +30,9 @@ mmorpg/
 
 ## Current Task - As we prepare for a future Client / Server MMO Split
 
+Followup step:
+
+Search codebase generally for more authority boundary violations / writing directly to UI. Search for authority boundary violations where client input handlers write directly to UI instead of using the event system. Be thorough.
 
 ---
 
@@ -46,12 +49,6 @@ Minimum slice:
 Serialize: world tick, entities (id, pos, hp), inventory list, cooldown timers
 Version tag in the file
 That’s enough
-
-6) NPC spawn/respawn tables, simple faction/aggro rules, tuning via data
-
-We have already built a real AI. Let's ensure that our current npc spawn mechanisms are ready for the client/server split as much as we can per usual principles of server authority, etc.
-
-Just ensure we already follow the authority/intents boundary in npc/item spawn code.
 
 ### Mid-term (world + UX)
 - Headless server loop in-process (client sends intents, server updates state)

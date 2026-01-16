@@ -65,6 +65,7 @@
          (ui (game-ui game))
          (camera (game-camera game))
          (editor (game-editor game))
+         (event-queue (game-combat-events game))
          (player-intent (player-intent player))
          (mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
          (mouse-down (raylib:is-mouse-button-down +mouse-left+))
@@ -143,14 +144,14 @@
                        ((eq context-type :npc)
                         (let ((npc (find-npc-by-id npcs context-id)))
                           (when npc
-                            (ui-push-hud-log ui (npc-examine-description npc)))))
+                            (emit-hud-message-event event-queue (npc-examine-description npc)))))
                        ((eq context-type :object)
                         (let ((object (and context-object-id
                                            (list :id context-object-id))))
-                          (ui-push-hud-log ui (object-examine-description object))))
+                          (emit-hud-message-event event-queue (object-examine-description object))))
                        ((eq context-type :inventory)
                         (when item-id
-                          (ui-push-hud-log ui (item-examine-description item-id))))))
+                          (emit-hud-message-event event-queue (item-examine-description item-id))))))
                     ((eq action :drop)
                      (let* ((inventory (player-inventory player))
                             (slots (and inventory (inventory-slots inventory)))
@@ -161,7 +162,7 @@
                         (when (and item-id count (> count 0))
                          (let ((dropped (drop-inventory-item player world item-id count)))
                            (when (and dropped (> dropped 0))
-                             (ui-push-hud-log ui
+                             (emit-hud-message-event event-queue
                                               (format nil "Dropped ~a x~d."
                                                       (item-display-name item-id)
                                                       dropped)))))))))))))
