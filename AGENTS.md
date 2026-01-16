@@ -30,7 +30,7 @@ mmorpg/
 
 ## Current Task
 
-TBA.
+Can you add a chat system where if I press 't' it allows me to type sentences and they show up in the status area below the stats. (the one that has status messages that fade. I guess reduce the fade time, you know, like let stuff appear in the area for a good 30 seconds before fading. This can be zone messages. Anyone chatting in the zone sees the message theoretically, remember we have client/server split and intent authority stuff going on here that we are midway through with.)
 
 ## Future Tasks / Roadmap
 

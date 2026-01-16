@@ -15,6 +15,7 @@
                (:file "src/movement")
                (:file "src/input")
                (:file "src/combat")
+               (:file "src/chat")
                (:file "src/ai")
                (:file "src/audio")
                (:file "src/ui")

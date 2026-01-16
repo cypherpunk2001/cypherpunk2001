@@ -806,6 +806,29 @@
                                           color)
                         (incf drawn))))))))
 
+(defun draw-chat-input (ui start-x start-y)
+  ;; Draw the active chat input line.
+  (let* ((prompt (ui-chat-prompt ui))
+         (buffer (ui-chat-buffer ui))
+         (text (if (and buffer (> (length buffer) 0))
+                   (format nil "~a ~a" prompt buffer)
+                   (format nil "~a " prompt)))
+         (text-size (ui-hud-log-text-size ui))
+         (padding 6)
+         (width (+ (* 9 (length text)) (* padding 2)))
+         (height (+ text-size 8))
+         (bg-color (ui-hud-bg-color ui)))
+    (raylib:draw-rectangle (- start-x padding)
+                           (- start-y 4)
+                           width
+                           height
+                           bg-color)
+    (raylib:draw-text text
+                      start-x
+                      start-y
+                      text-size
+                      (ui-menu-text-color ui))))
+
 (defun draw-hud (player ui world)
   ;; Draw stamina HUD, zone label, and player stats.
   (let* ((labels (ui-stamina-labels ui))
@@ -841,7 +864,14 @@
     (let* ((lines (player-hud-stats-lines player))
            (count (player-hud-stats-count player))
            (text-size (ui-hud-stats-text-size ui))
-           (line-height (+ text-size (ui-hud-stats-line-gap ui))))
+           (line-height (+ text-size (ui-hud-stats-line-gap ui)))
+           (log-start-y (+ stats-y (* count line-height) 6))
+           (chat-active (ui-chat-active ui))
+           (log-offset (if chat-active
+                           (+ (ui-hud-log-text-size ui)
+                              (ui-hud-log-line-gap ui)
+                              8)
+                           0)))
       (when lines
         (loop :for i :from 0 :below count
               :for text = (aref lines i)
@@ -850,13 +880,15 @@
                                     (+ stats-y (* i line-height))
                                     text-size
                                     raylib:+white+))
+        (when chat-active
+          (draw-chat-input ui stats-x log-start-y))
         (if *debug-collision-overlay*
             (draw-combat-log ui
                              stats-x
-                             (+ stats-y (* count line-height) 6))
+                             (+ log-start-y log-offset))
             (draw-hud-log ui
                           stats-x
-                          (+ stats-y (* count line-height) 6)))))))
+                          (+ log-start-y log-offset)))))))
 
 (defun draw-inventory (player ui render assets)
   ;; Draw the inventory overlay when enabled.

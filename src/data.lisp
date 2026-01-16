@@ -62,6 +62,7 @@
     (:click-marker-thickness . *click-marker-thickness*)
     (:hud-log-line-seconds . *hud-log-line-seconds*)
     (:hud-log-fade-seconds . *hud-log-fade-seconds*)
+    (:chat-max-length . *chat-max-length*)
     (:inventory-size . *inventory-size*)
     (:inventory-grid-columns . *inventory-grid-columns*)
     (:inventory-slot-gap . *inventory-slot-gap*)

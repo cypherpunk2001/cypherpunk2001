@@ -14,7 +14,8 @@ What lives here
 - Fixed simulation timing (tick length and max catch-up steps).
 - Player stat defaults, XP tuning (including hitpoints share), inventory sizing, grid layout, and equipment slot order.
 - Click marker sizing, duration, thickness, and base colors for left/right click feedback.
-- HUD log timing for gameplay feedback fade-out.
+- HUD log timing for gameplay feedback fade-out (now 30s hold before fade).
+- Chat message limits for the HUD log area.
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Default save file path used by ESC menu Save/Load (defaults to `data/savegame.lisp` under the project root).
 - Music volume steps and the default startup level.

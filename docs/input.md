@@ -21,11 +21,13 @@ What it does
 - Tracks the NPC under the cursor for a top-middle HUD name display.
 - Updates camera zoom from the mouse wheel.
 - `I` toggles the inventory overlay.
+- `T` enters chat input mode; Enter submits and Escape cancels.
 
 Key functions
 - `update-input-direction`, `update-target-from-mouse`, `update-target-from-minimap`,
   `update-input-actions`, `update-training-mode`, `update-ui-hovered-npc`,
   `npc-examine-description`, `object-examine-description`, `item-examine-description`.
+- `open-chat-input`, `close-chat-input`, `update-chat-input`.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.

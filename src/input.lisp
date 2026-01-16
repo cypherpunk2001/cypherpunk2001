@@ -30,6 +30,57 @@
   (when (raylib:is-mouse-button-pressed +mouse-middle+)
     (setf (camera-zoom camera) *camera-zoom-default*)))
 
+(defun open-chat-input (ui)
+  ;; Enter chat input mode and clear the buffer.
+  (setf (ui-chat-active ui) t
+        (ui-chat-buffer ui) "")
+  ui)
+
+(defun close-chat-input (ui)
+  ;; Exit chat input mode and clear the buffer.
+  (setf (ui-chat-active ui) nil
+        (ui-chat-buffer ui) "")
+  ui)
+
+(defun append-chat-char (ui char)
+  ;; Append CHAR to the chat buffer if under the limit.
+  (let* ((buffer (ui-chat-buffer ui))
+         (max-len (ui-chat-max-length ui)))
+    (when (< (length buffer) max-len)
+      (setf (ui-chat-buffer ui)
+            (concatenate 'string buffer (string char))))))
+
+(defun backspace-chat-buffer (ui)
+  ;; Remove the last character in the chat buffer.
+  (let ((buffer (ui-chat-buffer ui)))
+    (when (> (length buffer) 0)
+      (setf (ui-chat-buffer ui)
+            (subseq buffer 0 (1- (length buffer)))))))
+
+(defun update-chat-input (ui &key (skip-input nil))
+  ;; Handle chat typing. Returns a submitted message or nil.
+  (when (ui-chat-active ui)
+    (cond
+      ((raylib:is-key-pressed +key-escape+)
+       (close-chat-input ui)
+       nil)
+      ((raylib:is-key-pressed +key-enter+)
+       (let* ((buffer (ui-chat-buffer ui))
+              (trimmed (string-trim '(#\Space #\Tab) buffer)))
+         (close-chat-input ui)
+         (when (> (length trimmed) 0)
+           trimmed)))
+      (t
+       (when (raylib:is-key-pressed +key-backspace+)
+         (backspace-chat-buffer ui))
+       (loop :for code = (raylib:get-char-pressed)
+             :while (> code 0)
+             :do (when (and (not skip-input)
+                            (>= code 32)
+                            (<= code 126))
+                   (append-chat-char ui (code-char code))))
+       nil))))
+
 (defun clear-player-auto-walk (player)
   ;; Clear auto-walk toggles on the player.
   (setf (player-auto-right player) nil

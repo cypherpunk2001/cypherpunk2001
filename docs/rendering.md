@@ -50,6 +50,7 @@ Design note
 - The HUD reads the world zone label so you always know which zone is active.
 - The HUD shows the hovered NPC name at the top-center when the cursor is over one.
 - The HUD log area shows gameplay feedback when the debug overlay is off, fading lines out over time.
+- When chat input is active, the HUD draws a "Say:" line above the HUD log area.
 - The inventory overlay renders a grid panel with item sprites and stack counts.
 - The minimap recenters on the player, so you can always click ahead to set a target.
 - The pause menu includes Save/Load buttons below the fullscreen toggle, styled like the music controls for quick snapshot tests.

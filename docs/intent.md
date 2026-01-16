@@ -19,6 +19,8 @@ What an intent contains
   - `requested-attack-target-id`: NPC id the client wants to attack
   - `requested-follow-target-id`: NPC id the client wants to follow
   - `requested-pickup-target-id`, `requested-pickup-tx`, `requested-pickup-ty`: Object the client wants to pick up
+- Chat payloads:
+  - `requested-chat-message`: pending chat message for the server to broadcast
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
@@ -27,7 +29,9 @@ Key functions
 - `set-intent-target`, `clear-intent-target`: manage click-to-move.
 - `request-intent-attack`, `request-intent-run-toggle`.
 - `request-attack-target`, `request-follow-target`, `request-pickup-target`: client sends target requests for server validation.
+- `request-chat-message`: client sends a chat request for server broadcast.
 - `clear-requested-attack-target`, `clear-requested-follow-target`, `clear-requested-pickup-target`: clear target requests.
+- `clear-requested-chat-message`: clear pending chat requests.
 
 Walkthrough: click-to-move
 1) Mouse click is converted to a world-space target.

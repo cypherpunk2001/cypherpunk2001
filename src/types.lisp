@@ -100,6 +100,7 @@
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
   inventory-open
+  chat-active chat-buffer chat-prompt chat-max-length
   hover-npc-name
   context-open context-x context-y context-world-x context-world-y
   context-target-id context-target-type context-object-id context-slot-index context-item-id

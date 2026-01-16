@@ -33,8 +33,8 @@
 ;; Marker color for walk targets.
 (defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))
 ;; Marker color for attack targets.
-(defparameter *hud-log-line-seconds* 3.0) ;; Seconds a HUD log line stays visible.
-(defparameter *hud-log-fade-seconds* 0.6) ;; Seconds to fade out HUD log lines.
+(defparameter *hud-log-line-seconds* 30.0) ;; Seconds a HUD log line stays visible.
+(defparameter *hud-log-fade-seconds* 0.4) ;; Seconds to fade out HUD log lines.
 (defparameter *inventory-size* 20) ;; Player inventory slots.
 (defparameter *inventory-grid-columns* 5) ;; Inventory grid columns.
 (defparameter *inventory-slot-gap* 8) ;; Inventory slot gap in pixels.
@@ -48,6 +48,7 @@
 (defparameter *minimap-padding* 12) ;; Padding from screen edges for minimap placement.
 (defparameter *minimap-point-size* 4) ;; Size of player/NPC markers on the minimap.
 (defparameter *minimap-preview-edge-tiles* 1.5) ;; Tiles from an exit edge to show adjacent zone spawn previews.
+(defparameter *chat-max-length* 180) ;; Maximum characters in a chat message.
 
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
 (defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
@@ -205,6 +206,7 @@
 (defparameter +key-space+ (cffi:foreign-enum-value 'raylib:keyboard-key :space)) ;; Raylib keycode for the Space key.
 (defparameter +key-q+ (cffi:foreign-enum-value 'raylib:keyboard-key :q)) ;; Raylib keycode for the Q key.
 (defparameter +key-e+ (cffi:foreign-enum-value 'raylib:keyboard-key :e)) ;; Raylib keycode for the E key.
+(defparameter +key-t+ (cffi:foreign-enum-value 'raylib:keyboard-key :t)) ;; Raylib keycode for the T key.
 (defparameter +key-z+ (cffi:foreign-enum-value 'raylib:keyboard-key :z)) ;; Raylib keycode for the Z key.
 (defparameter +key-i+ (cffi:foreign-enum-value 'raylib:keyboard-key :i)) ;; Raylib keycode for the I key.
 (defparameter +key-x+ (cffi:foreign-enum-value 'raylib:keyboard-key :x)) ;; Raylib keycode for the X key.
@@ -222,6 +224,8 @@
 (defparameter +key-f12+ (cffi:foreign-enum-value 'raylib:keyboard-key :f12)) ;; Raylib keycode for the F12 key.
 (defparameter +key-left-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :left-shift)) ;; Raylib keycode for the Left Shift key.
 (defparameter +key-right-shift+ (cffi:foreign-enum-value 'raylib:keyboard-key :right-shift)) ;; Raylib keycode for the Right Shift key.
+(defparameter +key-enter+ (cffi:foreign-enum-value 'raylib:keyboard-key :enter)) ;; Raylib keycode for the Enter key.
+(defparameter +key-backspace+ (cffi:foreign-enum-value 'raylib:keyboard-key :backspace)) ;; Raylib keycode for the Backspace key.
 (defparameter +mouse-left+ (cffi:foreign-enum-value 'raylib:mouse-button :left)) ;; Raylib mouse button code for left click.
 (defparameter +mouse-right+ (cffi:foreign-enum-value 'raylib:mouse-button :right)) ;; Raylib mouse button code for right click.
 (defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle)) ;; Raylib mouse button code for middle click.

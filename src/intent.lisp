@@ -13,7 +13,8 @@
   requested-follow-target-id
   requested-pickup-target-id
   requested-pickup-tx
-  requested-pickup-ty)
+  requested-pickup-ty
+  requested-chat-message)
 
 (defun make-intent (&key (target-x 0.0) (target-y 0.0))
   ;; Create a reusable intent with optional target coordinates.
@@ -30,7 +31,8 @@
                 :requested-follow-target-id 0
                 :requested-pickup-target-id nil
                 :requested-pickup-tx nil
-                :requested-pickup-ty nil))
+                :requested-pickup-ty nil
+                :requested-chat-message nil))
 
 (defun reset-frame-intent (intent)
   ;; Clear per-frame intent signals without touching persistent targets.
@@ -103,3 +105,11 @@
   (setf (intent-requested-pickup-target-id intent) nil
         (intent-requested-pickup-tx intent) nil
         (intent-requested-pickup-ty intent) nil))
+
+(defun request-chat-message (intent message)
+  ;; Request a chat message to broadcast.
+  (setf (intent-requested-chat-message intent) message))
+
+(defun clear-requested-chat-message (intent)
+  ;; Clear the requested chat message.
+  (setf (intent-requested-chat-message intent) nil))

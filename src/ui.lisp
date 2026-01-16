@@ -86,6 +86,10 @@
          (menu-button-color (raylib:make-color :r 170 :g 60 :b 60 :a 220))
          (menu-button-hover-color (raylib:make-color :r 210 :g 80 :b 80 :a 240))
          (inventory-open nil)
+         (chat-active nil)
+         (chat-buffer "")
+         (chat-prompt "Say:")
+         (chat-max-length *chat-max-length*)
          (hover-npc-name nil)
          (context-open nil)
          (context-x 0)
@@ -214,6 +218,10 @@
               :menu-button-color menu-button-color
               :menu-button-hover-color menu-button-hover-color
               :inventory-open inventory-open
+              :chat-active chat-active
+              :chat-buffer chat-buffer
+              :chat-prompt chat-prompt
+              :chat-max-length chat-max-length
               :hover-npc-name hover-npc-name
               :context-open context-open
               :context-x context-x
@@ -374,12 +382,15 @@
 (defun update-ui-input (ui audio mouse-clicked)
   ;; Handle UI toggle input and click interactions.
   (let ((action nil))
-  (when (raylib:is-key-pressed +key-escape+)
-    (setf (ui-menu-open ui) (not (ui-menu-open ui))))
-  (when (and (ui-menu-open ui) mouse-clicked)
-    (setf action (handle-menu-click ui audio
-                                    (raylib:get-mouse-x)
-                                    (raylib:get-mouse-y))))
+    (when (and (not (ui-chat-active ui))
+               (raylib:is-key-pressed +key-escape+))
+      (setf (ui-menu-open ui) (not (ui-menu-open ui))))
+    (when (and (ui-menu-open ui)
+               mouse-clicked
+               (not (ui-chat-active ui)))
+      (setf action (handle-menu-click ui audio
+                                      (raylib:get-mouse-x)
+                                      (raylib:get-mouse-y))))
     action))
 
 (defun open-context-menu (ui screen-x screen-y world-x world-y

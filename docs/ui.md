@@ -14,6 +14,7 @@ What it does
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Tracks inventory overlay visibility for the `I` hotkey.
+- Tracks chat input state (active flag, buffer, prompt, max length) for `T` chat mode.
 - Stores minimap layout/colors (including collision marker color) for rendering and input hit-testing.
 - Caches combat log lines for the debug overlay plus a lightweight HUD feedback log with per-line fade timers.
 - Tracks a right-click context menu (position, options, target type, and Walk/Attack/Follow/Pick up/Examine/Drop labels, including inventory examine).

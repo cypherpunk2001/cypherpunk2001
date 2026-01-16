@@ -71,7 +71,9 @@
           (intent-requested-pickup-tx server-intent)
           (intent-requested-pickup-tx client-intent)
           (intent-requested-pickup-ty server-intent)
-          (intent-requested-pickup-ty client-intent)))
+          (intent-requested-pickup-ty client-intent)
+          (intent-requested-chat-message server-intent)
+          (intent-requested-chat-message client-intent)))
   server-intent)
 
 (defun server-step (game client-intent dt accumulator &key (allow-player-control t))
