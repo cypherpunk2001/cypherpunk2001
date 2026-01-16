@@ -53,6 +53,7 @@
     (:combat-hitpoints-xp-multiplier . *combat-hitpoints-xp-multiplier*)
     (:click-marker-duration . *click-marker-duration*)
     (:click-marker-size-scale . *click-marker-size-scale*)
+    (:click-marker-thickness . *click-marker-thickness*)
     (:inventory-size . *inventory-size*)
     (:mouse-hold-repeat-seconds . *mouse-hold-repeat-seconds*)
     (:editor-move-speed . *editor-move-speed*)

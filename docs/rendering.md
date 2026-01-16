@@ -52,6 +52,7 @@ Design note
   see potential enemies before crossing. Previews render while you are pushing
   against a connected edge or standing within `*minimap-preview-edge-tiles*` tiles
   of one to avoid confusing them with in-zone NPCs.
+- Click marker line thickness is driven by `*click-marker-thickness*` so feedback remains readable.
 - When a preview zone is cached, `draw-world` renders its layers offset beyond any
   edges or corners that the camera view extends past, so approaching a boundary feels
   continuous instead of a hard cutoff.

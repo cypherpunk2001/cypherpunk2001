@@ -28,6 +28,7 @@
 (defparameter *combat-hitpoints-xp-multiplier* 0.33) ;; HP XP multiplier applied to focused combat XP.
 (defparameter *click-marker-duration* 0.6) ;; Seconds a click marker stays visible.
 (defparameter *click-marker-size-scale* 0.35) ;; Marker size as a fraction of a tile.
+(defparameter *click-marker-thickness* 5) ;; Marker line thickness in pixels.
 (defparameter *click-marker-walk-color* (raylib:make-color :r 240 :g 210 :b 60 :a 240))
 ;; Marker color for walk targets.
 (defparameter *click-marker-attack-color* (raylib:make-color :r 230 :g 70 :b 70 :a 240))

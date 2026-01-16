@@ -13,7 +13,7 @@ What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Fixed simulation timing (tick length and max catch-up steps).
 - Player stat defaults, XP tuning (including hitpoints share), and inventory sizing.
-- Click marker sizing, duration, and base colors for left/right click feedback.
+- Click marker sizing, duration, thickness, and base colors for left/right click feedback.
 - Sprite, tileset, zone, world layout, and audio defaults.
 - Music volume steps and the default startup level.
 - Floor fill tile index for the base map; set to `0` to skip drawing a fill tile.
