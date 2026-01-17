@@ -84,7 +84,11 @@
            (log-verbose "Logout requested")
            (when (eq net-role :client)
              (queue-net-request game (list :type :logout))
-             (setf (ui-menu-open ui) nil))))))
+             (setf (ui-menu-open ui) nil)
+             ;; Return to login screen
+             (setf (ui-auth-complete ui) nil)
+             (setf (ui-login-active ui) t)
+             (setf (ui-auth-error-message ui) nil))))))
     (let ((chat-opened nil))
       (when (and (not (ui-chat-active ui))
                  (not (ui-menu-open ui))

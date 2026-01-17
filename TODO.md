@@ -59,6 +59,8 @@ Key design docs:
 
 ## Current Tasks / TODO
 
+ I think the logout button on the escape menu should logout the user but also  take them back to the main menu in case they want to register another or login again later. And we don't need the "Quit" button on the escape menu anymore, it really does not serve purpose, but it could go on the main login screen
+  menu, I suppose.
 
 ## Future Tasks / Roadmap
 
@@ -90,8 +92,13 @@ Make persistence boring and safe (still simple)
 - [ ] Copy player blobs to timestamped keys: `backup:<timestamp>:<id>`
 - **Impact**: Can restore from backup if player data corrupted
 
+**NOTE** Should this just be a db dump from redis? If so, I can just have devops automate this. Or is should be a save file plist from the save.lisp type of thing I am confused? Let me know before doing.
+
 #### Phase 3: Admin Commands (Testing) - LOW PRIORITY
 - [ ] Add REPL helpers: `admin-wipe-character`, `admin-grant-item`, `admin-print-save`
+- This is really cool idea, admin can always use slime repl to server and should have a full almost "API" of tools to manage
+the userbase, e.g. bans, wipes, grant item, get info like ip addresses user has logged in from history and times ... etc. Can you think of anything else? Let's get a wishlist/spec for this. We cant implement all yet for example because we dont even track IPs or have a mechanism to ban people yet haha.
+but doing this would save us from having to create some cli tool or more GUI shit.
 - **Impact**: Easy debugging/testing without manual Redis commands
 
 **Recommendation**: Start with Phase 1 only. Atomic saves = biggest safety win for minimal code.

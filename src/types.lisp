@@ -87,11 +87,10 @@
   login-active auth-complete username-buffer password-buffer
   auth-error-message server-selector-index
   menu-padding menu-panel-width menu-panel-height menu-panel-x menu-panel-y
-  menu-title menu-hint menu-track-title menu-button-label menu-prev-label menu-next-label
+  menu-title menu-hint menu-track-title menu-prev-label menu-next-label
   menu-vol-down-label menu-vol-up-label
   menu-title-size menu-hint-size menu-track-size menu-button-text-size
   menu-nav-text-size menu-volume-text-size
-  menu-button-width menu-button-height menu-button-x menu-button-y
   menu-logout-label menu-logout-x menu-logout-y menu-logout-width menu-logout-height
   menu-save-label menu-load-label
   menu-save-x menu-save-y

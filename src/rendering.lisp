@@ -1139,11 +1139,6 @@
   ;; Render the pause menu and hover states.
   (let* ((mouse-x (raylib:get-mouse-x))
          (mouse-y (raylib:get-mouse-y))
-         (hover-quit (point-in-rect-p mouse-x mouse-y
-                                      (ui-menu-button-x ui)
-                                      (ui-menu-button-y ui)
-                                      (ui-menu-button-width ui)
-                                      (ui-menu-button-height ui)))
          (hover-logout (point-in-rect-p mouse-x mouse-y
                                         (ui-menu-logout-x ui)
                                         (ui-menu-logout-y ui)
@@ -1169,9 +1164,6 @@
                                         (ui-menu-volume-y ui)
                                         (ui-menu-volume-button-width ui)
                                         (ui-menu-volume-button-height ui)))
-         (quit-color (if hover-quit
-                         (ui-menu-button-hover-color ui)
-                         (ui-menu-button-color ui)))
          (logout-color (if hover-logout
                            (ui-menu-button-hover-color ui)
                            (ui-menu-button-color ui)))
@@ -1349,15 +1341,6 @@
     (raylib:draw-text (ui-menu-logout-label ui)
                       (+ (ui-menu-logout-x ui) 24)
                       (+ (ui-menu-logout-y ui) 16)
-                      (ui-menu-button-text-size ui)
-                      (ui-menu-text-color ui))
-    (raylib:draw-rectangle (ui-menu-button-x ui) (ui-menu-button-y ui)
-                           (ui-menu-button-width ui)
-                           (ui-menu-button-height ui)
-                           quit-color)
-    (raylib:draw-text (ui-menu-button-label ui)
-                      (+ (ui-menu-button-x ui) 24)
-                      (+ (ui-menu-button-y ui) 16)
                       (ui-menu-button-text-size ui)
                       (ui-menu-text-color ui))))
 

@@ -23,7 +23,6 @@
          (menu-title "Escape Menu")
          (menu-hint "Press Esc to close")
          (menu-track-title "Music")
-         (menu-button-label "Quit")
          (menu-save-label "Save")
          (menu-load-label "Load")
          (menu-prev-label "Prev")
@@ -36,12 +35,7 @@
          (menu-button-text-size 22)
          (menu-nav-text-size 18)
          (menu-volume-text-size 18)
-         (menu-button-width 260)
-         (menu-button-height 56)
-         (menu-button-x (truncate (/ (- *window-width* menu-button-width) 2)))
-         (menu-button-y (- (+ menu-panel-y menu-panel-height)
-                           menu-padding
-                           menu-button-height))
+         ;; Logout button (moved to bottom, Quit removed)
          (menu-action-gap 12)
          (menu-logout-label "Logout")
          (menu-logout-width 260)
@@ -49,8 +43,6 @@
          (menu-logout-x (truncate (/ (- *window-width* menu-logout-width) 2)))
          (menu-logout-y (- (+ menu-panel-y menu-panel-height)
                            menu-padding
-                           menu-button-height
-                           menu-action-gap
                            menu-logout-height))
          (menu-nav-button-width 140)
          (menu-nav-button-height 44)
@@ -177,7 +169,6 @@
               :menu-title menu-title
               :menu-hint menu-hint
               :menu-track-title menu-track-title
-              :menu-button-label menu-button-label
               :menu-save-label menu-save-label
               :menu-load-label menu-load-label
               :menu-prev-label menu-prev-label
@@ -190,10 +181,6 @@
               :menu-button-text-size menu-button-text-size
               :menu-nav-text-size menu-nav-text-size
               :menu-volume-text-size menu-volume-text-size
-              :menu-button-width menu-button-width
-              :menu-button-height menu-button-height
-              :menu-button-x menu-button-x
-              :menu-button-y menu-button-y
               :menu-logout-label menu-logout-label
               :menu-logout-x menu-logout-x
               :menu-logout-y menu-logout-y
@@ -347,10 +334,6 @@
 (defun handle-menu-click (ui audio mouse-x mouse-y)
   ;; Process menu clicks for quit, logout, music, volume, and toggles.
   (cond
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-button-x ui) (ui-menu-button-y ui)
-                      (ui-menu-button-width ui) (ui-menu-button-height ui))
-     (setf (ui-exit-requested ui) t))
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-logout-x ui) (ui-menu-logout-y ui)
                       (ui-menu-logout-width ui) (ui-menu-logout-height ui))
@@ -684,6 +667,30 @@
         ;; Return :register if clicked
         (when (and register-hover (raylib:is-mouse-button-pressed +mouse-left+))
           (return-from draw-login-screen :register)))
+
+      ;; Quit button
+      (let* ((button-y (+ panel-y 470))
+             (quit-button-x (truncate (/ (- screen-width button-width) 2)))
+             (mouse-x (raylib:get-mouse-x))
+             (mouse-y (raylib:get-mouse-y))
+             (quit-hover (and (>= mouse-x quit-button-x)
+                             (<= mouse-x (+ quit-button-x button-width))
+                             (>= mouse-y button-y)
+                             (<= mouse-y (+ button-y button-height))))
+             (quit-color (if quit-hover
+                            (raylib:make-color :r 210 :g 80 :b 80 :a 240)
+                            (raylib:make-color :r 170 :g 60 :b 60 :a 220))))
+
+        (raylib:draw-rectangle quit-button-x button-y button-width button-height quit-color)
+        (let* ((text "Quit")
+               (text-width (raylib:measure-text text 24))
+               (text-x (+ quit-button-x (truncate (/ (- button-width text-width) 2))))
+               (text-y (+ button-y 12)))
+          (raylib:draw-text text text-x text-y 24 text-color))
+
+        ;; Quit application if clicked
+        (when (and quit-hover (raylib:is-mouse-button-pressed +mouse-left+))
+          (setf (ui-exit-requested ui) t)))
 
       ;; Server selector (localhost:1337 for now)
       (let ((server-y (+ panel-y panel-height (- padding) 5)))
