@@ -40,7 +40,7 @@ make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 
 **Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
 
-**Test location**: `src/tests/persistence-test.lisp` for data integrity tests.
+**Test location**: `tests/persistence-test.lisp` for data integrity tests.
 
 ### Proactive Test Writing Requirements (For Claude)
 
@@ -78,7 +78,7 @@ make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
    - Test edge case: transition during combat/trade
 
 **How to implement:**
-- Add test to `src/tests/persistence-test.lisp` BEFORE claiming feature complete
+- Add test to `tests/persistence-test.lisp` BEFORE claiming feature complete
 - Run `make test-persistence` to verify test passes
 - Update this list if you discover new test-worthy patterns
 
@@ -294,7 +294,7 @@ Add durable fields to `serialize-player` (base payload), add ephemeral fields on
 ;; deserialize-player: add (setf (player-quest-log p) (getf plist :quest-log nil))
 ;; apply-player-plist: add quest-log handling
 
-;; 6. WRITE TESTS in src/tests/persistence-test.lisp
+;; 6. WRITE TESTS in tests/persistence-test.lisp
 (defun test-migration-v2-to-v3 ()
   (let* ((old-data '(:version 2 :id 1 :x 0.0 :y 0.0 ...))
          (migrated (migrate-player-data old-data)))

@@ -25,7 +25,7 @@
       (funcall (read-from-string "ql:quickload") :mmorpg)
 
       ;; 4) Load test file
-      (load (merge-pathnames "src/tests/persistence-test.lisp"))
+      (load (merge-pathnames "tests/persistence-test.lisp"))
 
       ;; 5) Run tests
       (let ((success (funcall (read-from-string "mmorpg:run-persistence-tests"))))

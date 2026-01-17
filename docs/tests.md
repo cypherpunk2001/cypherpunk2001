@@ -1,4 +1,6 @@
-# tests/persistence-test.lisp
+# Tests
+
+Documentation for `tests/persistence-test.lisp`.
 
 Data integrity test suite for the MMORPG project.
 
@@ -120,7 +122,7 @@ When implementing features that touch player data, add tests if ANY of these app
 
 ## Implementation Details
 
-- **File**: `src/tests/persistence-test.lisp`
+- **File**: `tests/persistence-test.lisp`
 - **Package**: `mmorpg` (tests run in main package for access to internals)
 - **Test runner**: `scripts/test-persistence.lisp`
 - **Framework**: Custom lightweight test harness (no external dependencies)
