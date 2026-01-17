@@ -21,10 +21,58 @@ What it does
 - Starts NPC respawn cooldowns on death and restores NPCs when timers expire.
 
 Key functions
-- `attack-hitbox`, `start-player-attack`, `apply-melee-hit`.
-- `update-player-animation`, `update-npc-animation`.
-- `update-npc-attack` (consumes NPC intent).
-- `update-npc-respawns` (counts down and restores dead NPCs).
+
+**Combat Resolution:**
+- `attack-hitbox` - Return attack hitbox center and half sizes for current facing.
+- `start-player-attack` - Start attack animation if not already active.
+- `apply-melee-hit` - Apply melee damage once per attack if hitbox overlaps target.
+- `roll-melee-hit` - Roll hit/miss based on attack/defense stats.
+- `roll-melee-damage` - Roll damage based on strength stat.
+
+**Animation:**
+- `update-player-animation` - Advance animation timers and set facing/state.
+- `update-npc-animation` - Advance idle animation frames for NPC.
+- `update-entity-animation` - Generic method dispatching to player/NPC animations.
+
+**NPC Combat:**
+- `update-npc-attack` - Handle NPC melee attacks and cooldowns.
+- `update-npc-respawns` - Count down respawn timers and restore dead NPCs.
+- `respawn-npc` - Reset NPC state after respawn cooldown.
+- `npc-respawn-seconds` - Return respawn cooldown for NPC.
+- `npc-attack-range` - Return NPC melee range in world pixels.
+- `npc-attack-cooldown` - Return NPC melee cooldown in seconds.
+- `npc-attack-damage` - Return NPC melee damage per hit.
+
+**Target Management:**
+- `player-attack-target` - Return active NPC attack target for player.
+- `player-follow-target` - Return active NPC follow target for player.
+- `sync-player-attack-target` - Validate requested attack target (server authority).
+- `sync-player-follow-target` - Validate requested follow target (server authority).
+- `sync-player-pickup-target` - Validate requested pickup target (server authority).
+- `update-player-attack-intent` - Request attacks when target is in range.
+- `player-attack-target-in-range-p` - Return true when target is inside player's melee hitbox.
+
+**Combat Events:**
+- `emit-combat-log` - Emit combat log events to queue and stdout in debug mode.
+- `emit-hud-message` - Emit HUD feedback event to queue.
+- `emit-level-up-messages` - Emit HUD messages for stat level-ups.
+- `push-combat-log` - Build and emit combat log event.
+- `format-combat-log` - Build a combat log line for hit or miss.
+
+**Combatant Protocol (CLOS):**
+- `combatant-position` - Return (x, y) position.
+- `combatant-alive-p` - Return true if alive.
+- `combatant-collision-half` - Return (half-w, half-h) collision sizes.
+- `combatant-health` - Return (current-hp, max-hp).
+- `combatant-apply-hit` - Apply damage and trigger persistence.
+- `combatant-trigger-hit-effect` - Start blood effect animation.
+- `combatant-update-hit-effect` - Advance hit effect timer.
+- `combatant-display-name` - Return short display name for logs.
+
+**Utility:**
+- `aabb-overlap-p` - Return true when two axis-aligned boxes overlap.
+- `find-npc-by-id` - Return NPC with given ID, if present.
+- `intent-attack-direction` - Choose attack direction from intent input or target.
 
 Walkthrough: player melee hit
 1) Player input requests an attack intent.

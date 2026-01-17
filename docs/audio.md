@@ -14,8 +14,12 @@ What it does
 - Updates the current track and auto-advances when a track ends.
 
 Key functions
-- `make-audio`, `shutdown-audio` (logs loaded track counts in verbose mode).
-- `update-audio`, `audio-advance-track`, `audio-adjust-volume`.
+- `make-audio` - Load music streams and initialize audio state.
+- `shutdown-audio` - Unload music streams stored in audio state.
+- `update-audio` - Update streaming music and auto-advance near track end.
+- `audio-advance-track` - Switch to next/previous track and restart playback.
+- `audio-adjust-volume` - Adjust volume level and apply to current music.
+- `build-volume-bars` - Create prebuilt volume bar strings for the menu UI.
 
 Walkthrough: track switching
 1) UI requests previous/next track.

@@ -61,10 +61,15 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-- SSL? I think it's probably possible for a wifi sniffer to get peoples usernames and passwords from the unencrypted udp stream, correct me if i'm wrong. What SSL options are there? LEt's be careful. I happen to know that ssl packages are notorious for not compiling or being incompatible with various operating systems. Would be really nice to have a simple solution though that is guaranteed to work fine on linux windows and mac. But i think all those OS use different SSL implementations and versions. what do we do? Also we dont want to slow down networking at all, obviously latency is crucial, im not sure if ssl has any play in that. Let me know?
+### DB Spec vs Implementation Mismatches (Review Required)
 
-- encryption lib for passwords stored in the game database. recommendation? make sure its reputable and well maintained in common lisp world. Let me know?
+These items need a decision: either update the spec (docs/db.md) or fix the code to match spec.
 
+1. **Pipelining for batch writes** - docs/db.md (lines 220-226) documents Redis pipelining for tier-2 batch flushes promising 300x speedup. Code in `flush-dirty-players()` does sequential saves instead. Decision: implement pipelining or remove from spec?
+
+2. **Player schema version** - docs/db.md shows examples with version 2, but src/migrations.lisp defines `*player-schema-version* 3`. The v2→v3 migration (added `:playtime` and `:created-at`) exists in code but not documented in spec.
+
+3. **Postgres cold storage** - docs/db.md (lines 659-700) documents Redis + Postgres architecture. Not implemented (labeled "Future" in spec, so this is expected - just noting for tracking).
 
 ## Future Tasks / Roadmap
 

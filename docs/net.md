@@ -9,18 +9,51 @@ Why we do it this way
 - Datagram transport keeps the loop simple for the first networking cut.
 
 Message format (plist, printed with `prin1`)
+
+**Client -> Server:**
 - `(:type :hello)` -> client announces itself to the server
+- `(:type :register :username <str> :password <str>)` -> create new account
+- `(:type :login :username <str> :password <str>)` -> authenticate existing account
+- `(:type :logout)` -> graceful disconnect (saves player state)
 - `(:type :intent :payload <intent-plist>)` -> client input for the current frame
 - `(:type :save)` -> request server save
 - `(:type :load)` -> request server load
-- `(:type :snapshot :state <game-state> :events (<event> ...) :player-id <id>)` -> server snapshot + HUD/combat events + assigned player id for this client
+
+**Server -> Client:**
+- `(:type :auth-ok :player-id <id>)` -> authentication successful
+- `(:type :auth-fail :reason <keyword>)` -> authentication failed
+  - Reasons: `:missing-credentials`, `:username-taken`, `:bad-credentials`, `:already-logged-in`
+- `(:type :snapshot :state <game-state> :events (<event> ...) :player-id <id> :last-sequence <n>)` -> server snapshot + HUD/combat events + assigned player id + prediction sequence
+
+**Encrypted auth (optional):**
+- When `*auth-encryption-enabled*` is true, auth messages use `:encrypted-payload` instead of plaintext credentials
+- See `docs/db.md` "Network Encryption" section for protocol details
 
 Key functions
-- `run-server`: bind UDP on `*net-default-host*`/`*net-default-port*`, track multiple clients, apply intents, tick `server-step`, send per-client snapshots. Logs handshake/save/load traffic and unknown message types when verbose.
-- `run-client`: connect to the server, send intents each frame, apply snapshots for rendering. Logs unknown message types when verbose.
-- `send-net-message` / `receive-net-message`: ASCII message helpers with UDP buffers; malformed packets are dropped with verbose logs.
+
+**Server/Client Entry Points:**
+- `run-server`: bind UDP, track clients, handle auth, apply intents, tick `server-step`, send snapshots. Accepts `:worker-threads` for parallel sends.
+- `run-client`: connect to server, handle login UI, send intents, apply snapshots. Accepts `:auto-login-username`/`:auto-login-password` for testing.
+
+**Message Handling:**
+- `send-net-message` / `receive-net-message`: ASCII message helpers with UDP buffers; malformed packets dropped.
+- `send-net-message-with-retry`: Send critical messages (auth responses) with exponential retry.
+- `send-auth-message`: Send login/register with optional encryption.
 - `intent->plist` / `apply-intent-plist`: serialize/deserialize intent payloads.
-- `apply-snapshot`: apply a snapshot via `apply-game-state`, update the client player id, and queue HUD/combat events; logs zone transitions when verbose.
+- `apply-snapshot`: apply game state, update player id, queue events; clears interpolation buffer on zone change.
+
+**Authentication:**
+- `handle-register-request`: Create account, spawn character, register session.
+- `handle-login-request`: Verify credentials, load character, register session.
+- `handle-logout-request`: Save player, unregister session.
+- `extract-auth-credentials`: Parse credentials from encrypted or plaintext auth messages.
+
+**Session Management:**
+- `*active-sessions*`: Hash table mapping username -> net-client for logged-in accounts.
+- `*client-timeout-seconds*`: Inactivity threshold (default 30s) before auto-logout.
+- `check-client-timeouts`: Remove inactive clients, free sessions.
+- `net-client-authenticated-p`: Check if client has logged in.
+- `net-client-account-username`: Get username of logged-in account.
 
 Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.

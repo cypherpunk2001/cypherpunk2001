@@ -44,6 +44,15 @@ The game server and client MUST NOT know where data comes from or where it goes.
 
 (defgeneric storage-flush (storage)
   (:documentation "Force any pending writes to durable storage."))
+
+(defgeneric storage-connect (storage)
+  (:documentation "Establish connection to storage backend."))
+
+(defgeneric storage-disconnect (storage)
+  (:documentation "Close connection to storage backend."))
+
+(defgeneric storage-keys (storage pattern)
+  (:documentation "Return list of keys matching PATTERN (e.g., 'player:*')."))
 ```
 
 ### Concrete Implementations
@@ -581,6 +590,129 @@ Players might crash intentionally to avoid consequences. Mitigation:
 2. **Combat state sticks:** If in combat on disconnect, remain "in combat" on reconnect
 3. **Trade rollback:** Incomplete trades cancelled, items returned
 4. **Position rollback:** Disconnect in dangerous area? Respawn at safe point
+
+## Password Hashing
+
+Passwords are never stored in plaintext. The system uses PBKDF2-SHA256 with random salts.
+
+### Implementation
+
+```lisp
+;; Hash a password for storage
+(hash-password "user-password")
+;; Returns: "0459ed2a0f2cfd78686d9319d74dc450$3ef4641c098c206a0b559a5fc629d83b..."
+;;          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+;;          16-byte random salt (hex)         PBKDF2-SHA256 hash (hex)
+
+;; Verify a password against stored hash
+(verify-password "user-password" stored-hash)
+;; Returns: T or NIL
+```
+
+### Parameters
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `*password-hash-iterations*` | 100,000 | OWASP recommended minimum |
+| `*password-salt-bytes*` | 16 | 128-bit random salt per password |
+| Hash algorithm | PBKDF2-SHA256 | Via ironclad library |
+| Output key length | 32 bytes | 256-bit derived key |
+
+### Storage Format
+
+Passwords are stored as `salt$hash` strings:
+```
+(:version 2
+ :username "player1"
+ :password-hash "0459ed2a0f2cfd78686d9319d74dc450$3ef4641c098c206a0b559a5fc629d83b1cbeeb1da11a1a10cb675fc09b4c5686"
+ :character-id 12345)
+```
+
+### Security Properties
+
+- **Constant-time comparison**: `verify-password` uses `ironclad:constant-time-equal` to prevent timing attacks
+- **Unique salts**: Each password gets a cryptographically random salt
+- **No plaintext fallback**: Legacy plaintext accounts cannot authenticate (must re-register)
+
+## Network Encryption (Auth Only)
+
+Authentication messages (login/register) can be encrypted to prevent credential sniffing on untrusted networks. Game traffic remains unencrypted for latency.
+
+### Protocol: X25519 + AES-256-GCM
+
+```
+1. Server generates static X25519 keypair at startup
+2. Client generates ephemeral X25519 keypair per auth request
+3. Client computes shared secret via ECDH
+4. Client encrypts credentials with AES-256-GCM using SHA256(shared-secret)
+5. Client sends: ephemeral-public-key || nonce || ciphertext || tag
+6. Server computes same shared secret, decrypts and verifies tag
+```
+
+### Configuration
+
+```lisp
+;; Enable encryption (server and client must agree)
+(setf *auth-encryption-enabled* t)
+
+;; Server prints public key on startup when enabled:
+;; "SERVER: Auth encryption enabled. Public key: a1b2c3d4..."
+
+;; Client must have server's public key configured:
+(setf *server-auth-public-key* "a1b2c3d4...")
+```
+
+### Message Format
+
+**Plaintext auth (default):**
+```lisp
+(:type :login :username "player1" :password "secret")
+```
+
+**Encrypted auth (when enabled):**
+```lisp
+(:type :login :encrypted-payload "hex-encoded-ciphertext...")
+```
+
+The server automatically detects and handles both formats.
+
+### Functions
+
+| Function | Purpose |
+|----------|---------|
+| `init-server-encryption` | Generate server keypair at startup |
+| `get-server-public-key` | Return server's public key (hex) |
+| `encrypt-auth-payload` | Client-side credential encryption |
+| `decrypt-auth-payload` | Server-side decryption with tag verification |
+
+## Account Management
+
+Player accounts are stored separately from character data, enabling future multi-character support.
+
+### Account Record Format
+
+```lisp
+(:version 2
+ :username "player1"
+ :password-hash "salt$hash"
+ :character-id 12345)  ; Links to player record
+```
+
+### Functions
+
+| Function | Purpose |
+|----------|---------|
+| `db-create-account` | Create new account (hashes password) |
+| `db-verify-credentials` | Verify login credentials |
+| `db-account-exists-p` | Check if username is taken |
+| `db-get-character-id` | Get linked character for account |
+| `db-set-character-id` | Link character to account |
+
+### Schema Versioning
+
+Account schema version is tracked separately from player schema:
+- v1: Plaintext passwords (legacy, no longer supported)
+- v2: PBKDF2-SHA256 hashed passwords
 
 ## Security Considerations
 

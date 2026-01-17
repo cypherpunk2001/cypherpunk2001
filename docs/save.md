@@ -18,11 +18,35 @@ What it serializes
 - Optional visual fields (facing/frames/hit state) when `:include-visuals` is true for snapshot streaming
 
 Key functions
-- `serialize-game-state`: converts game to plist snapshot (optionally `:include-visuals`)
-- `deserialize-game-state`: restores game from plist snapshot
-- `apply-game-state`: applies a snapshot into an existing game, loading zones if needed
-- `save-game`: writes game state to file (logs in verbose mode)
-- `load-game`: reads game state from file, optionally applying the saved zone before deserializing (logs in verbose mode)
+
+**Top-Level Save/Load:**
+- `serialize-game-state` - Convert game to plist snapshot (optionally `:include-visuals`).
+- `deserialize-game-state` - Restore game from plist snapshot.
+- `apply-game-state` - Apply snapshot into existing game, loading zones if needed.
+- `save-game` - Write game state to file (logs in verbose mode).
+- `load-game` - Read game state from file, optionally apply saved zone (logs in verbose mode).
+
+**Player Serialization:**
+- `serialize-player` - Convert player state to plist (durable fields + optional visuals).
+- `deserialize-player` - Restore player from plist.
+- `apply-player-plist` - Apply plist fields onto existing player, preserving client-only state.
+- `apply-player-plists` - Apply multiple player plists to game, preserving local player state.
+- `players-match-order-p` - Return true when players and plists share same ID ordering.
+
+**NPC Serialization:**
+- `serialize-npc` - Convert NPC state to plist (optionally `:include-visuals`).
+- `deserialize-npc` - Restore NPC from plist into existing NPC array.
+
+**Object Serialization:**
+- `serialize-object` - Convert zone object to plist.
+- `deserialize-object` - Restore zone object from plist.
+
+**Component Serialization:**
+- `serialize-skill` / `deserialize-skill` - Convert skill to/from plist.
+- `serialize-stat-block` / `deserialize-stat-block` - Convert stat-block to/from plist.
+- `serialize-inventory` / `deserialize-inventory` - Convert inventory to/from plist.
+- `serialize-inventory-slot` / `deserialize-inventory-slot` - Convert slot to/from plist.
+- `serialize-equipment` / `deserialize-equipment` - Convert equipment to/from plist.
 
 Walkthrough: save game
 1) Player triggers save action

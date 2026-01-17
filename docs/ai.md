@@ -19,11 +19,27 @@ Behavior model
   NPCs flee even if behavior state lags a frame behind.
 
 Key functions
-- `closest-player`: choose the nearest alive player to drive NPC behavior/intent.
-- `npc-should-flee-p`: low-health flee check shared by behavior and intent.
-- `update-npc-behavior`: choose the behavior state.
-- `update-npc-intent`: produce movement/attack intent.
-- `update-npc-movement`: apply intent and update facing.
+
+**Core AI Loop:**
+- `update-npc-behavior` - Choose behavior state based on archetype rules and player range.
+- `update-npc-intent` - Populate NPC intent (movement/attack) based on behavior and proximity.
+- `update-npc-movement` - Apply intent and keep NPC near home radius.
+
+**Target Selection:**
+- `closest-player` - Return the closest alive player to NPC for behavior/intent.
+
+**Behavior Helpers:**
+- `npc-should-flee-p` - Low-health flee check shared by behavior and intent.
+- `npc-in-perception-range-p` - Return true when player is within NPC perception radius.
+- `npc-perception-range-sq` - Return squared perception range in world pixels.
+
+**Movement Helpers:**
+- `npc-home-radius` - Return NPC home radius in world pixels.
+- `npc-move-speed` - Return NPC movement speed in pixels per second.
+- `npc-flee-speed-mult` - Return NPC flee speed multiplier.
+- `npc-wander-interval` - Return NPC wander target interval in seconds.
+- `npc-pick-wander-target` - Pick a new wander target around NPC home position.
+- `npc-wander-direction` - Return normalized wander direction and update target timer.
 
 Walkthrough: aggressive chase
 1) Perception check sees the player within range.
