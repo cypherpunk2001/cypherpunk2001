@@ -5,6 +5,7 @@
 - Emacs + SLIME (or any Common Lisp REPL)
 - raylib + raygui
 - claw-raylib (prebuild branch recommended)
+- redis (valkey)
 
 ## Setup
 - Follow the claw-raylib build instructions; on the prebuild branch, skip steps 1-2 and start at step 3.
