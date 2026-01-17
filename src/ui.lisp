@@ -698,7 +698,13 @@
                          (+ panel-x padding)
                          server-y
                          14
-                         (raylib:make-color :r 150 :g 150 :b 150 :a 255))))
+                         (raylib:make-color :r 150 :g 150 :b 150 :a 255))
+        ;; F11 hint
+        (raylib:draw-text "[F11 Fullscreen]"
+                         (+ panel-x padding)
+                         (+ server-y 18)
+                         12
+                         (raylib:make-color :r 120 :g 120 :b 120 :a 255))))
 
     ;; Return nil if no button clicked
     nil))

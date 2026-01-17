@@ -742,6 +742,19 @@
                               (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
                             ;; Update login input
                             (update-login-input ui)
+                            ;; F11 toggles fullscreen on login screen
+                            (when (raylib:is-key-pressed +key-f11+)
+                              (raylib:toggle-fullscreen))
+                            ;; Enter key triggers login
+                            (when (and (raylib:is-key-pressed +key-enter+)
+                                      (ui-username-buffer ui)
+                                      (plusp (length (ui-username-buffer ui))))
+                              (send-net-message socket
+                                               (list :type :login
+                                                     :username (ui-username-buffer ui)
+                                                     :password (ui-username-buffer ui)))
+                              (setf (ui-auth-error-message ui) nil)
+                              (log-verbose "Sending login request for ~a (Enter key)" (ui-username-buffer ui)))
                             ;; Check for login messages from server
                             (loop
                               (multiple-value-bind (message _host _port)
