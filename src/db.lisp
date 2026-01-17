@@ -442,7 +442,11 @@
   "Map of player-id -> player-session for connected players.")
 
 (defparameter *batch-flush-interval* 30.0
-  "Seconds between batch flushes for tier-2 writes.")
+  "Seconds between batch flushes for tier-2 writes.
+   TRADEOFF: Server crash loses up to 30s of routine state (XP, position, HP).
+   Critical state (death, level-up, equipment, zone transitions) uses Tier-1
+   immediate saves and is not affected. 30s chosen to balance durability vs
+   database load. Reduce for more durability, increase for less DB pressure.")
 
 (defun mark-player-dirty (player-id)
   "Mark player as needing a database flush."

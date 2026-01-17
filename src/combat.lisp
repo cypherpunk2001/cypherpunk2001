@@ -347,8 +347,23 @@
             (setf (player-follow-target-id player) 0)
             (clear-intent-target intent))))))
 
+(defun pickup-tile-in-range-p (player tx ty world)
+  "Check if tile at TX,TY is within pickup range of PLAYER."
+  (let* ((tile-size (world-tile-dest-size world))
+         (px (player-x player))
+         (py (player-y player)))
+    (multiple-value-bind (tile-x tile-y)
+        (tile-center-position tile-size tx ty)
+      (let* ((dx (- tile-x px))
+             (dy (- tile-y py))
+             (dist-sq (+ (* dx dx) (* dy dy)))
+             (max-dist (* *max-target-distance-tiles* tile-size))
+             (max-dist-sq (* max-dist max-dist)))
+        (<= dist-sq max-dist-sq)))))
+
 (defun sync-player-pickup-target (player intent world)
   ;; Validate requested pickup target and set authoritative state (server authority).
+  ;; Checks range to prevent targeting distant pickup objects.
   (let* ((requested-id (intent-requested-pickup-target-id intent))
          (requested-tx (intent-requested-pickup-tx intent))
          (requested-ty (intent-requested-pickup-ty intent))
@@ -362,15 +377,20 @@
                (not (and (eql requested-id current-id)
                          (eql requested-tx (player-pickup-target-tx player))
                          (eql requested-ty (player-pickup-target-ty player)))))
-      ;; Trust client request - actual pickup validation happens in update-player-pickup-target
-      ;; This allows pickup targets to be set even if object is temporarily unavailable
-      (setf (player-pickup-target-id player) requested-id
-            (player-pickup-target-tx player) requested-tx
-            (player-pickup-target-ty player) requested-ty
-            (player-pickup-target-active player) t
-            (player-attack-target-id player) 0
-            (player-follow-target-id player) 0)
-      (clear-player-auto-walk player))))
+      ;; Validate range before accepting pickup target
+      (if (pickup-tile-in-range-p player requested-tx requested-ty world)
+          ;; Valid target in range: set authoritative state
+          (progn
+            (setf (player-pickup-target-id player) requested-id
+                  (player-pickup-target-tx player) requested-tx
+                  (player-pickup-target-ty player) requested-ty
+                  (player-pickup-target-active player) t
+                  (player-attack-target-id player) 0
+                  (player-follow-target-id player) 0)
+            (clear-player-auto-walk player))
+          ;; Out of range: reject request (log for debugging)
+          (log-verbose "Pickup target rejected: tile (~d,~d) out of range for player ~a"
+                       requested-tx requested-ty (player-id player))))))
 
 (defun player-attack-target-in-range-p (player target world)
   ;; Return true when TARGET is inside the player's melee hitbox.

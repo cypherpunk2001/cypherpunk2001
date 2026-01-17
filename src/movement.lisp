@@ -836,8 +836,16 @@
                     (player-y player) spawn-y
                     (player-dx player) 0.0
                     (player-dy player) 0.0)
-              ;; Tier-2 write: zone transition position changes should be marked dirty
-              (mark-player-dirty (player-id player))))
+              ;; Tier-1 write: zone transition saves immediately (prevents position loss on crash)
+              (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                        :max-retries 5
+                                        :initial-delay 50
+                                        :max-delay 500
+                                        :on-final-fail (lambda (e)
+                                                         (warn "Zone transition save failed: ~a" e)
+                                                         ;; Fallback to dirty flag if immediate save fails
+                                                         (mark-player-dirty (player-id player))))
+                saved)))
           (reset-frame-intent intent)
           (when had-target
             (set-intent-target intent
