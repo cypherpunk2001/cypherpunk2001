@@ -1,15 +1,18 @@
 .PHONY: ci smoke server client checkparens checkdocs test-persistence
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
+
+# CI and smoke use memory backend (no Redis required)
 ci:
-	sbcl --script scripts/ci.lisp
+	MMORPG_DB_BACKEND=memory sbcl --script scripts/ci.lisp
 
 test-persistence:
 	sbcl --script scripts/test-persistence.lisp
 
 smoke:
-	MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp
+	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp
 
+# Server and client use Redis by default (dev close to production)
 server:
 	sbcl --script scripts/server.lisp
 

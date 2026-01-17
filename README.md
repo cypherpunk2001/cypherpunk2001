@@ -50,75 +50,54 @@ Your Valkey is now configured for maximum durability with:
 - RDB: Snapshots every 5 minutes (if anything changed) or every 1 minute (if 1000+ changes)
 
 
-Now you can change the game server to use Redis instead of memory storage:
+**Redis is now the default storage backend.**
 
-Edit src/net.lisp line 391, change:
-(init-storage :backend :memory)
-to:
-(init-storage :backend :redis :host "127.0.0.1" :port 6379)
+`make server` uses Redis by default - develop close to production!
 
-Then test it with verbose logging enabled to see the persistence in action!
+**Storage Backends**
 
-**Memory Storage vs Redis Storage**
-
-Memory Storage (:memory)
-
-What it is:
-- Everything stored in a Lisp hash table in RAM
-- Data completely lost when server stops
-- No external dependencies (doesn't need Valkey running)
-
-Use cases while dev'ing:
-- ✅ Quick iteration: Testing gameplay logic, combat, movement without persistence overhead
-- ✅ CI/automated tests: make ci and make smoke don't need Valkey running
-- ✅ Clean slate every run: Want to start fresh each time without old test data
-- ✅ Working offline/traveling: Don't want to run Valkey
-- ✅ Debugging persistence logic: Can add print statements in memory-storage methods easily
-
-Redis Storage (:redis)
+Redis Storage (:redis) - **DEFAULT**
 
 What it is:
 - Data persisted to disk via Valkey (Redis-compatible)
 - Data survives server restarts, crashes, code reloads
 - Requires Valkey running on port 6379
 
-Use cases while dev'ing:
-- ✅ Testing persistence: Verifying save/load actually works
-- ✅ Testing migrations: Player data survives schema version changes
-- ✅ Testing crash recovery: Kill server, restart, check if HP/XP/inventory survived
+This is the default because:
+- ✅ Dev close to production: Catch persistence bugs early
+- ✅ Test real durability: Migrations, crash recovery, tier-1 writes
 - ✅ Long-running dev sessions: Build up a character over multiple runs
-- ✅ Testing tier-1 writes: Verify death/level-ups actually persist immediately
-- ✅ Pre-production testing: Simulating real production behavior
+- ✅ No surprises: What works locally works in production
 
-Recommended Dev Workflow
+Memory Storage (:memory) - for CI/testing only
 
-Day-to-day feature work: Use :memory
-(init-storage :backend :memory)  ; Fast, clean, simple
+What it is:
+- Everything stored in a Lisp hash table in RAM
+- Data completely lost when server stops
+- No external dependencies (doesn't need Valkey running)
 
-When testing persistence features: Use :redis
-(init-storage :backend :redis)   ; Test real durability
+Use cases:
+- ✅ CI/automated tests: `make ci` and `make smoke` use memory backend
+- ✅ Clean slate testing: Explicit opt-in when you need fresh state
+- ✅ Working offline: When Valkey isn't available
 
-For CI/tests: Keep :memory so tests don't need Valkey installed
+To use memory storage explicitly:
+```shell
+MMORPG_DB_BACKEND=memory make server
+```
 
-Practical Example
+**Practical Example (with Redis default)**
 
-With memory storage:
+```shell
 # Run 1: Create character, gain XP, reach level 5
-sbcl --load scripts/server.lisp
-# Stop server (Ctrl+C)
-
-# Run 2: Character gone, start from scratch
-sbcl --load scripts/server.lisp
-
-With Redis storage:
-# Run 1: Create character, gain XP, reach level 5
-sbcl --load scripts/server.lisp
+make server   # Uses Redis by default
 # Stop server (Ctrl+C)
 
 # Run 2: Character still level 5 with all XP/items intact!
-sbcl --load scripts/server.lisp
+make server
+```
 
-Bottom line: Use :memory for 95% of dev work, switch to :redis when you specifically want to test persistence, then switch back.
+**Bottom line**: Redis is default. Use `MMORPG_DB_BACKEND=memory` only when you explicitly need a clean slate or don't have Valkey running.
 
 
 ## Setup

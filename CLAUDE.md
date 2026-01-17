@@ -105,8 +105,8 @@ MMORPG_VERBOSE_COORDS=1 make server             # Log entity positions (very ver
 MMORPG_WORKER_THREADS=4 make server             # Parallel snapshot sends (default: 1)
 MMORPG_WORKER_THREADS=$(nproc) make server      # Use all CPU cores
 
-# Database backend configuration
-MMORPG_DB_BACKEND=redis make server             # Use Redis (default: memory)
+# Database backend configuration (Redis is default)
+MMORPG_DB_BACKEND=memory make server            # Use in-memory storage (for testing without Redis)
 MMORPG_REDIS_HOST=127.0.0.1 make server         # Redis host (default: 127.0.0.1)
 MMORPG_REDIS_PORT=6379 make server              # Redis port (default: 6379)
 ```
@@ -209,18 +209,18 @@ Add durable fields to `serialize-player` (base payload), add ephemeral fields on
 
 ## Memory vs Redis Storage
 
-**Memory Storage** (`:backend :memory`, default for CI/smoke):
-- Hash table in RAM, lost on shutdown
-- No external dependencies
-- Fast iteration, clean slate each run
-
-**Redis Storage** (`:backend :redis`):
+**Redis Storage** (`:backend :redis`, **default**):
 - Persists to disk via Valkey/Redis (AOF + RDB)
 - Survives restarts/crashes
 - Requires Valkey running on port 6379
-- Configure via `MMORPG_DB_BACKEND=redis`
+- This is the default for `make server` - dev close to production
 
-**Dev Workflow**: Use `:memory` for 95% of feature work. Switch to `:redis` when testing persistence, migrations, or crash recovery.
+**Memory Storage** (`:backend :memory`, for CI/testing only):
+- Hash table in RAM, lost on shutdown
+- No external dependencies
+- Use via `MMORPG_DB_BACKEND=memory make server`
+
+**Dev Workflow**: Use Redis by default (matches production). Use `:memory` only for CI tests or when Redis is unavailable.
 
 ## Schema Migrations (CRITICAL)
 
@@ -448,7 +448,7 @@ All persistent data includes `:version N`. When changing schema:
 
 1. Start Valkey: `sudo systemctl start valkey`
 2. Configure AOF: `appendonly yes` in `/etc/valkey/valkey.conf`
-3. Run server with Redis: `MMORPG_DB_BACKEND=redis make server`
+3. Run server: `make server` (Redis is default)
 4. Test crash recovery:
    - Create character, gain XP, move around
    - Kill server (Ctrl+C)

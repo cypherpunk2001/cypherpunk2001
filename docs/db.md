@@ -92,9 +92,9 @@ The game server and client MUST NOT know where data comes from or where it goes.
     (when data
       (deserialize-player (migrate-player data)))))
 
-;; At startup, inject the storage backend
+;; At startup, inject the storage backend (Redis is default)
 (defparameter *storage* (make-instance 'redis-storage))
-;; Or for tests:
+;; For CI/tests only (MMORPG_DB_BACKEND=memory):
 (defparameter *storage* (make-instance 'memory-storage))
 ```
 

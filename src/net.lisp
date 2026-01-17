@@ -578,18 +578,18 @@
   ;;   - Safe: Only parallelizes network I/O, simulation remains serial
   (with-fatal-error-log ((format nil "Server runtime (~a:~d)" host port))
     ;; Initialize storage backend from environment variables:
-    ;; MMORPG_DB_BACKEND: "memory" or "redis" (default: memory)
+    ;; MMORPG_DB_BACKEND: "memory" or "redis" (default: redis)
     ;; MMORPG_REDIS_HOST: Redis host (default: 127.0.0.1)
     ;; MMORPG_REDIS_PORT: Redis port (default: 6379)
     (let* ((backend-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_DB_BACKEND")
                             #-sbcl (uiop:getenv "MMORPG_DB_BACKEND")
-                            "memory"))
+                            "redis"))
            (backend (cond
                       ((string-equal backend-str "redis") :redis)
                       ((string-equal backend-str "memory") :memory)
                       (t (progn
-                           (warn "Unknown MMORPG_DB_BACKEND=~a, defaulting to memory" backend-str)
-                           :memory))))
+                           (warn "Unknown MMORPG_DB_BACKEND=~a, defaulting to redis" backend-str)
+                           :redis))))
            (redis-host (or #+sbcl (sb-ext:posix-getenv "MMORPG_REDIS_HOST")
                            #-sbcl (uiop:getenv "MMORPG_REDIS_HOST")
                            "127.0.0.1"))

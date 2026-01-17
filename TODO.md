@@ -1,7 +1,5 @@
 ### Building and Testing
-
 REMINDER:
-
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
 ```bash
 make checkparens        # Verify balanced parentheses in all .lisp files
@@ -21,11 +19,8 @@ make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp```
 - ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
 - ❌ **Helper functions**: Utils that don't touch persistent state
 **Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
-
 ## Documentation
-
 Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to verify.
-
 Key design docs:
 - `docs/db.md` - Persistence architecture, storage abstraction, write tiers
 - `docs/migrations.md` - Schema versioning, migration functions, admin commands
@@ -33,11 +28,8 @@ Key design docs:
 - `docs/net.md` - UDP protocol, message format, snapshot streaming
 - `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
 - `docs/movement.md` - Physics, collision, zone transitions
-
 **REMINDER: If you update a feature, update the doc.**
-
 ## Important Reminders
-
 - **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
@@ -50,51 +42,22 @@ Key design docs:
 - **Write migrations for durable fields**: New persistent fields require schema version bump + migration function
 - **Server is authoritative**: Clients send intents, not state
 - **Test both backends**: Memory for dev, Redis for persistence testing
-
----
-
-## Current Tasks / TODO
-
-
-8. **Schema Migration Tests** ✅
-   - [x] Old saves (v1) load correctly after migration to v2
-   - [x] Migration applies defaults for new fields (lifetime-xp → 0)
-   - [x] lifetime-xp survives serialization roundtrip
-   - [x] lifetime-xp increments on XP award
-   - [x] Multiple version jumps work (v1 → v3 chain migration)
-   - [x] playtime survives serialization roundtrip
-   - [x] created-at survives serialization roundtrip
-
 ### When to Write Tests (Decision Criteria)
-
 **Write tests for:**
 - ✅ **Data corruption risk**: Serialization, migrations, database writes
 - ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
 - ✅ **Backend equivalence**: Storage abstraction must work identically across backends
 - ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
-
 **Skip tests for:**
 - ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
 - ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
 - ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
 - ❌ **Helper functions**: Utils that don't touch persistent state
-
 **Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
 
-### Integration
+---
 
-- [x] Create `src/tests/persistence-test.lisp` with comprehensive tests (25 tests implemented)
-- [x] Add `make test-persistence` target to Makefile
-- [x] Add to CI: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`
-- [x] **Update CLAUDE.md** with testing requirements:
-  - How to run tests (make test-persistence)
-  - When to write new tests (decision criteria above)
-  - Requirement: All tests must pass before claiming task complete
-- [x] Create `docs/tests.md` documentation
-- [x] Redis backend tests (equivalence with memory backend)
-- [x] Zone transition persistence tests
-- [x] Tier-1 immediate save tests (death, level-up)
-- [x] Currency invariant tests (coins never negative)
+## Current Tasks / TODO
 
 
 ## Future Tasks / Roadmap
