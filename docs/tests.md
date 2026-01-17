@@ -1,5 +1,18 @@
 # Tests
 
+Documentation for the MMORPG test suites.
+
+## Test Suites Overview
+
+| Suite | File | Purpose |
+|-------|------|---------|
+| **Persistence** | `tests/persistence-test.lisp` | Data integrity (serialization, migrations, invariants) |
+| **Security** | `scripts/test-security.lisp` | Input validation, exploit prevention |
+
+---
+
+# Persistence Tests
+
 Documentation for `tests/persistence-test.lisp`.
 
 Data integrity test suite for the MMORPG project.
@@ -149,3 +162,96 @@ Remember: Tests should prevent bugs, not create busywork. Only add tests that ca
 ## Notes
 
 **Bug fix discovered during test development:** The death-triggers-immediate-save test revealed a bug in `combatant-apply-hit` where the tier-1 save condition `(and (= new-hp 0) (> hp 0))` was logically impossible (if new-hp=0, then hp≤0). Fixed by capturing `old-hp` before damage calculation and checking `(> old-hp 0)` instead.
+
+---
+
+# Security Tests
+
+Documentation for `scripts/test-security.lisp`.
+
+Security test suite that verifies the server properly validates and sanitizes client input.
+
+## Purpose
+
+Tests that verify the server is resilient against malicious or malformed client input. Covers authentication enforcement, input validation, type safety, and exploit prevention.
+
+## Philosophy
+
+**What we test:**
+- Server ignores unauthenticated clients
+- Type confusion attacks are rejected (string IDs, malformed data)
+- Speed/position exploits are prevented
+- Chat message length is enforced server-side
+- Double-login attempts are rejected
+- Extreme/edge-case values don't crash the server
+
+**What we don't test:**
+- DDoS resilience (infrastructure concern)
+- Encryption (not implemented yet)
+- Rate limiting (future work)
+
+## Running Tests
+
+```bash
+make test-security    # Run all security tests
+```
+
+Should be run as part of the CI pipeline:
+```bash
+make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke
+```
+
+## Test Coverage (7 tests)
+
+### 1. Authentication Tests
+- **test-unauthenticated-intent-rejected**: Server ignores intents from clients that haven't completed auth flow
+
+### 2. Input Validation Tests
+- **test-speed-hack-prevented**: Server uses own speed constant, ignores client's move magnitude
+- **test-chat-message-length-enforced**: Oversized chat messages are truncated server-side
+- **test-malformed-intent-ids-handled**: String/list IDs rejected without crashing (type confusion)
+- **test-empty-message-fields-handled**: Nil/missing fields handled gracefully
+
+### 3. Session Security Tests
+- **test-double-login-prevented**: Second login attempt for already-logged-in account is rejected
+
+### 4. Edge Case Tests
+- **test-extreme-coordinates-handled**: Huge/tiny coordinate values don't crash the server
+
+## Test Structure
+
+Each test:
+1. Spawns a server thread on a unique port
+2. Creates UDP socket(s) to simulate client(s)
+3. Sends malicious/malformed messages
+4. Verifies server handles them correctly (rejects, sanitizes, or ignores)
+5. Cleans up (closes sockets, joins thread)
+
+Key helpers:
+- `with-test-server` - Spawns server, yields socket, cleans up
+- `authenticate-client` - Completes auth flow for a socket
+- `receive-with-timeout` - Non-blocking receive with deadline
+
+## Security Fixes Discovered
+
+**Malformed ID crash (TYPE-ERROR):** The `test-malformed-intent-ids-handled` test revealed that sending string values for `:requested-attack-target-id` caused a crash in `sync-player-attack-target` when comparing string to number. Fixed by adding `%int-or` validation in `apply-intent-plist`.
+
+## Adding New Security Tests
+
+When adding tests, consider:
+1. What malicious input could a client send?
+2. What would happen if we trusted that input?
+3. Does the server validate/sanitize before use?
+
+Good candidates for new tests:
+- Rate limiting (when implemented)
+- Trade/economy exploits
+- Inventory manipulation attempts
+- Admin command injection
+
+## Implementation Details
+
+- **File**: `scripts/test-security.lisp`
+- **Package**: `mmorpg` (tests run in main package)
+- **Ports**: Each test uses a unique port (1337-1343) to avoid conflicts
+- **Exit codes**: 0 on success, 1 on failure (CI-friendly)

@@ -17,6 +17,7 @@ make checkparens        # Verify balanced parentheses in all .lisp files
 make ci                 # Cold compile + UDP handshake test (no GPU needed)
 make smoke              # Full client/server smoke test with window (2s default)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
+make test-security      # Security tests (input validation, exploit prevention)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp```
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
 **Write tests for:**
@@ -41,7 +42,7 @@ Key design docs:
 - `docs/movement.md` - Physics, collision, zone transitions
 **REMINDER: If you update a feature, update the doc.**
 ## Important Reminders
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
 - **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
@@ -70,10 +71,10 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-(Empty - check Future Tasks / Roadmap for next priorities)
+(No active tasks)
 
 ## Future Tasks / Roadmap
-- [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
+
 
 ### Admin Commands - Tier B & C
 **Tier B** (requires new infrastructure):

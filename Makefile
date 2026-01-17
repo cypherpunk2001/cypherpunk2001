@@ -1,4 +1,4 @@
-.PHONY: ci smoke server client checkparens checkdocs test-persistence
+.PHONY: ci smoke server client checkparens checkdocs test-persistence test-security
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 
@@ -7,6 +7,9 @@ ci:
 
 test-persistence:
 	sbcl --script scripts/test-persistence.lisp
+
+test-security:
+	MMORPG_DB_BACKEND=memory sbcl --script scripts/test-security.lisp
 
 smoke:
 	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp

@@ -29,6 +29,18 @@ Design note
 - Server uses non-blocking UDP receive via `usocket:wait-for-input` with `:timeout 0`.
 - Fatal runtime errors log context (and a backtrace in verbose mode) before exiting.
 
+Security: Input Validation
+- Server validates ALL client input before processing (untrusted client principle).
+- Authentication required: Server ignores intents from unauthenticated clients (`net-client-authenticated-p`).
+- Type validation helpers prevent type confusion attacks:
+  - `%float-or` - Reject non-float values (default to safe value)
+  - `%int-or` - Reject non-integer values (prevents string/list injection in ID fields)
+  - `%sanitize-chat-message` - Enforce string type + length limit (`*chat-max-length*`)
+- Speed hack prevention: Server uses own `*player-speed*` constant, ignores magnitude of move-dx/dy.
+- Double-login prevention: `*active-sessions*` tracks logged-in usernames; second login attempt rejected.
+- Malformed packet handling: Invalid plists or types are dropped gracefully without crashing.
+- See `scripts/test-security.lisp` for the security test suite (7 tests).
+
 Performance & Scaling
 - Current server runs ONE zone (tested smooth with hundreds of entities on client).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).

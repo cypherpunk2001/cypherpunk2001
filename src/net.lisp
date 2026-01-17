@@ -246,12 +246,29 @@
           :requested-chat-message (intent-requested-chat-message intent))))
 
 (defun %float-or (value default)
+  ;; Return VALUE as float if it's a number, otherwise DEFAULT.
   (if (numberp value)
       (float value 1.0)
       (float default 1.0)))
 
+(defun %int-or (value default)
+  ;; Return VALUE as integer if it's an integer, otherwise DEFAULT.
+  ;; Security: Rejects non-integer values (strings, lists, floats) from malicious clients.
+  (if (integerp value)
+      value
+      default))
+
+(defun %sanitize-chat-message (value)
+  ;; Sanitize chat message: ensure string and enforce length limit.
+  ;; Security: Prevents oversized messages from malicious clients.
+  (when (stringp value)
+    (if (> (length value) *chat-max-length*)
+        (subseq value 0 *chat-max-length*)
+        value)))
+
 (defun apply-intent-plist (intent plist)
   ;; Apply PLIST values to INTENT in place.
+  ;; Security: All values are validated/sanitized to prevent type confusion attacks.
   (when (and intent plist)
     (setf (intent-move-dx intent) (%float-or (getf plist :move-dx) 0.0)
           (intent-move-dy intent) (%float-or (getf plist :move-dy) 0.0)
@@ -263,9 +280,9 @@
           (intent-attack intent) (getf plist :attack nil)
           (intent-run-toggle intent) (getf plist :run-toggle nil)
           (intent-requested-attack-target-id intent)
-          (getf plist :requested-attack-target-id 0)
+          (%int-or (getf plist :requested-attack-target-id) 0)
           (intent-requested-follow-target-id intent)
-          (getf plist :requested-follow-target-id 0)
+          (%int-or (getf plist :requested-follow-target-id) 0)
           (intent-requested-pickup-target-id intent)
           (getf plist :requested-pickup-target-id nil)
           (intent-requested-pickup-tx intent)
@@ -273,7 +290,7 @@
           (intent-requested-pickup-ty intent)
           (getf plist :requested-pickup-ty nil)
           (intent-requested-chat-message intent)
-          (getf plist :requested-chat-message nil)))
+          (%sanitize-chat-message (getf plist :requested-chat-message))))
   intent)
 
 (defun combat-event->plist (event)

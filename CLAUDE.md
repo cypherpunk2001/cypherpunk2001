@@ -19,6 +19,7 @@ make checkparens        # Verify balanced parentheses in all .lisp files
 make ci                 # Cold compile + UDP handshake test (no GPU needed)
 make smoke              # Full client/server smoke test with window (2s default)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
+make test-security      # Security tests (input validation, exploit prevention)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 ```
 
@@ -544,7 +545,7 @@ Key design docs:
 
 ## Important Reminders
 
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
 - **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
