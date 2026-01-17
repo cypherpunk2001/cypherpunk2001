@@ -730,21 +730,12 @@
   t)
 
 (defun db-verify-credentials (username password)
-  "Verify username/password. Returns T if credentials are valid, NIL otherwise.
-   Supports both v2 (hashed) and legacy v1 (plaintext) accounts."
+  "Verify username/password. Returns T if credentials are valid, NIL otherwise."
   (let ((account (db-load-account username)))
     (when account
-      (let ((version (getf account :version 1))
-            (stored-hash (getf account :password-hash))
-            (legacy-password (getf account :password)))
-        (cond
-          ;; v2 account: use secure hash verification
-          ((and (>= version 2) stored-hash)
-           (verify-password password stored-hash))
-          ;; Legacy v1 account: plaintext comparison (upgrade path)
-          (legacy-password
-           (string= password legacy-password))
-          (t nil))))))
+      (let ((stored-hash (getf account :password-hash)))
+        (when stored-hash
+          (verify-password password stored-hash))))))
 
 (defun db-get-character-id (username)
   "Get character-id for account USERNAME. Returns character-id or NIL."
@@ -756,10 +747,9 @@
   "Set character-id for account USERNAME. Returns T on success."
   (let ((account (db-load-account username)))
     (when account
-      ;; Support both v2 (password-hash) and legacy v1 (password) formats
-      (let ((password-hash (or (getf account :password-hash)
-                               (getf account :password))))
-        (db-save-account username password-hash character-id)))))
+      (let ((password-hash (getf account :password-hash)))
+        (when password-hash
+          (db-save-account username password-hash character-id))))))
 
 ;;;; Graceful Shutdown
 
