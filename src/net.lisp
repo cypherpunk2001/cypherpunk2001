@@ -229,8 +229,22 @@
 (defvar *auth-nonce-last-cleanup* 0
   "Last time nonce cache was cleaned up.")
 
+;;; Thread-safe nonce cache access
+#+sbcl
+(defvar *auth-nonce-lock* (sb-thread:make-mutex :name "auth-nonce-lock")
+  "Mutex protecting *auth-nonce-cache* for thread-safe access.")
+
+(defmacro with-auth-nonce-lock (&body body)
+  "Execute BODY with *auth-nonce-lock* held for thread-safe nonce operations."
+  #+sbcl
+  `(sb-thread:with-mutex (*auth-nonce-lock*)
+     ,@body)
+  #-sbcl
+  `(progn ,@body))
+
 (defun auth-nonce-cleanup (current-time)
-  "Remove expired nonces from cache."
+  "Remove expired nonces from cache.
+   Internal: must be called with *auth-nonce-lock* held."
   (when (> (- current-time *auth-nonce-last-cleanup*) *auth-nonce-cleanup-interval*)
     (let ((cutoff (- current-time *auth-timestamp-window* 10)))
       (maphash (lambda (nonce timestamp)
@@ -242,28 +256,30 @@
 (defun auth-check-replay (encrypted-payload timestamp)
   "Check if this auth request is a replay. Returns T if valid, NIL if replay.
    ENCRYPTED-PAYLOAD is used as the nonce (unique per request).
-   TIMESTAMP is the claimed time of the request."
-  (let* ((current-time (get-universal-time))
-         (age (- current-time timestamp)))
-    ;; Cleanup old nonces periodically
-    (auth-nonce-cleanup current-time)
-    (cond
-      ;; Timestamp too old
-      ((> age *auth-timestamp-window*)
-       (warn "Auth replay check: timestamp too old (~d seconds)" age)
-       nil)
-      ;; Timestamp in future (clock skew tolerance of 5 seconds)
-      ((< age -5)
-       (warn "Auth replay check: timestamp in future (~d seconds)" (- age))
-       nil)
-      ;; Already seen this nonce
-      ((gethash encrypted-payload *auth-nonce-cache*)
-       (warn "Auth replay check: duplicate nonce detected")
-       nil)
-      ;; Valid - record nonce
-      (t
-       (setf (gethash encrypted-payload *auth-nonce-cache*) current-time)
-       t))))
+   TIMESTAMP is the claimed time of the request.
+   Thread-safe: protects nonce cache from concurrent access."
+  (with-auth-nonce-lock
+    (let* ((current-time (get-universal-time))
+           (age (- current-time timestamp)))
+      ;; Cleanup old nonces periodically
+      (auth-nonce-cleanup current-time)
+      (cond
+        ;; Timestamp too old
+        ((> age *auth-timestamp-window*)
+         (warn "Auth replay check: timestamp too old (~d seconds)" age)
+         nil)
+        ;; Timestamp in future (clock skew tolerance of 5 seconds)
+        ((< age -5)
+         (warn "Auth replay check: timestamp in future (~d seconds)" (- age))
+         nil)
+        ;; Already seen this nonce
+        ((gethash encrypted-payload *auth-nonce-cache*)
+         (warn "Auth replay check: duplicate nonce detected")
+         nil)
+        ;; Valid - record nonce
+        (t
+         (setf (gethash encrypted-payload *auth-nonce-cache*) current-time)
+         t)))))
 
 (defun make-net-client (host port player)
   ;; Build a client record with an intent seeded to PLAYER position.

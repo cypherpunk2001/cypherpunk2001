@@ -61,55 +61,16 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-### CRITICAL (Second Analysis Pass)
-
-(none - ID counter fixed)
-
-### HIGH (Second Analysis Pass)
-
-(none - all fixed)
-
-### MEDIUM
-
-(none - 30s data loss window documented in code as intentional tradeoff)
-
-### LOW (defensive for future multi-threading)
-
-- **Dirty Flag Race Condition** - `db.lisp:447-452` - `mark-player-dirty` not atomic. Would matter in multi-threaded scenario, but server is single-threaded.
-
-- **Zone Object Respawn Race** - `progression.lisp:566-582` - Zone objects modified in-place. Would matter in multi-threaded scenario, but server is single-threaded.
-
-- **Nonce Cache Race** - `net.lisp:228-236` - Hash table cleanup not thread-safe. Server is single-threaded so low risk.
-
-## Recently Completed
-
-- **Zone Transition Tier-1 Save** - Changed zone transitions from Tier-2 (batched) to Tier-1 (immediate) saves with retry logic. Prevents position loss on crash after zone change.
-
-- **Pickup Target Range Validation** - Added `pickup-tile-in-range-p` check to `sync-player-pickup-target`. Rejects pickup requests for tiles beyond `*max-target-distance-tiles*` (15 tiles).
-
-- **ID Counter Persistence Race** - Added retry logic and save-before-increment to prevent ID collisions on restart.
-
-- **Session Double-Login Race Condition** - Added `session-try-register` with mutex-protected atomic check-and-set. Prevents concurrent logins.
-
-- **Logout Race Condition** - Reordered: clear auth first, then save player, then unregister session. Prevents state changes after logout.
-
-- **Tier-1 Saves More Aggressive** - Increased retries from 5 to 10, max delay from 500ms to 2s for death/level-up saves.
-
-- **Auth Rate Limiting** - Added per-IP rate limiting: 5 failed attempts triggers 5-minute lockout.
-
-- **Auth Encryption Config** - Added `*auth-require-encryption*` server flag to reject plaintext auth in production.
-
-- **Replay Attack Protection** - Added timestamp validation (60s window) and nonce tracking to encrypted auth.
-
-- **Combat Target Range Validation** - Added `*max-target-distance-tiles*` (15 tiles) check to `sync-player-attack-target` and `sync-player-follow-target`.
-
-- **Equipment Swap Tier-1 Save** - Changed equip/unequip from Tier-2 (batched) to Tier-1 (immediate) saves to prevent item loss on crash.
-
-- **Player Unstuck Feature** - ESC menu "Unstuck" button. Server validates player is truly stuck (can't move in any cardinal direction), then teleports to random position in zone. Prevents exploit as free teleport.
 
 ## Future Tasks / Roadmap
 
+1. Analyze multi threading server support more in-depthly to gain a contextual understanding of our implementation
 
+2. Document the implementation as-it-is somewhere appropriately in the relevant docs/foo.md file.
+
+3. Ensure Multi threaded mode of the server should provide the same quality of experience and single threaded.
+If multi threaded changes behavior significantly of anything impacting gameplay, including any bugs including but not limited to the following, we need to document it and add it as fixme items to this TODO list:
+Data races / unsynchronized shared state causing random “impossible” world states (negative HP, duplicated/lost items, position snapping, corrupted components) • Lost updates / last-writer-wins where one thread silently overwrites another and actions don’t stick (gold spent but item missing, quest completion undone, inventory changes disappearing) • Check-then-act (TOCTOU) races where invariants fail even though you “checked” (gold drops below zero, slot claimed twice, entity exists-then-doesn’t) • Deadlocks where systems observe entities mid-spawn or mid-despawn and act on incomplete registration/unregistration (entities that “exist” but aren’t fully wired up, or are referenced after teardown)
 
 ---
 

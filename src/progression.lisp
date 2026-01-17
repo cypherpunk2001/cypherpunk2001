@@ -1,6 +1,19 @@
 ;; NOTE: If you change behavior here, update docs/progression.md :)
 (in-package #:mmorpg)
 
+;;; Thread-safe zone object access
+#+sbcl
+(defvar *zone-objects-lock* (sb-thread:make-mutex :name "zone-objects-lock")
+  "Mutex protecting zone object modifications for thread-safe access.")
+
+(defmacro with-zone-objects-lock (&body body)
+  "Execute BODY with *zone-objects-lock* held for thread-safe zone object operations."
+  #+sbcl
+  `(sb-thread:with-mutex (*zone-objects-lock*)
+     ,@body)
+  #-sbcl
+  `(progn ,@body))
+
 (defparameter *training-modes*
   #(:attack :strength :defense :balanced))
 
@@ -582,59 +595,63 @@
 
 (defun update-object-respawns (world dt)
   ;; Tick down respawn timers and restore object counts when ready.
-  (let* ((zone (world-zone world))
-         (objects (and zone (zone-objects zone))))
-    (when objects
-      (dolist (object objects)
-        (when (object-respawnable-p object)
-          (let* ((timer (object-respawn-timer object)))
-            (when (> timer 0.0)
-              (setf timer (max 0.0 (- timer dt))
-                    (getf object :respawn) timer)
-              (when (<= timer 0.0)
-                (let* ((object-id (getf object :id))
-                       (archetype (and object-id (find-object-archetype object-id))))
-                  (when archetype
-                    (setf (getf object :count) (object-archetype-count archetype)
-                          (getf object :respawn) 0.0)))))))))))
+  ;; Thread-safe: protects zone-objects modification from concurrent pickup.
+  (with-zone-objects-lock
+    (let* ((zone (world-zone world))
+           (objects (and zone (zone-objects zone))))
+      (when objects
+        (dolist (object objects)
+          (when (object-respawnable-p object)
+            (let* ((timer (object-respawn-timer object)))
+              (when (> timer 0.0)
+                (setf timer (max 0.0 (- timer dt))
+                      (getf object :respawn) timer)
+                (when (<= timer 0.0)
+                  (let* ((object-id (getf object :id))
+                         (archetype (and object-id (find-object-archetype object-id))))
+                    (when archetype
+                      (setf (getf object :count) (object-archetype-count archetype)
+                            (getf object :respawn) 0.0))))))))))))
 
 (defun pickup-object-at-tile (player world tx ty object-id)
   ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
-  (let* ((zone (world-zone world))
-         (objects (and zone (zone-objects zone))))
-    (when (and player zone objects)
-      (let ((remaining nil)
-            (picked nil))
-        (dolist (object objects)
-          (let ((ox (getf object :x))
-                (oy (getf object :y))
-                (id (getf object :id)))
-            (if (and (eql ox tx)
-                     (eql oy ty)
-                     (or (null object-id) (eq id object-id)))
-                (let* ((archetype (and id (find-object-archetype id)))
-                       (item-id (and archetype (object-archetype-item-id archetype)))
-                       (count (object-entry-count object archetype))
-                       (respawn (object-entry-respawn-seconds object archetype)))
-                  (if (and item-id (> count 0) (not (object-respawning-p object)))
-                      (let ((leftover (grant-inventory-item player item-id count)))
-                        (setf picked t)
-                        (cond
-                          ((zerop leftover)
-                           (if (> respawn 0.0)
-                               (progn
-                                 (setf (getf object :count) 0
-                                       (getf object :respawn) respawn)
-                                 (push object remaining))
-                               nil))
-                          (t
-                           (setf (getf object :count) leftover)
-                           (push object remaining))))
-                      (push object remaining)))
-                (push object remaining))))
-        (when picked
-          (setf (zone-objects zone) (nreverse remaining)))
-        picked))))
+  ;; Thread-safe: protects zone-objects modification from concurrent respawn updates.
+  (with-zone-objects-lock
+    (let* ((zone (world-zone world))
+           (objects (and zone (zone-objects zone))))
+      (when (and player zone objects)
+        (let ((remaining nil)
+              (picked nil))
+          (dolist (object objects)
+            (let ((ox (getf object :x))
+                  (oy (getf object :y))
+                  (id (getf object :id)))
+              (if (and (eql ox tx)
+                       (eql oy ty)
+                       (or (null object-id) (eq id object-id)))
+                  (let* ((archetype (and id (find-object-archetype id)))
+                         (item-id (and archetype (object-archetype-item-id archetype)))
+                         (count (object-entry-count object archetype))
+                         (respawn (object-entry-respawn-seconds object archetype)))
+                    (if (and item-id (> count 0) (not (object-respawning-p object)))
+                        (let ((leftover (grant-inventory-item player item-id count)))
+                          (setf picked t)
+                          (cond
+                            ((zerop leftover)
+                             (if (> respawn 0.0)
+                                 (progn
+                                   (setf (getf object :count) 0
+                                         (getf object :respawn) respawn)
+                                   (push object remaining))
+                                 nil))
+                            (t
+                             (setf (getf object :count) leftover)
+                             (push object remaining))))
+                        (push object remaining)))
+                  (push object remaining))))
+          (when picked
+            (setf (zone-objects zone) (nreverse remaining)))
+          picked)))))
 
 (defun update-player-pickup-target (player world)
   ;; Resolve explicit pickup targets once the player reaches the tile.
