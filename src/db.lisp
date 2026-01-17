@@ -326,6 +326,8 @@
       ;; Add version to serialized data
       (setf (getf data :version) *player-schema-version*)
       (storage-save *storage* key data)
+      (when (boundp '*server-total-saves*)
+        (incf *server-total-saves*))
       (log-verbose "Saved player ~a to storage (zone: ~a)" player-id zone-id)
       t)))
 

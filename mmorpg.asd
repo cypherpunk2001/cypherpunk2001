@@ -25,4 +25,5 @@
                (:file "src/rendering")
                (:file "src/server")
                (:file "src/main")
+               (:file "src/admin")
                (:file "src/net")))

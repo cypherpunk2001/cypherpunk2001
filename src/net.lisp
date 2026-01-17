@@ -608,6 +608,12 @@
            (stop-flag nil)
            (stop-reason nil)
            (last-flush-time 0.0))
+      ;; Set global admin variables
+      (setf *server-game* game)
+      (setf *server-socket* socket)
+      (setf *server-clients* clients)
+      (setf *server-start-time* (get-internal-real-time))
+      (setf *server-total-saves* 0)
       (format t "~&SERVER: listening on ~a:~d (worker-threads=~d)~%" host port worker-threads)
       (log-verbose "Server config: tick=~,3fs buffer=~d workers=~d"
                    *sim-tick-seconds* *net-buffer-size* worker-threads)
@@ -633,6 +639,7 @@
                                                       :timestamp elapsed)
                                (declare (ignore _new))
                                (setf clients next-clients)
+                               (setf *server-clients* next-clients)
                                (case (getf message :type)
                                  (:hello
                                   (log-verbose "Handshake received from ~a:~d" host port))

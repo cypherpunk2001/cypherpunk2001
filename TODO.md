@@ -81,20 +81,37 @@ Key design docs:
 - [x] DevOps instructions in README.md
 - **Impact**: Can restore from backup if player data corrupted
 
-#### Phase 3: Admin Commands (Testing) - LOW PRIORITY
-- [ ] Add REPL helpers: `admin-wipe-character`, `admin-grant-item`, `admin-print-save`
-- This is really cool idea, admin can always use slime repl to server and should have a full almost "API" of tools to manage
-the userbase, e.g. bans, teleport player to X, wipes, grant item, get info like ip addresses user has logged in from history and times ... etc. Can you think of anything else? Let's get a wishlist/spec for this. We cant implement all yet for example because we dont even track IPs or have a mechanism to ban people yet haha.
-but doing this would save us from having to create some cli tool or more GUI shit.
+#### Phase 3: Admin Commands (Testing) - IN PROGRESS
+- [x] Implement Tier A commands (see [docs/admin.md](docs/admin.md) for full spec)
+- [ ] Add admin action logging (future enhancement)
 - **Impact**: Easy debugging/testing without manual Redis commands
+- **Status**: All Tier A commands implemented and exported from `mmorpg` package
 
 ## Future Tasks / Roadmap
 
-Networking polish that unlocks “MMO feel”
+### Admin Commands - Tier B & C
+
+**Tier B** (requires new infrastructure):
+- Ban system (ban table, login check)
+- IP tracking (store IP on connect, history)
+- Login history (timestamps)
+- Chat logs (message storage)
+
+**Tier C** (nice to have):
+- Admin spawn NPCs
+- Weather control
+- Maintenance mode
+- Backup restoration by timestamp
+
+See [docs/admin.md](docs/admin.md) for full spec.
+
+### Networking Polish
+
+Networking polish that unlocks "MMO feel"
 After ownership, the next noticeable improvement is:
 Interpolation for remote entities (if not already)
 Basic rate limiting + sanity checks (intent frequency, movement bounds)
-Optional later: prediction for local player, but only after everything’s stable
+Optional later: prediction for local player, but only after everything's stable
 
 ----------------------------------
 - [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
