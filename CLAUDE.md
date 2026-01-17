@@ -92,6 +92,71 @@ make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 
 **If uncertain:** Ask yourself: "If this breaks, will players lose progress or items?" If yes → write a test.
 
+## Code Quality Checklist (MANDATORY)
+
+**Review EVERY change against these criteria before claiming work complete:**
+
+### 1. Tests Written?
+- **Persistent state changes** → Write test (XP, HP, inventory, position, level)
+- **New invariants** → Write test (HP ≤ max, coins ≥ 0, XP never decreases)
+- **Database operations** → Write test (save/load round-trip, backend equivalence)
+- **Schema changes** → Write migration test
+- **Visual/UI only** → Skip test (manual verification fine)
+
+### 2. Retry Logic Added?
+- **Tier-1 saves (death, level-up)** → Use `with-retry-exponential` 5 retries, 100-500ms
+- **Database reads on critical paths (login, load-player)** → Use `with-retry-exponential` 3 retries, 50-200ms
+- **Auth UDP messages** → Use `with-retry-linear` 3 retries, 50ms delay
+- **Zone/asset loading** → Use `with-retry-exponential` 2 retries, 100-200ms
+- **Snapshots, UI updates, best-effort operations** → No retry (fail silently acceptable)
+
+### 3. Logging Added?
+- **Critical failures** → `(warn "...")` always
+- **Tier-1 save failures** → `(warn "CRITICAL: ...")` + fallback
+- **State transitions** → `(log-verbose "...")` when `*verbose*` enabled
+- **Network events** → `(log-verbose "...")` for auth, connects, disconnects
+- **Hot loops (update-sim, draw)** → No logging (use `*verbose-coords*` flag if needed)
+- **Helper functions** → No logging unless they fail
+
+### 4. Variable Scope Correct?
+**Globals (`defparameter`) - Use for:**
+- Configuration: `*net-buffer-size*`, `*inventory-size*`
+- Server state: `*storage*`, `*player-sessions*`, `*active-sessions*`
+- Feature flags: `*verbose*`, `*debug-npc-logs*`
+
+**Locals (`let`, `let*`) - Use for:**
+- Temporary computation results
+- Loop variables
+- Function parameters
+
+**NEVER:**
+- Global mutable game state that belongs in structs (use `game-players`, `world-npcs`, not `*global-players*`)
+- Globals for what should be function parameters
+- `setf` on function parameters (pass values, return new values)
+
+### 5. CLOS/Data-Driven Design Consistent?
+**Data-driven (good):**
+- Game data in `data/*.lisp` files (zones, NPCs, items, world-graph)
+- Behavior driven by data fields (npc-archetype, equipment-modifiers)
+- Generic functions dispatch on struct types (`combatant-apply-hit`)
+
+**Hard-coded (bad):**
+- Special-case player ID checks in game logic
+- NPC behavior in main loop instead of ai.lisp
+- Item effects inline instead of data-driven
+
+**Modularity check:**
+- Can this code work without rendering? (game logic must)
+- Does this function do ONE thing? (not save + update + log + validate)
+- Could NPCs use this too? (if yes, make it generic, not player-only)
+
+**Before claiming complete, verify:**
+- [ ] Tests written (if persistent state touched)
+- [ ] Retry logic added (if critical operation can fail)
+- [ ] Logging added (if failure is critical or debugging needed)
+- [ ] No new globals (unless config/server state)
+- [ ] Data-driven, not hard-coded
+
 ### Running Client/Server
 Server must start first. Uses UDP port 1337 by default.
 

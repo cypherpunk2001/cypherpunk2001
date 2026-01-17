@@ -75,6 +75,20 @@ Test env overrides:
 - `MMORPG_NET_TEST_PORT` - UDP port (default 1337)
 - `MMORPG_NET_TEST_SECONDS` - UDP server duration in CI
 
+## Code Quality Standards
+
+**Every change must satisfy:**
+
+| Check | Rule |
+|-------|------|
+| **Tests** | Persistent state changes → write test. Visual/UI only → skip test. |
+| **Retry** | Tier-1 saves (death, level-up) → 5 retries. DB reads (login, load) → 3 retries. Auth messages → 3 retries. |
+| **Logging** | Critical failures → `warn`. State transitions → `log-verbose`. Hot loops → no logs. |
+| **Scope** | Config/server state → globals. Computation → locals. Game state → structs (not globals). |
+| **Design** | Data-driven (data files), not hard-coded. Generic (works for NPCs), not player-only. |
+
+**See [CLAUDE.md](CLAUDE.md) for detailed criteria and examples.**
+
 ## Deployment
 
 See [deploy/README.md](deploy/README.md) for:

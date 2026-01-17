@@ -1,3 +1,14 @@
+### Code Quality Standards (MANDATORY FOR ALL CHANGES)
+
+**Check EVERY change before claiming complete:**
+1. **Tests?** Persistent state → write test | Visual only → skip
+2. **Retry?** Tier-1 saves → 5 retries | DB reads → 3 retries | Auth messages → 3 retries | UI/snapshots → no retry
+3. **Logging?** Critical fails → `warn` | State changes → `log-verbose` | Hot loops → no logs
+4. **Scope?** Config/server state → globals | Computation → locals | Game state → structs (never `*global-players*`)
+5. **Data-driven?** Behavior in data files, not hard-coded | Generic (works for NPCs too), not player-only
+
+**If you skip any of these, explain why in commit message.**
+
 ### Building and Testing
 REMINDER:
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
@@ -59,9 +70,38 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-- I'm wondering about player connectivity, and general use of things like "retry" in the codebase. Sometimes in my life as a webdev certain ops were more professional if they used a simple retry mechanism. I know we use UDP already which is pretty forgiving, but if there is any sections of the codebase that might benefit from a simple retry once in a while, let's add that because it seems like it is a cheap way to make the game more professional.
+- [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
 
 ## Future Tasks / Roadmap
+
+### Retry Logic Implementation - COMPLETE ✓
+
+Comprehensive retry mechanisms implemented across all critical operations to improve reliability and prevent data loss during transient failures:
+
+**Retry Utilities (utils.lisp)**
+- `with-retry-exponential` - Exponential backoff for database operations (100ms → 500ms)
+- `with-retry-linear` - Linear delay for network operations (50ms fixed)
+- `exponential-backoff-delay` - Helper for calculating backoff timing
+
+**Priority 1 - CRITICAL (Data Loss Risk)**
+- ✅ Death saves (combat.lisp) - 5 retries, prevents logout-to-survive exploit
+- ✅ Level-up saves (progression.lisp) - 5 retries, prevents XP rollback
+- ✅ Login/auth database operations (net.lisp) - 3 retries for verify-credentials, get-character-id, load-player, set-character-id
+- ✅ Registration database operations (net.lisp) - 3 retries for create-account, set-character-id
+
+**Priority 2 - HIGH (UX Impact)**
+- ✅ Auth response UDP messages (net.lisp) - 3 retries with 50ms delay for all auth-ok/auth-fail messages
+- ✅ Server startup ID counter load (db.lisp) - 5 retries to prevent ID collisions on restart
+
+**Priority 3 - MEDIUM (Graceful Degradation)**
+- ✅ Zone transitions (movement.lisp) - 2 retries for zone file loading
+
+**Impact:**
+- Prevents data corruption during Redis connection hiccups
+- Eliminates logout-to-survive exploits
+- Reduces login failures from transient database issues
+- Improves player experience during network packet loss
+- Protects critical tier-1 saves (death, level-up) from failure
 
 ### Admin Commands - Tier B & C
 
@@ -83,11 +123,6 @@ See [docs/admin.md](docs/admin.md) for full spec.
 
 Networking polish that unlocks "MMO feel"
 After ownership, the next noticeable improvement is:
-Interpolation for remote entities (if not already)
-Basic rate limiting + sanity checks (intent frequency, movement bounds)
-Optional later: prediction for local player, but only after everything's stable
-
-----------------------------------
-- [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
-
-------------------------------
+- Interpolation for remote entities (if not already)
+- Basic rate limiting + sanity checks (intent frequency, movement bounds)
+- Optional later: prediction for local player, but only after everything's stable
