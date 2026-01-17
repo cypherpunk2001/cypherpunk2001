@@ -697,8 +697,11 @@
 (defun run-client (&key (host *net-default-host*)
                         (port *net-default-port*)
                         (max-seconds 0.0)
-                        (max-frames 0))
+                        (max-frames 0)
+                        (auto-login-username nil)
+                        (auto-login-password nil))
   ;; Run a client that connects to the UDP server and renders snapshots.
+  ;; If auto-login credentials are provided, attempts register first, then login on failure.
   (with-fatal-error-log ((format nil "Client runtime (~a:~d)" host port))
     (log-verbose "Client starting: connecting to ~a:~d" host port)
     (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
@@ -713,6 +716,8 @@
         (unwind-protect
              (loop :with elapsed = 0.0
                    :with frames = 0
+                   :with auto-login-attempted = nil
+                   :with auto-login-register-failed = nil
                    :until (or (raylib:window-should-close)
                               (ui-exit-requested ui)
                               (and (> max-seconds 0.0)
@@ -726,6 +731,15 @@
                          ;; Login screen phase
                          (cond
                            ((and (ui-login-active ui) (not (ui-auth-complete ui)))
+                            ;; Auto-login: Try register first, then login if taken
+                            (when (and auto-login-username auto-login-password
+                                      (not auto-login-attempted))
+                              (send-net-message socket
+                                               (list :type :register
+                                                     :username auto-login-username
+                                                     :password auto-login-password))
+                              (setf auto-login-attempted t)
+                              (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
                             ;; Update login input
                             (update-login-input ui)
                             ;; Check for login messages from server
@@ -742,6 +756,18 @@
                                    (log-verbose "Authentication successful"))
                                   (:auth-fail
                                    (let ((reason (getf message :reason)))
+                                     ;; Auto-login: if register failed because username taken, try login
+                                     (when (and auto-login-username auto-login-password
+                                               auto-login-attempted
+                                               (not auto-login-register-failed)
+                                               (eq reason :username-taken))
+                                       (send-net-message socket
+                                                        (list :type :login
+                                                              :username auto-login-username
+                                                              :password auto-login-password))
+                                       (setf auto-login-register-failed t)
+                                       (log-verbose "Auto-login: register failed, trying login for ~a"
+                                                   auto-login-username))
                                      (setf (ui-auth-error-message ui)
                                            (case reason
                                              (:bad-credentials "Invalid username or password")

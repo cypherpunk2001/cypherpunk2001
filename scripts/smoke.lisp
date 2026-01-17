@@ -72,7 +72,9 @@
                    :host "127.0.0.1"
                    :port port
                    :max-seconds seconds
-                   :max-frames frames)
+                   :max-frames frames
+                   :auto-login-username "test"
+                   :auto-login-password "test")
           (sb-thread:join-thread server-thread)))
       (format t "~&SMOKE: ok~%")
       (sb-ext:exit :code 0))
