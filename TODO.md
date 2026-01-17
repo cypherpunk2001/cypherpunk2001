@@ -1,11 +1,65 @@
 ## Current Tasks / TODO
 
-- [x] Add logout button to ESC menu (currently have to wait for timeout)
-----------------------------------
-- [x] Test Redis persistence end-to-end (login, save, logout, reload)
-- [x] Switch from memory-storage to redis-storage backend
-- [x] Verify Redis (Valkey) connectivity and data persistence
-- [x] Fix ID counter persistence (NPCs no longer waste persistent IDs)
+Tests (Strategic, Data-Integrity Focused)
+
+**Goal**: Small, focused test suite (~10 tests) for data integrity only. Skip rendering, input, AI - focus on "can't corrupt player progress."
+
+### Test Suite Plan (Option A)
+
+**File**: `src/tests/persistence-test.lisp`
+**Run**: `make test-persistence` (added to CI after `make ci`)
+**Effort**: 1-2 hours | **Value**: Catches 80% of corruption bugs
+
+#### Tests Implemented ✅
+
+1. **Persistence Round-Trip Tests**
+   - [x] Serialize then deserialize = identical data (HP, XP, position, inventory)
+   - [x] Ephemeral fields NOT saved to DB (attack-timer, click-marker-timer, hit-timer)
+   - [x] Durable fields ARE saved (HP, stats, inventory, equipment, position)
+   - [x] Inventory survives serialization
+   - [x] Equipment survives serialization
+
+2. **Schema Migration Tests** (Future)
+   - [ ] Old saves (v1) load correctly after migration to v2
+   - [ ] Migration applies defaults for new fields
+   - [ ] Multiple version jumps work (v1 → v3 skipping v2)
+
+3. **Invariant Tests**
+   - [x] HP never exceeds max HP
+   - [x] Inventory count never exceeds max slots
+   - [ ] Gold never goes negative (future: when gold system added)
+   - [ ] Zone transitions preserve player state (future)
+
+4. **Storage Abstraction Tests**
+   - [x] Memory backend save/load/delete works correctly
+   - [ ] Redis backend equivalence (future: when Redis stabilizes)
+
+### When to Write Tests (Decision Criteria)
+
+**Write tests for:**
+- ✅ **Data corruption risk**: Serialization, migrations, database writes
+- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
+- ✅ **Backend equivalence**: Storage abstraction must work identically across backends
+- ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
+
+**Skip tests for:**
+- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
+- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
+- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
+- ❌ **Helper functions**: Utils that don't touch persistent state
+
+**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
+
+### Integration
+
+- [x] Create `src/tests/persistence-test.lisp` with ~10 tests (9 tests implemented)
+- [x] Add `make test-persistence` target to Makefile
+- [x] Add to CI: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`
+- [x] **Update CLAUDE.md** with testing requirements:
+  - How to run tests (make test-persistence)
+  - When to write new tests (decision criteria above)
+  - Requirement: All tests must pass before claiming task complete
+- [x] Create `docs/tests.md` documentation
 
 
 ## Future Tasks / Roadmap
@@ -18,29 +72,34 @@ Optional later: prediction for local player, but only after everything’s stabl
 
 ----------------------------------
 
-confirm with opus the exacts of this type of thing, i might not be understanding well but i want to work on a plan similar to below but together with your feedback as you understand what we already have better than I do. So from what follows, revise and correct it please, stating, 1. what we have already and 2. where we need to get to. Remember: Keep it simple stupid.
-
 Make persistence boring and safe (still simple)
-You don’t need enterprise DB work, but you do want “can’t corrupt progress easily”:
-Versioned save schema + migrations (even if it’s just :version 1)
-Atomic-ish saves (write new blob then swap key / keep last-good)
-Periodic snapshot backup (copy player blobs to backup:<timestamp>:<id> or export dump)
-Admin/dev commands: “wipe character”, “teleport to spawn”, “grant item”, “print save”
+
+### What We Already Have ✓
+- **Versioned save schema + migrations**: `*save-format-version*` and `*player-schema-version*` in save.lisp
+- **Migration system**: `migrate-player-v1->v2`, `*player-migrations*` list, automatic migration on load
+- **Storage abstraction**: db.lisp provides backend-agnostic API (memory/redis via env var)
+- **Three-tier persistence**: Tier-1 immediate (critical), Tier-2 batched (30s), Tier-3 logout
+
+### What We Need ❌
+
+#### Phase 1: Atomic Saves (Safety) - HIGH PRIORITY
+- [ ] Implement write-new-then-rename pattern in db.lisp
+- [ ] Replace direct Redis SET with temp key + atomic RENAME
+- **Impact**: Crash during save won't corrupt existing data
+
+#### Phase 2: Backup Snapshots (Recovery) - MEDIUM PRIORITY
+- [ ] Add periodic backup function (every 5 minutes)
+- [ ] Copy player blobs to timestamped keys: `backup:<timestamp>:<id>`
+- **Impact**: Can restore from backup if player data corrupted
+
+#### Phase 3: Admin Commands (Testing) - LOW PRIORITY
+- [ ] Add REPL helpers: `admin-wipe-character`, `admin-grant-item`, `admin-print-save`
+- **Impact**: Easy debugging/testing without manual Redis commands
+
+**Recommendation**: Start with Phase 1 only. Atomic saves = biggest safety win for minimal code.
 
 ----------------------------------
 
-Tests (only where they actually help)
-Personally I do not like TDD or unit tests at all and that is why we dont have unit tests in our codebase.
-But as you are the coder (opus|claude) I am wondering if you would find it helpful to add any tests, but only where they may actually help.
-My primary concerns as the owner of the project is:
-database - no corruption, schemas are solid and aligning with our code, things that should be saved are saved, things that should not be saved should not be saved.
-things like that. things that keep the players happy.
-If there's other things though, like, maybe basic things that we know about the code:
-this should always be true
-or
-this should always be false
-if we can test for those and ensure them, we might good codebase coverage?
-I mean if you want to go ham and create a 99% covered codebase you're welcome to do that too. I really dont care, they're your tests and it's your life. Do they help you? Do they hurt you? Do you want them? Chime in. If you want to do this, they make up a plan, otherwise we can get on to doing more fun stuff, like making the game more fun. Let me know.
 
 
 

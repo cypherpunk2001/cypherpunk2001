@@ -15,13 +15,82 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
 
 ```bash
-make checkparens    # Verify balanced parentheses in all .lisp files
-make ci             # Cold compile + UDP handshake test (no GPU needed)
-make checkdocs      # Verify docs/foo.md exists for each src/foo.lisp
-make smoke          # Full client/server smoke test with window (2s default)
+make checkparens        # Verify balanced parentheses in all .lisp files
+make ci                 # Cold compile + UDP handshake test (no GPU needed)
+make test-persistence   # Data integrity tests (serialization, migrations, invariants)
+make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
+make smoke              # Full client/server smoke test with window (2s default)
 ```
 
-**Never skip tests.** If you implement a feature but don't run all four test targets, the work is incomplete.
+**Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
+
+### When to Write Tests
+
+**Write tests for:**
+- ✅ **Data corruption risk**: Serialization, migrations, database writes
+- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
+- ✅ **Backend equivalence**: Storage abstraction must work identically across backends
+- ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
+
+**Skip tests for:**
+- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
+- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
+- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
+- ❌ **Helper functions**: Utils that don't touch persistent state
+
+**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
+
+**Test location**: `src/tests/persistence-test.lisp` for data integrity tests.
+
+### Proactive Test Writing Requirements (For Claude)
+
+**CRITICAL**: When implementing new features, you MUST write accompanying tests if ANY of these conditions are met:
+
+**Auto-write tests when:**
+1. **Adding persistent fields to player/NPC/world structs**
+   - Write round-trip serialization test
+   - Verify field classified as durable or ephemeral
+   - Test that durable fields survive save/load, ephemeral fields don't
+
+2. **Implementing schema migrations**
+   - Write migration test with old-version plist
+   - Verify defaults applied correctly for new fields
+   - Test migration chain (v1→v2→v3)
+
+3. **Adding new persistence tiers or save mechanisms**
+   - Write test comparing behavior to existing tier
+   - Verify atomic/non-corrupt behavior
+   - Test both storage backends (memory + Redis)
+
+4. **Implementing economy/progression systems**
+   - Write invariant tests (currency ≥ 0, XP never decreases)
+   - Test edge cases (overflow, underflow, max values)
+   - Verify transaction atomicity
+
+5. **Adding inventory/equipment/trade systems**
+   - Write tests for duplication exploits
+   - Test item loss scenarios
+   - Verify count limits enforced
+
+6. **Modifying zone transition or respawn logic**
+   - Test player state preserved across transitions
+   - Verify no item/progress loss on death/respawn
+   - Test edge case: transition during combat/trade
+
+**How to implement:**
+- Add test to `src/tests/persistence-test.lisp` BEFORE claiming feature complete
+- Run `make test-persistence` to verify test passes
+- Update this list if you discover new test-worthy patterns
+
+**When NOT to auto-write tests:**
+- Rendering changes (colors, positions, animations)
+- UI layout adjustments
+- Sound/music changes
+- AI behavior tuning (aggro range, wander patterns)
+- Performance optimizations that don't change behavior
+- Refactoring that doesn't touch persistence
+
+**If uncertain:** Ask yourself: "If this breaks, will players lose progress or items?" If yes → write a test.
 
 ### Running Client/Server
 Server must start first. Uses UDP port 1337 by default.
@@ -302,9 +371,10 @@ Key design docs:
 
 ## Important Reminders
 
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL four test targets in order: `make checkparens && make ci && make checkdocs && make smoke`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
+- **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
 - **Docs must be complete**: `make checkdocs` verifies every src file has matching documentation
 - **Smoke test must work**: `make smoke` tests actual client/server with graphics
 - **Storage abstraction is mandatory**: Never call Redis/database directly from game logic
