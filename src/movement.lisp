@@ -796,7 +796,14 @@
          (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
       (cache-zone-npcs world current-zone-id current-npcs carry-table)
-      (let* ((zone (load-zone target-path))
+      (let* ((zone (with-retry-exponential (loaded (lambda () (load-zone target-path))
+                                             :max-retries 2
+                                             :initial-delay 100
+                                             :max-delay 200
+                                             :on-final-fail (lambda (e)
+                                                              (warn "Zone transition failed: could not load zone ~a after retries: ~a"
+                                                                    target-zone-id e)))
+                     loaded))
              (spawn-edge (or (getf exit :spawn-edge)
                              (getf exit :to-edge)
                              (edge-opposite edge)))

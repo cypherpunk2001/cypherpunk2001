@@ -138,3 +138,101 @@
           (+ (* x 73856093)
              (* y 19349663)
              (* seed 83492791))))
+
+;;; Retry utilities for robust error handling
+
+(defun exponential-backoff-delay (attempt initial-delay max-delay)
+  "Calculate exponential backoff delay in milliseconds for ATTEMPT (0-indexed).
+   INITIAL-DELAY is the base delay, MAX-DELAY caps the growth."
+  (let ((delay (* initial-delay (expt 2 attempt))))
+    (min delay max-delay)))
+
+(defmacro with-retry-exponential ((result-var fn &key
+                                               (max-retries 3)
+                                               (initial-delay 100)
+                                               (max-delay 1000)
+                                               (on-retry nil)
+                                               (on-final-fail nil))
+                                  &body body)
+  "Execute FN with exponential backoff retry logic.
+   - RESULT-VAR: Symbol to bind the result of FN
+   - FN: Lambda or function to execute
+   - MAX-RETRIES: Maximum number of retry attempts (default 3)
+   - INITIAL-DELAY: Initial delay in milliseconds (default 100ms)
+   - MAX-DELAY: Maximum delay in milliseconds (default 1000ms)
+   - ON-RETRY: Lambda called on each retry with (attempt error)
+   - ON-FINAL-FAIL: Lambda called when all retries exhausted with (error)
+   - BODY: Forms to execute after successful call (result-var bound to return value)
+
+   Returns the result of FN on success, or NIL after all retries fail."
+  (let ((attempt-var (gensym "ATTEMPT"))
+        (error-var (gensym "ERROR"))
+        (delay-var (gensym "DELAY"))
+        (success-var (gensym "SUCCESS")))
+    `(let ((,result-var nil)
+           (,success-var nil))
+       (dotimes (,attempt-var (1+ ,max-retries))
+         (handler-case
+             (progn
+               (setf ,result-var (funcall ,fn))
+               (setf ,success-var t)
+               (return))
+           (error (,error-var)
+             (if (< ,attempt-var ,max-retries)
+                 (let ((,delay-var (exponential-backoff-delay
+                                    ,attempt-var ,initial-delay ,max-delay)))
+                   (log-verbose "Retry attempt ~d/~d after ~dms delay: ~a"
+                                (1+ ,attempt-var) ,max-retries ,delay-var ,error-var)
+                   ,@(when on-retry
+                       `((funcall ,on-retry ,attempt-var ,error-var)))
+                   (sleep (/ ,delay-var 1000.0)))
+                 (progn
+                   (warn "All ~d retry attempts exhausted: ~a" ,max-retries ,error-var)
+                   ,@(when on-final-fail
+                       `((funcall ,on-final-fail ,error-var))))))))
+       (when ,success-var
+         ,@body)
+       ,result-var)))
+
+(defmacro with-retry-linear ((result-var fn &key
+                                          (max-retries 3)
+                                          (delay 50)
+                                          (on-retry nil)
+                                          (on-final-fail nil))
+                             &body body)
+  "Execute FN with linear delay retry logic (for network operations).
+   - RESULT-VAR: Symbol to bind the result of FN
+   - FN: Lambda or function to execute
+   - MAX-RETRIES: Maximum number of retry attempts (default 3)
+   - DELAY: Fixed delay in milliseconds between retries (default 50ms)
+   - ON-RETRY: Lambda called on each retry with (attempt error)
+   - ON-FINAL-FAIL: Lambda called when all retries exhausted with (error)
+   - BODY: Forms to execute after successful call (result-var bound to return value)
+
+   Returns the result of FN on success, or NIL after all retries fail."
+  (let ((attempt-var (gensym "ATTEMPT"))
+        (error-var (gensym "ERROR"))
+        (success-var (gensym "SUCCESS")))
+    `(let ((,result-var nil)
+           (,success-var nil))
+       (dotimes (,attempt-var (1+ ,max-retries))
+         (handler-case
+             (progn
+               (setf ,result-var (funcall ,fn))
+               (setf ,success-var t)
+               (return))
+           (error (,error-var)
+             (if (< ,attempt-var ,max-retries)
+                 (progn
+                   (log-verbose "Retry attempt ~d/~d after ~dms delay: ~a"
+                                (1+ ,attempt-var) ,max-retries ,delay ,error-var)
+                   ,@(when on-retry
+                       `((funcall ,on-retry ,attempt-var ,error-var)))
+                   (sleep (/ ,delay 1000.0)))
+                 (progn
+                   (warn "All ~d retry attempts exhausted: ~a" ,max-retries ,error-var)
+                   ,@(when on-final-fail
+                       `((funcall ,on-final-fail ,error-var))))))))
+       (when ,success-var
+         ,@body)
+       ,result-var)))

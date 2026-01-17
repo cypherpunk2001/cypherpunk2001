@@ -250,8 +250,15 @@
   (storage-save *storage* (server-id-counter-key) counter-value))
 
 (defun db-load-id-counter ()
-  "Load the global ID counter from storage. Returns 0 if not found."
-  (let ((data (storage-load *storage* (server-id-counter-key))))
+  "Load the global ID counter from storage with retry (critical for server startup).
+   Returns 0 if not found or all retries exhausted."
+  (let ((data (with-retry-exponential (loaded (lambda () (storage-load *storage* (server-id-counter-key)))
+                                        :max-retries 5
+                                        :initial-delay 200
+                                        :max-delay 2000
+                                        :on-final-fail (lambda (e)
+                                                         (warn "CRITICAL: Failed to load ID counter after all retries: ~a. Starting from 0 may cause ID collisions!" e)))
+                loaded)))
     (if (and data (integerp data))
         data
         0)))

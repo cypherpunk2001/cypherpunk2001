@@ -52,6 +52,14 @@
       (log-verbose "Failed to send message to ~a:~d: ~a" host port e)
       nil)))
 
+(defun send-net-message-with-retry (socket message &key host port (max-retries 3) (delay 50))
+  "Send critical MESSAGE with linear retry on failure (for auth responses, etc).
+   Returns T on success, NIL after all retries exhausted."
+  (with-retry-linear (sent (lambda () (send-net-message socket message :host host :port port))
+                       :max-retries max-retries
+                       :delay delay)
+    sent))
+
 (defun get-nproc ()
   ;; Return number of CPU cores, or 1 if unable to determine.
   #+sbcl
@@ -411,17 +419,28 @@
         (password (getf message :password)))
     (cond
       ((not (and username password))
-       (send-net-message socket
-                        (list :type :auth-fail :reason :missing-credentials)
-                        :host host :port port)
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :missing-credentials)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
        (log-verbose "Registration failed from ~a:~d - missing credentials" host port))
-      ((db-create-account username password)
+      ((with-retry-exponential (created (lambda () (db-create-account username password))
+                                 :max-retries 3
+                                 :initial-delay 50
+                                 :max-delay 200)
+         created)
        ;; Account created successfully - spawn new character
        (let* ((world (game-world game))
               (player (spawn-player-at-world world (game-id-source game)))
               (player-id (player-id player)))
-         ;; Link account to new character
-         (db-set-character-id username player-id)
+         ;; Link account to new character (with retry)
+         (with-retry-exponential (set-result (lambda () (db-set-character-id username player-id))
+                                  :max-retries 3
+                                  :initial-delay 50
+                                  :max-delay 200
+                                  :on-final-fail (lambda (e)
+                                                   (warn "Failed to set character-id for ~a: ~a" username e))))
          ;; Add player to game
          (add-player-to-game game player)
          ;; Mark client as authenticated
@@ -434,17 +453,21 @@
            (register-player-session player :zone-id zone-id))
          ;; Track active session
          (setf (gethash (string-downcase username) *active-sessions*) client)
-         ;; Send success response
-         (send-net-message socket
-                          (list :type :auth-ok :player-id player-id)
-                          :host host :port port)
+         ;; Send success response (with retry - critical auth message)
+         (send-net-message-with-retry socket
+                                      (list :type :auth-ok :player-id player-id)
+                                      :host host :port port
+                                      :max-retries 3
+                                      :delay 50)
          (log-verbose "Registration successful: ~a (~a:~d) -> player-id=~d"
                      username host port player-id)))
       (t
        ;; Username already exists
-       (send-net-message socket
-                        (list :type :auth-fail :reason :username-taken)
-                        :host host :port port)
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :username-taken)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
        (log-verbose "Registration failed from ~a:~d - username ~a already taken"
                    host port username)))))
 
@@ -454,27 +477,41 @@
         (password (getf message :password)))
     (cond
       ((not (and username password))
-       (send-net-message socket
-                        (list :type :auth-fail :reason :missing-credentials)
-                        :host host :port port)
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :missing-credentials)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
        (log-verbose "Login failed from ~a:~d - missing credentials" host port))
       ;; Check if already logged in
       ((gethash (string-downcase username) *active-sessions*)
-       (send-net-message socket
-                        (list :type :auth-fail :reason :already-logged-in)
-                        :host host :port port)
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :already-logged-in)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
        (log-verbose "Login failed from ~a:~d - account ~a already logged in"
                    host port username))
-      ;; Verify credentials
-      ((not (db-verify-credentials username password))
-       (send-net-message socket
-                        (list :type :auth-fail :reason :bad-credentials)
-                        :host host :port port)
+      ;; Verify credentials (with retry for transient DB failures)
+      ((not (with-retry-exponential (verified (lambda () (db-verify-credentials username password))
+                                      :max-retries 3
+                                      :initial-delay 50
+                                      :max-delay 200)
+              verified))
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :bad-credentials)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
        (log-verbose "Login failed from ~a:~d - bad credentials for ~a"
                    host port username))
       (t
        ;; Login successful
-       (let* ((character-id (db-get-character-id username))
+       (let* ((character-id (with-retry-exponential (id (lambda () (db-get-character-id username))
+                                                      :max-retries 3
+                                                      :initial-delay 50
+                                                      :max-delay 200)
+                              id))
               (world (game-world game))
               (zone (world-zone world))
               (zone-id (and zone (zone-id zone)))
@@ -482,7 +519,11 @@
          (cond
            ;; Existing character - load from DB
            (character-id
-            (setf player (db-load-player character-id))
+            (setf player (with-retry-exponential (loaded (lambda () (db-load-player character-id))
+                                                   :max-retries 3
+                                                   :initial-delay 100
+                                                   :max-delay 300)
+                           loaded))
             (when player
               ;; Remove any existing player with same ID (from stale session)
               (let ((existing (find (player-id player) (game-players game)
@@ -498,7 +539,12 @@
            ;; No character yet - spawn new one (shouldn't happen after registration)
            (t
             (setf player (spawn-player-at-world world (game-id-source game)))
-            (db-set-character-id username (player-id player))
+            (with-retry-exponential (set-result (lambda () (db-set-character-id username (player-id player)))
+                                     :max-retries 3
+                                     :initial-delay 50
+                                     :max-delay 200
+                                     :on-final-fail (lambda (e)
+                                                      (warn "Failed to set character-id for ~a: ~a" username e))))
             (add-player-to-game game player)
             (log-verbose "Created new character ~d for account ~a"
                         (player-id player) username)))
@@ -513,10 +559,12 @@
            (register-player-session player :zone-id zone-id)
            ;; Track active session
            (setf (gethash (string-downcase username) *active-sessions*) client)
-           ;; Send success response
-           (send-net-message socket
-                            (list :type :auth-ok :player-id (player-id player))
-                            :host host :port port)
+           ;; Send success response (with retry - critical auth message)
+           (send-net-message-with-retry socket
+                                        (list :type :auth-ok :player-id (player-id player))
+                                        :host host :port port
+                                        :max-retries 3
+                                        :delay 50)
            (log-verbose "Login successful: ~a (~a:~d) -> player-id=~d"
                        username host port (player-id player))))))))
 

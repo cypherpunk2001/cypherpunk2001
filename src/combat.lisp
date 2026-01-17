@@ -37,8 +37,16 @@
     (setf (player-hp combatant) new-hp)
     ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
     ;; to prevent logout-to-survive exploit
+    ;; Use retry with exponential backoff (5 retries: 100ms, 200ms, 400ms, 500ms, 500ms)
     (when (and (= new-hp 0) (> old-hp 0))
-      (db-save-player-immediate combatant))
+      (with-retry-exponential (saved (lambda () (db-save-player-immediate combatant))
+                                :max-retries 5
+                                :initial-delay 100
+                                :max-delay 500
+                                :on-final-fail (lambda (e)
+                                                 (warn "CRITICAL: Death save failed for player ~d after all retries: ~a"
+                                                       (player-id combatant) e)
+                                                 (mark-player-dirty (player-id combatant))))))
     ;; Tier-2 write: HP changes should be marked dirty for batched saves
     (when (/= hp new-hp)
       (mark-player-dirty (player-id combatant)))))
