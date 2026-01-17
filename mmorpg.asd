@@ -1,6 +1,6 @@
 (asdf:defsystem #:mmorpg
   :description "Minimal Common Lisp + raylib proof"
-  :depends-on (#:claw-raylib #:usocket)
+  :depends-on (#:claw-raylib #:usocket #:cl-redis)
   :serial t
   :components ((:file "src/package")
                (:file "src/config")
@@ -10,6 +10,7 @@
                (:file "src/types")
                (:file "src/progression")
                (:file "src/save")
+               (:file "src/db")
                (:file "src/zone")
                (:file "src/world-graph")
                (:file "src/movement")

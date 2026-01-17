@@ -7,6 +7,54 @@
 - claw-raylib (prebuild branch recommended)
 - redis (valkey)
 
+## Redis notes
+
+Redis defaults:
+  - ✅ appendfsync everysec - already set
+  - ✅ auto-aof-rewrite-percentage 100 - already set
+  - ✅ auto-aof-rewrite-min-size 64mb - already set
+  - ✅ dir /var/lib/valkey/ - data directory configured
+  - ✅ stop-writes-on-bgsave-error yes - safety enabled
+Missing:
+  - ❌ appendonly no - Needs to be yes (critical for durability)
+  - ❌ No save directives - Needs RDB snapshots for backups
+
+Enable missing:
+
+```bash
+sudo sed -i 's/^appendonly no$/appendonly yes/' /etc/valkey/valkey.conf
+echo -e '\n# RDB snapshot settings for MMORPG persistence\nsave 300 1\nsave 60 1000' | sudo tee -a /etc/valkey/valkey.conf
+sudo systemctl restart valkey
+systemctl status valkey
+```
+
+✅ AOF Enabled:
+appendonly yes
+
+✅ RDB Snapshots Configured:
+save 300 1
+save 60 1000
+
+✅ Valkey Started Successfully with Persistence:
+The key lines in the status show AOF is working:
+Creating AOF base file appendonly.aof.1.base.rdb on server start
+Creating AOF incr file appendonly.aof.1.incr.aof on server start
+Ready to accept connections tcp
+
+Your Valkey is now configured for maximum durability with:
+- AOF: Logs every write operation (max 1 second data loss)
+- RDB: Snapshots every 5 minutes (if anything changed) or every 1 minute (if 1000+ changes)
+
+
+Now you can change the game server to use Redis instead of memory storage:
+
+Edit src/net.lisp line 391, change:
+(init-storage :backend :memory)
+to:
+(init-storage :backend :redis :host "127.0.0.1" :port 6379)
+
+Then test it with verbose logging enabled to see the persistence in action!
+
 ## Setup
 - Follow the claw-raylib build instructions; on the prebuild branch, skip steps 1-2 and start at step 3.
 - Register the repo with Quicklisp once per session.

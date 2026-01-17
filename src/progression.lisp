@@ -213,7 +213,11 @@
             (award-hitpoints-xp player hitpoints-xp)
           (when (and old new (> new old))
             (push (cons :hitpoints new) level-ups))))
-      (mark-player-hud-stats-dirty player))
+      (mark-player-hud-stats-dirty player)
+      ;; Tier-1 write: level-ups must be saved immediately to prevent
+      ;; XP rollback past level boundary on crash/logout
+      (when level-ups
+        (db-save-player-immediate player)))
     (values attack-xp strength-xp defense-xp hitpoints-xp
             (nreverse level-ups))))
 

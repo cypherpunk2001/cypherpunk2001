@@ -31,8 +31,14 @@
 
 (defmethod combatant-apply-hit ((combatant player) &optional amount)
   (let* ((damage (if amount amount 1))
-         (hp (- (player-hp combatant) damage)))
-    (setf (player-hp combatant) (max 0 hp))))
+         (hp (- (player-hp combatant) damage))
+         (new-hp (max 0 hp)))
+    (setf (player-hp combatant) new-hp)
+    ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
+    ;; to prevent logout-to-survive exploit
+    (when (and (= new-hp 0) (> hp 0))
+      (db-save-player-immediate combatant)
+      (mark-player-dirty (player-id combatant)))))
 
 (defmethod combatant-apply-hit ((combatant npc) &optional amount)
   (let* ((damage (if amount amount 1))

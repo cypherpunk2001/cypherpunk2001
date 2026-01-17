@@ -388,6 +388,8 @@
   ;;   - Recommended: (get-nproc) on multi-core machines
   ;;   - Safe: Only parallelizes network I/O, simulation remains serial
   (with-fatal-error-log ((format nil "Server runtime (~a:~d)" host port))
+    ;; Initialize storage backend (memory-storage for now, redis-storage later)
+    (init-storage :backend :memory)
     (let* ((socket (usocket:socket-connect nil nil
                                           :protocol :datagram
                                           :local-host host
@@ -396,7 +398,8 @@
            (game (make-server-game))
            (clients nil)
            (stop-flag nil)
-           (stop-reason nil))
+           (stop-reason nil)
+           (last-flush-time 0.0))
       (format t "~&SERVER: listening on ~a:~d (worker-threads=~d)~%" host port worker-threads)
       (log-verbose "Server config: tick=~,3fs buffer=~d workers=~d"
                    *sim-tick-seconds* *net-buffer-size* worker-threads)
@@ -454,6 +457,10 @@
                              (setf accumulator new-acc)
                              (dotimes (_ transitions)
                                (declare (ignore _)))))
+                         ;; 3b. Periodic batch flush (tier-2 writes every ~30s)
+                         (when (>= (- elapsed last-flush-time) *batch-flush-interval*)
+                           (flush-dirty-players)
+                           (setf last-flush-time elapsed))
                          ;; 4. Send snapshots to all clients (serialize once, send N times)
                          ;; OPTIMIZATION: Serialization happens once and is shared across clients.
                          ;; For 500 clients this is much better than 500 serializations.
@@ -476,6 +483,8 @@
         (when stop-reason
           (format t "~&SERVER: shutdown requested (~a).~%" stop-reason)
           (finish-output))
+        ;; Graceful shutdown: flush all dirty players and close storage
+        (db-shutdown-flush)
         (usocket:socket-close socket)))))
 
 (defun run-client (&key (host *net-default-host*)

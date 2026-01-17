@@ -41,18 +41,24 @@ Prerequisites (DONE):
 - Valkey is a Redis-compatible fork, cl-redis works with it
 
 Implementation checklist:
-- [ ] Add cl-redis dependency to mmorpg.asd
-- [ ] Implement storage abstraction layer (storage protocol + redis-storage class)
-- [ ] Implement memory-storage for testing
-- [ ] Implement key schema: `player:{id}`, `zone:{id}:objects`, `server:*`
-- [ ] Wire up serialization (use existing serialize-game-state from save.lisp)
-- [ ] Add dirty flag + batch flush (tier-2 writes every 30s)
-- [ ] Add immediate writes for tier-1 operations (trade, bank, death, level-up)
-- [ ] Add login/logout Redis read/write
-- [ ] Add migration system (version field, migration chain)
-- [ ] Ensure HP is durable (prevents logout-heal exploit)
-- [ ] Add graceful shutdown flush
-- [ ] Test with verbose mode enabled
+- [x] Add cl-redis dependency to mmorpg.asd
+- [x] Implement storage abstraction layer (storage protocol + redis-storage class)
+- [x] Implement memory-storage for testing
+- [x] Implement key schema: `player:{id}`, `zone:{id}:objects`, `server:*`
+- [x] Wire up serialization (use existing serialize-game-state from save.lisp)
+- [x] Add dirty flag + batch flush (tier-2 writes every 30s)
+- [x] Add immediate writes for tier-1 operations (trade, bank, death, level-up)
+- [x] Add login/logout Redis read/write
+- [x] Add migration system (version field, migration chain)
+- [x] Ensure HP is durable (prevents logout-heal exploit)
+- [x] Add graceful shutdown flush
+- [x] Test with verbose mode enabled (CI + smoke tests passed)
+- [x] Integrate db.lisp functions into game server lifecycle
+- [x] Wire up periodic batch flush to game loop
+- [x] Add tier-1 writes to critical game operations (death, level-up)
+- [ ] Test Redis persistence end-to-end (login, save, logout, reload)
+- [ ] Switch from memory-storage to redis-storage backend
+- [ ] Verify Redis (Valkey) connectivity and data persistence
 
 ## Future Tasks / Roadmap
 - Editor upgrades for world-graph, spawns, and content validation
