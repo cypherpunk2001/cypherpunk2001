@@ -69,10 +69,43 @@ Client/Server Preparation
 - Ready to become snapshot format for future client/server split
 - Version tag enables seamless protocol migrations
 
+Relationship to db.md (Database Architecture)
+-----------------------------------------------
+**db.md is the authoritative long-term persistence spec.** This file (save.md) documents the serialization layer.
+
+How they work together:
+- **save.lisp** = Serialization (what gets saved, plist format, versioning)
+- **db.md** = Storage backend (where it goes: Redis, file, Postgres)
+
+```
+Game State -> serialize-game-state -> plist -> storage-save -> Redis/File/etc.
+                 (save.lisp)                     (db.lisp)
+```
+
+The serialization functions (`serialize-game-state`, `deserialize-game-state`) remain unchanged regardless of storage backend. The storage abstraction layer (defined in db.md) handles the actual persistence.
+
+Key db.md concepts that affect this code:
+- **Durable vs Ephemeral**: save.lisp serializes durable state only
+- **Write Tiers**: serialize-game-state is used for both tier-2 batched writes and tier-3 logout snapshots
+- **Versioned format**: Already implemented here, migrations defined per db.md spec
+- **HP is durable**: Current HP must be serialized (prevents logout-heal exploit)
+
+When implementing the storage layer:
+1. Keep serialization in save.lisp (serialize/deserialize functions)
+2. Add storage abstraction in db.lisp (storage-load/storage-save protocol)
+3. Game code calls db.lisp, which uses save.lisp for format conversion
+
 Future extensions
+-----------------
+Serialization improvements:
 - Add world tick counter for deterministic replay
 - Add timestamp for save file sorting
 - Add player-provided save name/description
 - Compress large save files
-- Support multiple save slots
 - Add checksum for corruption detection
+
+Storage improvements (see db.md for full spec):
+- Redis backend with RDB+AOF persistence
+- Tiered write system (immediate vs batched)
+- Migration-on-login for schema changes
+- Postgres cold storage for scale

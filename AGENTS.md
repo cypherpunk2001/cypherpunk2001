@@ -30,12 +30,9 @@ mmorpg/
 
 ## Current Tasks / TODO
 
-- Ensure that when (defparameter *verbose* nil) ;; General verbose mode: logs network events, state changes, and diagnostic info. is t that we are obtaining as much as is possible (sanely) to stdout for future debugging and troubleshooting purposes.
 
-- Similarly, we need to make sure that we have all possible exceptions covered, and determine as much as possible what should be a fatal exception vs what should not be a fatal exception, lets just do our best to follow best programming practices and cover our exceptions code-base-wide like real pros.
 
 ## Future Tasks / Roadmap
-- Persistent world storage and migrations
 - Editor upgrades for world-graph, spawns, and content validation
 - Asset pipeline for animation sets, atlases, and build-time validation
 
@@ -59,9 +56,131 @@ Before outputting code, ensure:
 - reusable beyond a single entity
 - logic works without rendering
 - behavior is not special-cased
-- future client/server split wouldn’t break it
+- future client/server split wouldn't break it
+- any new state is classified as durable or ephemeral (see Persistence Guidelines)
+- no direct database calls from game logic (use storage abstraction)
 
 If unsure, refactor toward reuse.
+
+---
+
+## Persistence Guidelines (see docs/db.md and docs/save.md)
+
+All code that touches persistent state MUST follow these principles.
+
+### Storage Abstraction (MANDATORY)
+
+**Game code MUST NOT know what database it's using.**
+
+```lisp
+;; WRONG - game code calling Redis directly
+(redis:with-connection ()
+  (red:set "player:123" data))
+
+;; CORRECT - game code uses abstract interface
+(db-save-player player)
+(storage-save *storage* key data)
+```
+
+When implementing persistence features:
+- Use the storage protocol defined in db.md (`storage-load`, `storage-save`, etc.)
+- Never import or call cl-redis (or any DB client) from game logic files
+- All DB access goes through `src/db.lisp` (or equivalent abstraction layer)
+
+### Data Classification (MANDATORY)
+
+Every piece of state MUST be explicitly classified as **durable** or **ephemeral**.
+
+**Durable (MUST persist):**
+- Progression: XP, levels, skill levels, combat stats
+- Health: Current HP (prevents logout-heal exploit)
+- Inventory: Items, equipment, stack counts
+- Currency: Gold, bank contents
+- Position: Zone ID, X/Y coordinates
+- Quests, Achievements, Social data, Settings
+
+**Ephemeral (OK to lose):**
+- Temporary buffs, debuffs, cooldowns
+- Current attack/follow target
+- AI state, pathfinding cache
+- Animation frame, visual effects
+- Party invites, trade windows in progress
+
+**When adding new features:**
+1. Identify all new state fields
+2. Classify each as durable or ephemeral
+3. Add durable fields to serialization
+4. Document in `*durable-player-fields*` or `*ephemeral-player-fields*`
+
+### Write Tiers (MANDATORY)
+
+Not all writes are equal. Use the correct tier:
+
+| Tier | When | Examples |
+|------|------|----------|
+| **Tier 1: Immediate** | Before ACK to client | Trade, bank, death, level-up, item destruction |
+| **Tier 2: Batched** | Every 30s checkpoint | XP gains, HP changes, position, quest progress |
+| **Tier 3: Logout** | Session end | Final snapshot, cleanup |
+
+**Rule:** If a player would be upset losing it, and it's irreversible, it's Tier 1.
+
+### Versioned Serialization (MANDATORY)
+
+All persistent records MUST include a version number:
+
+```lisp
+(:version 1
+ :player-id 12345
+ :hp 85
+ ...)
+```
+
+**When changing the schema:**
+1. Increment `*player-schema-version*` (or equivalent)
+2. Write a migration function `migrate-player-vN->vN+1`
+3. Add to `*player-migrations*` list
+4. NEVER delete old migration code (players skip versions)
+5. Test migration on copy of production data
+
+### Security (MANDATORY)
+
+**Untrusted client principle:**
+```lisp
+;; WRONG - persisting client-provided values
+(setf (player-gold player) (intent-claimed-gold intent))
+
+;; CORRECT - server calculates, then persists
+(let ((sale-price (calculate-sale-value item)))
+  (incf (player-gold player) sale-price))
+```
+
+**Serialization safety:**
+```lisp
+;; ALWAYS use *read-eval* nil when reading persisted data
+(let ((*read-eval* nil))
+  (read-from-string stored-data))
+```
+
+### Exploit Prevention
+
+**HP must be durable** to prevent logout-heal:
+- Player at 10 HP cannot logout and return at full health
+- HP changes are Tier 2 (batched)
+- Death (HP = 0) is Tier 1 (immediate)
+
+**Combat disconnect:**
+- If player disconnects during combat, persist combat state
+- On reconnect, resume where they left off (no free escape)
+
+### Agent Self-Check for Persistence
+
+Before outputting code that touches game state, verify:
+- [ ] Is this state durable or ephemeral? (classified explicitly)
+- [ ] Am I using the storage abstraction? (no direct DB calls)
+- [ ] What write tier is appropriate? (Tier 1/2/3)
+- [ ] Does the serialization format have a version?
+- [ ] Am I trusting client data? (never persist client claims)
+- [ ] Am I using `*read-eval* nil` when reading? (always)
 
 ---
 
