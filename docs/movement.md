@@ -67,6 +67,11 @@ Key functions
 - `update_running_state` - Update stamina and return speed multiplier.
 - `player-intent-direction` - Return intended movement direction for edge transitions.
 
+**Player Unstuck System:**
+- `player-is-stuck-p` - Return T if player cannot move in any cardinal direction.
+- `get-zone-safe-spawn` - Return random position within zone bounds.
+- `process-player-unstuck` - Handle unstuck request (server authority, validates and teleports).
+
 **Utility:**
 - `tile-center-position` - Return world position for center of tile.
 - `wall-occupied-p` - Check whether tile inside wall map is nonzero.

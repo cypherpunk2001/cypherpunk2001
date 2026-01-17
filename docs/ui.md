@@ -10,7 +10,7 @@ Why we do it this way
 
 What it does
 - Builds layout constants (panel sizes, button positions, labels).
-- Handles menu click actions (logout, music, volume, debug, editor mode, fullscreen).
+- Handles menu click actions (logout, unstuck, music, volume, debug, editor mode, fullscreen).
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Tracks inventory overlay visibility for the `I` hotkey.
@@ -31,7 +31,7 @@ Key functions
 
 **Menu Interaction:**
 - `update-ui-input` - Handle UI toggle input and click interactions. Returns action keywords.
-- `handle-menu-click` - Process menu clicks for logout, music, volume, and toggles.
+- `handle-menu-click` - Process menu clicks for logout, unstuck, music, volume, and toggles. Returns `:logout`, `:unstuck`, `:toggle-editor`, or nil.
 
 **HUD Logging:**
 - `ui-push-combat-log` - Append text to the UI combat log ring buffer.
@@ -96,6 +96,14 @@ Walkthrough: zone loading overlay
 2. `ui-trigger-loading` starts a short timer.
 3. `update-ui-loading` counts down each frame.
 4. Rendering draws "Loading..." while the timer is active.
+
+Walkthrough: unstuck feature
+1. Player opens the menu with Escape.
+2. Click on the "Unstuck" button (positioned above Logout).
+3. UI returns `:unstuck`, which sets `(intent-requested-unstuck intent)` to true.
+4. Server's `process-player-unstuck` validates player is actually stuck (can't move in any cardinal direction).
+5. If stuck: teleport to a random position within zone bounds (if still stuck, click again).
+6. If not stuck: request denied (prevents exploit as free teleport).
 
 Design note
 - UI toggles debug overlays without touching the rendering logic directly.

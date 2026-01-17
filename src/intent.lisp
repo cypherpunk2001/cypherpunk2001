@@ -14,7 +14,8 @@
   requested-pickup-target-id
   requested-pickup-tx
   requested-pickup-ty
-  requested-chat-message)
+  requested-chat-message
+  requested-unstuck)
 
 (defun make-intent (&key (target-x 0.0) (target-y 0.0))
   ;; Create a reusable intent with optional target coordinates.
@@ -32,7 +33,8 @@
                 :requested-pickup-target-id nil
                 :requested-pickup-tx nil
                 :requested-pickup-ty nil
-                :requested-chat-message nil))
+                :requested-chat-message nil
+                :requested-unstuck nil))
 
 (defun reset-frame-intent (intent)
   ;; Clear per-frame intent signals without touching persistent targets.
@@ -41,7 +43,8 @@
         (intent-face-dx intent) 0.0
         (intent-face-dy intent) 0.0
         (intent-attack intent) nil
-        (intent-run-toggle intent) nil))
+        (intent-run-toggle intent) nil
+        (intent-requested-unstuck intent) nil))
 
 (defun consume-intent-actions (intent)
   ;; Clear one-shot actions after a simulation tick.
@@ -113,3 +116,11 @@
 (defun clear-requested-chat-message (intent)
   ;; Clear the requested chat message.
   (setf (intent-requested-chat-message intent) nil))
+
+(defun request-unstuck (intent)
+  ;; Request an unstuck teleport.
+  (setf (intent-requested-unstuck intent) t))
+
+(defun clear-requested-unstuck (intent)
+  ;; Clear the unstuck request flag.
+  (setf (intent-requested-unstuck intent) nil))

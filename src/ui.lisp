@@ -35,7 +35,7 @@
          (menu-button-text-size 22)
          (menu-nav-text-size 18)
          (menu-volume-text-size 18)
-         ;; Logout button (moved to bottom, Quit removed)
+         ;; Bottom buttons (Unstuck above Logout)
          (menu-action-gap 12)
          (menu-logout-label "Logout")
          (menu-logout-width 260)
@@ -44,6 +44,11 @@
          (menu-logout-y (- (+ menu-panel-y menu-panel-height)
                            menu-padding
                            menu-logout-height))
+         (menu-unstuck-label "Unstuck")
+         (menu-unstuck-width 260)
+         (menu-unstuck-height 56)
+         (menu-unstuck-x (truncate (/ (- *window-width* menu-unstuck-width) 2)))
+         (menu-unstuck-y (- menu-logout-y menu-action-gap menu-unstuck-height))
          (menu-nav-button-width 140)
          (menu-nav-button-height 44)
          (menu-nav-gap 16)
@@ -186,6 +191,11 @@
               :menu-logout-y menu-logout-y
               :menu-logout-width menu-logout-width
               :menu-logout-height menu-logout-height
+              :menu-unstuck-label menu-unstuck-label
+              :menu-unstuck-x menu-unstuck-x
+              :menu-unstuck-y menu-unstuck-y
+              :menu-unstuck-width menu-unstuck-width
+              :menu-unstuck-height menu-unstuck-height
               :menu-save-x menu-save-x
               :menu-save-y menu-save-y
               :menu-load-x menu-load-x
@@ -332,12 +342,16 @@
   ui)
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
-  ;; Process menu clicks for quit, logout, music, volume, and toggles.
+  ;; Process menu clicks for quit, logout, unstuck, music, volume, and toggles.
   (cond
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-logout-x ui) (ui-menu-logout-y ui)
                       (ui-menu-logout-width ui) (ui-menu-logout-height ui))
      :logout)
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-unstuck-x ui) (ui-menu-unstuck-y ui)
+                      (ui-menu-unstuck-width ui) (ui-menu-unstuck-height ui))
+     :unstuck)
     ((and (> (audio-soundtrack-count audio) 0)
           (point-in-rect-p mouse-x mouse-y
                            (ui-menu-prev-x ui) (ui-menu-nav-y ui)

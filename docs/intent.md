@@ -21,6 +21,8 @@ What an intent contains
   - `requested-pickup-target-id`, `requested-pickup-tx`, `requested-pickup-ty`: Object the client wants to pick up
 - Chat payloads:
   - `requested-chat-message`: pending chat message for the server to broadcast
+- Utility requests:
+  - `requested-unstuck`: flag indicating player wants to use the unstuck teleport feature
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
@@ -32,6 +34,8 @@ Key functions
 - `request-chat-message`: client sends a chat request for server broadcast.
 - `clear-requested-attack-target`, `clear-requested-follow-target`, `clear-requested-pickup-target`: clear target requests.
 - `clear-requested-chat-message`: clear pending chat requests.
+- `request-unstuck`: client requests the unstuck teleport feature.
+- `clear-requested-unstuck`: clear the unstuck request after processing.
 
 Walkthrough: click-to-move
 1) Mouse click is converted to a world-space target.

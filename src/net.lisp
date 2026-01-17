@@ -243,7 +243,8 @@
           :requested-pickup-target-id (intent-requested-pickup-target-id intent)
           :requested-pickup-tx (intent-requested-pickup-tx intent)
           :requested-pickup-ty (intent-requested-pickup-ty intent)
-          :requested-chat-message (intent-requested-chat-message intent))))
+          :requested-chat-message (intent-requested-chat-message intent)
+          :requested-unstuck (intent-requested-unstuck intent))))
 
 (defun %float-or (value default)
   ;; Return VALUE as float if it's a number, otherwise DEFAULT.
@@ -296,7 +297,9 @@
           (intent-requested-pickup-ty intent)
           (getf plist :requested-pickup-ty nil)
           (intent-requested-chat-message intent)
-          (%sanitize-chat-message (getf plist :requested-chat-message))))
+          (%sanitize-chat-message (getf plist :requested-chat-message))
+          (intent-requested-unstuck intent)
+          (and (getf plist :requested-unstuck) t)))
   intent)
 
 (defun combat-event->plist (event)

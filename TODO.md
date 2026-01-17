@@ -61,13 +61,15 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-(No active tasks)
+(none)
+
+## Recently Completed
+
+- **Player Unstuck Feature** - ESC menu "Unstuck" button. Server validates player is truly stuck (can't move in any cardinal direction), then teleports to zone entry spawn point. Prevents exploit as free teleport.
 
 ## Future Tasks / Roadmap
 
-This is a beta! Player unstuck option in ESC menu.
-If a player gets stuck, he can press ESC and click button.
-button runs function: server will try to move character up/down/left/right, if character coordinates do not significantly move, it seems player is indeed stuck (and not just trying to get a free teleport) and so he should be teleported back to a safe coordinate in his particular zone. How do we determine his safe coordinate he should teleport to, though? Hmmm.
+
 
 ---
 

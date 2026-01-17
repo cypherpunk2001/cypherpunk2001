@@ -1144,6 +1144,11 @@
                                         (ui-menu-logout-y ui)
                                         (ui-menu-logout-width ui)
                                         (ui-menu-logout-height ui)))
+         (hover-unstuck (point-in-rect-p mouse-x mouse-y
+                                         (ui-menu-unstuck-x ui)
+                                         (ui-menu-unstuck-y ui)
+                                         (ui-menu-unstuck-width ui)
+                                         (ui-menu-unstuck-height ui)))
          (hover-prev (point-in-rect-p mouse-x mouse-y
                                       (ui-menu-prev-x ui)
                                       (ui-menu-nav-y ui)
@@ -1167,6 +1172,9 @@
          (logout-color (if hover-logout
                            (ui-menu-button-hover-color ui)
                            (ui-menu-button-color ui)))
+         (unstuck-color (if hover-unstuck
+                            (ui-menu-button-hover-color ui)
+                            (ui-menu-button-color ui)))
          (prev-color (if hover-prev
                          (ui-menu-button-hover-color ui)
                          (ui-menu-button-color ui)))
@@ -1334,6 +1342,17 @@
                       (- (ui-menu-fullscreen-y ui) 2)
                       (ui-menu-volume-text-size ui)
                       (ui-menu-text-color ui))
+    ;; Unstuck button (above logout)
+    (raylib:draw-rectangle (ui-menu-unstuck-x ui) (ui-menu-unstuck-y ui)
+                           (ui-menu-unstuck-width ui)
+                           (ui-menu-unstuck-height ui)
+                           unstuck-color)
+    (raylib:draw-text (ui-menu-unstuck-label ui)
+                      (+ (ui-menu-unstuck-x ui) 24)
+                      (+ (ui-menu-unstuck-y ui) 16)
+                      (ui-menu-button-text-size ui)
+                      (ui-menu-text-color ui))
+    ;; Logout button
     (raylib:draw-rectangle (ui-menu-logout-x ui) (ui-menu-logout-y ui)
                            (ui-menu-logout-width ui)
                            (ui-menu-logout-height ui)

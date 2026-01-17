@@ -898,6 +898,60 @@
             feet-tile-x feet-tile-y)
     (finish-output)))
 
+;;;; Player Unstuck System
+
+(defun player-is-stuck-p (player world)
+  ;; Return T if player cannot move in any cardinal direction.
+  ;; Tests small movements in all 4 directions against collision.
+  (let* ((px (player-x player))
+         (py (player-y player))
+         (test-dist 2.0)
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (and (position-blocked-p world (+ px test-dist) py half-w half-h)
+         (position-blocked-p world (- px test-dist) py half-w half-h)
+         (position-blocked-p world px (+ py test-dist) half-w half-h)
+         (position-blocked-p world px (- py test-dist) half-w half-h))))
+
+(defun get-zone-safe-spawn (world)
+  ;; Return a random position within the zone's playable bounds.
+  ;; If the random spot is blocked, world-open-position will find the nearest open tile.
+  (let* ((min-x (world-wall-min-x world))
+         (max-x (world-wall-max-x world))
+         (min-y (world-wall-min-y world))
+         (max-y (world-wall-max-y world))
+         (rand-x (+ min-x (random (max 1.0 (- max-x min-x)))))
+         (rand-y (+ min-y (random (max 1.0 (- max-y min-y))))))
+    (values rand-x rand-y)))
+
+(defun process-player-unstuck (player intent world zone-id &optional event-queue)
+  ;; Handle client unstuck request (server authority).
+  ;; If player is truly stuck, teleport to a random location in the zone.
+  (declare (ignore zone-id))
+  (when (intent-requested-unstuck intent)
+    (if (player-is-stuck-p player world)
+        ;; Player is stuck - teleport to random position in zone
+        (multiple-value-bind (safe-x safe-y)
+            (get-zone-safe-spawn world)
+          (multiple-value-bind (final-x final-y)
+              (world-open-position world safe-x safe-y)
+            (setf (player-x player) final-x
+                  (player-y player) final-y
+                  (player-dx player) 0.0
+                  (player-dy player) 0.0)
+            (mark-player-dirty (player-id player))
+            (log-verbose "Player ~a unstuck, teleported to (~,1f, ~,1f)"
+                         (player-id player) final-x final-y)
+            (when event-queue
+              (emit-hud-message-event event-queue "Teleported to safe location."))))
+        ;; Player not stuck - deny free teleport
+        (progn
+          (log-verbose "Player ~a unstuck request denied - not stuck"
+                       (player-id player))
+          (when event-queue
+            (emit-hud-message-event event-queue "You don't appear to be stuck."))))
+    (clear-requested-unstuck intent)))
+
 (defun make-world ()
   ;; Build world state and derived collision/render constants.
   (let* ((zone (load-zone *zone-path*))
