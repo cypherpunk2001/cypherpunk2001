@@ -648,18 +648,6 @@
                                     (apply-intent-plist
                                      (net-client-intent client)
                                      (getf message :payload))))
-                                 (:save
-                                  (when (and client (net-client-authenticated-p client))
-                                    (log-verbose "Save requested by ~a:~d" host port)
-                                    (when (save-game game *save-filepath*)
-                                      (emit-hud-message-event (game-combat-events game)
-                                                              "Game saved."))))
-                                 (:load
-                                  (when (and client (net-client-authenticated-p client))
-                                    (log-verbose "Load requested by ~a:~d" host port)
-                                    (handle-server-load game)
-                                    (setf clients
-                                          (reconcile-net-clients game clients))))
                                  (t
                                   (log-verbose "Unknown message type from ~a:~d -> ~s"
                                                host port (getf message :type)))))))

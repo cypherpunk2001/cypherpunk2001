@@ -334,16 +334,6 @@
   ;; Process menu clicks for quit, music, volume, and toggles.
   (cond
     ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-save-x ui) (ui-menu-save-y ui)
-                      (ui-menu-nav-button-width ui)
-                      (ui-menu-nav-button-height ui))
-     :save-game)
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-load-x ui) (ui-menu-load-y ui)
-                      (ui-menu-nav-button-width ui)
-                      (ui-menu-nav-button-height ui))
-     :load-game)
-    ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-button-x ui) (ui-menu-button-y ui)
                       (ui-menu-button-width ui) (ui-menu-button-height ui))
      (setf (ui-exit-requested ui) t))
