@@ -29,13 +29,17 @@ systemctl status valkey
 ```
 
 ✅ AOF Enabled:
+
 appendonly yes
 
 ✅ RDB Snapshots Configured:
+
 save 300 1
+
 save 60 1000
 
 ✅ Valkey Started Successfully with Persistence:
+
 The key lines in the status show AOF is working:
 Creating AOF base file appendonly.aof.1.base.rdb on server start
 Creating AOF incr file appendonly.aof.1.incr.aof on server start
@@ -54,6 +58,68 @@ to:
 (init-storage :backend :redis :host "127.0.0.1" :port 6379)
 
 Then test it with verbose logging enabled to see the persistence in action!
+
+**Memory Storage vs Redis Storage**
+
+Memory Storage (:memory)
+
+What it is:
+- Everything stored in a Lisp hash table in RAM
+- Data completely lost when server stops
+- No external dependencies (doesn't need Valkey running)
+
+Use cases while dev'ing:
+- ✅ Quick iteration: Testing gameplay logic, combat, movement without persistence overhead
+- ✅ CI/automated tests: make ci and make smoke don't need Valkey running
+- ✅ Clean slate every run: Want to start fresh each time without old test data
+- ✅ Working offline/traveling: Don't want to run Valkey
+- ✅ Debugging persistence logic: Can add print statements in memory-storage methods easily
+
+Redis Storage (:redis)
+
+What it is:
+- Data persisted to disk via Valkey (Redis-compatible)
+- Data survives server restarts, crashes, code reloads
+- Requires Valkey running on port 6379
+
+Use cases while dev'ing:
+- ✅ Testing persistence: Verifying save/load actually works
+- ✅ Testing migrations: Player data survives schema version changes
+- ✅ Testing crash recovery: Kill server, restart, check if HP/XP/inventory survived
+- ✅ Long-running dev sessions: Build up a character over multiple runs
+- ✅ Testing tier-1 writes: Verify death/level-ups actually persist immediately
+- ✅ Pre-production testing: Simulating real production behavior
+
+Recommended Dev Workflow
+
+Day-to-day feature work: Use :memory
+(init-storage :backend :memory)  ; Fast, clean, simple
+
+When testing persistence features: Use :redis
+(init-storage :backend :redis)   ; Test real durability
+
+For CI/tests: Keep :memory so tests don't need Valkey installed
+
+Practical Example
+
+With memory storage:
+# Run 1: Create character, gain XP, reach level 5
+sbcl --load scripts/server.lisp
+# Stop server (Ctrl+C)
+
+# Run 2: Character gone, start from scratch
+sbcl --load scripts/server.lisp
+
+With Redis storage:
+# Run 1: Create character, gain XP, reach level 5
+sbcl --load scripts/server.lisp
+# Stop server (Ctrl+C)
+
+# Run 2: Character still level 5 with all XP/items intact!
+sbcl --load scripts/server.lisp
+
+Bottom line: Use :memory for 95% of dev work, switch to :redis when you specifically want to test persistence, then switch back.
+
 
 ## Setup
 - Follow the claw-raylib build instructions; on the prebuild branch, skip steps 1-2 and start at step 3.
