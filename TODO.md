@@ -61,20 +61,28 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-phase 1 and 2
-CLIENT_PREDICTION_INTERPOLATION.md ?
+- SSL? I think it's probably possible for a wifi sniffer to get peoples usernames and passwords from the unencrypted udp stream, correct me if i'm wrong. What SSL options are there? LEt's be careful. I happen to know that ssl packages are notorious for not compiling or being incompatible with various operating systems. Would be really nice to have a simple solution though that is guaranteed to work fine on linux windows and mac. But i think all those OS use different SSL implementations and versions. what do we do? Also we dont want to slow down networking at all, obviously latency is crucial, im not sure if ssl has any play in that. Let me know?
+
+- encryption lib for passwords stored in the game database. recommendation? make sure its reputable and well maintained in common lisp world. Let me know?
+
 
 ## Future Tasks / Roadmap
 
+This is a beta! Player unstuck option in ESC menu.
+If a player gets stuck, he can press ESC and click button.
+button runs function: server will try to move character up/down/left/right, if character coordinates do not significantly move, it seems player is indeed stuck (and not just trying to get a free teleport) and so he should be teleported back to a safe coordinate in his particular zone. How do we determine his safe coordinate he should teleport to, though? Hmmm.
 
-check over the codebase to see if we need to address these concerns anywhere, also unit tests if need be. thanks.
-- Basic rate limiting + sanity checks (intent frequency, movement bounds)
-  The rate limiting and movement bounds sanity checks are separate security/performance concerns not addressed in that design document. These would prevent:
-  - Clients spamming intents faster than tick rate
-  - Clients claiming to move unreasonable distances
-
+---
 
 ### Admin Commands - Tier B & C
 **Tier B** (requires new infrastructure):
 **Tier C** (nice to have):
 See [docs/admin.md](docs/admin.md) for full spec.
+
+---
+
+### More security unit tests - TODO
+Not Tested (features don't exist yet):
+- Economy bugs (no gold/currency system)
+- Trade duplication (no trade system)
+- Shop exploits (no vendors)

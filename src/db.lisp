@@ -488,22 +488,83 @@
       (unregister-player-session player-id)
       (log-verbose "Player ~a logged out, saved to storage" player-id))))
 
+;;;; Password Hashing (using ironclad PBKDF2-SHA256)
+
+(defparameter *password-hash-iterations* 100000
+  "Number of PBKDF2 iterations for password hashing.
+   Higher = more secure but slower. 100k is industry standard as of 2024.")
+
+(defparameter *password-salt-bytes* 16
+  "Salt length in bytes. 16 bytes = 128 bits, sufficient for security.")
+
+(defun generate-salt ()
+  "Generate a cryptographically secure random salt."
+  (ironclad:random-data *password-salt-bytes*))
+
+(defun derive-password-key (password salt)
+  "Derive a key from PASSWORD using PBKDF2-SHA256 with SALT.
+   Returns the derived key as a byte vector."
+  (let ((password-bytes (ironclad:ascii-string-to-byte-array password)))
+    (ironclad:derive-key
+     (ironclad:make-kdf 'ironclad:pbkdf2 :digest 'ironclad:sha256)
+     password-bytes
+     salt
+     *password-hash-iterations*
+     32)))  ; 32 bytes = 256 bits output
+
+(defun bytes-to-hex (bytes)
+  "Convert byte vector to lowercase hex string."
+  (ironclad:byte-array-to-hex-string bytes))
+
+(defun hex-to-bytes (hex-string)
+  "Convert hex string to byte vector."
+  (ironclad:hex-string-to-byte-array hex-string))
+
+(defun hash-password (password)
+  "Hash PASSWORD using PBKDF2-SHA256 with random salt.
+   Returns a string in format 'salt$hash' for storage."
+  (let* ((salt (generate-salt))
+         (key (derive-password-key password salt))
+         (salt-hex (bytes-to-hex salt))
+         (key-hex (bytes-to-hex key)))
+    (concatenate 'string salt-hex "$" key-hex)))
+
+(defun verify-password (password stored-hash)
+  "Verify PASSWORD against STORED-HASH (format: 'salt$hash').
+   Returns T if password matches, NIL otherwise."
+  (let* ((dollar-pos (position #\$ stored-hash)))
+    (unless dollar-pos
+      ;; Invalid hash format
+      (return-from verify-password nil))
+    (let* ((salt-hex (subseq stored-hash 0 dollar-pos))
+           (stored-key-hex (subseq stored-hash (1+ dollar-pos)))
+           (salt (hex-to-bytes salt-hex))
+           (computed-key (derive-password-key password salt))
+           (computed-key-hex (bytes-to-hex computed-key)))
+      ;; Constant-time comparison to prevent timing attacks
+      (ironclad:constant-time-equal
+       (ironclad:ascii-string-to-byte-array computed-key-hex)
+       (ironclad:ascii-string-to-byte-array stored-key-hex)))))
+
 ;;;; Account Management
 
-(defparameter *account-schema-version* 1
-  "Current schema version for account records.")
+(defparameter *account-schema-version* 2
+  "Current schema version for account records.
+   v1: plaintext passwords
+   v2: PBKDF2-SHA256 hashed passwords (salt$hash format)")
 
 (defun account-key (username)
   "Return storage key for account USERNAME."
   (format nil "account:~a" (string-downcase username)))
 
-(defun db-save-account (username password character-id)
-  "Save account to storage. Returns T on success."
-  (when (and *storage* username password)
+(defun db-save-account (username password-hash character-id)
+  "Save account to storage. PASSWORD-HASH should be pre-hashed.
+   Returns T on success."
+  (when (and *storage* username password-hash)
     (let* ((key (account-key username))
            (data (list :version *account-schema-version*
                       :username (string-downcase username)
-                      :password password
+                      :password-hash password-hash
                       :character-id character-id)))
       (storage-save *storage* key data)
       (log-verbose "Saved account ~a to storage" username)
@@ -522,20 +583,32 @@
       (storage-exists-p *storage* key))))
 
 (defun db-create-account (username password)
-  "Create new account with USERNAME and PASSWORD. Returns T on success, NIL if username taken."
+  "Create new account with USERNAME and PASSWORD (hashes before storing).
+   Returns T on success, NIL if username taken."
   (when (db-account-exists-p username)
     (log-verbose "Account creation failed: username ~a already exists" username)
     (return-from db-create-account nil))
-  (db-save-account username password nil)
+  (let ((password-hash (hash-password password)))
+    (db-save-account username password-hash nil))
   (log-verbose "Created new account: ~a" username)
   t)
 
 (defun db-verify-credentials (username password)
-  "Verify username/password. Returns T if credentials are valid, NIL otherwise."
+  "Verify username/password. Returns T if credentials are valid, NIL otherwise.
+   Supports both v2 (hashed) and legacy v1 (plaintext) accounts."
   (let ((account (db-load-account username)))
     (when account
-      (let ((stored-password (getf account :password)))
-        (string= password stored-password)))))
+      (let ((version (getf account :version 1))
+            (stored-hash (getf account :password-hash))
+            (legacy-password (getf account :password)))
+        (cond
+          ;; v2 account: use secure hash verification
+          ((and (>= version 2) stored-hash)
+           (verify-password password stored-hash))
+          ;; Legacy v1 account: plaintext comparison (upgrade path)
+          (legacy-password
+           (string= password legacy-password))
+          (t nil))))))
 
 (defun db-get-character-id (username)
   "Get character-id for account USERNAME. Returns character-id or NIL."
@@ -547,8 +620,10 @@
   "Set character-id for account USERNAME. Returns T on success."
   (let ((account (db-load-account username)))
     (when account
-      (let ((password (getf account :password)))
-        (db-save-account username password character-id)))))
+      ;; Support both v2 (password-hash) and legacy v1 (password) formats
+      (let ((password-hash (or (getf account :password-hash)
+                               (getf account :password))))
+        (db-save-account username password-hash character-id)))))
 
 ;;;; Graceful Shutdown
 
