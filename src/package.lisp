@@ -4,6 +4,7 @@
   (:export #:run-headless
            #:run-server
            #:run-client
+           #:run-local
            ;; Admin commands
            #:admin-print-save
            #:admin-list-players

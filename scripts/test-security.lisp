@@ -3,6 +3,40 @@
 ;;;; Run from repo root:
 ;;;;   MMORPG_DB_BACKEND=memory sbcl --script scripts/test-security.lisp
 
+;; BUGS TO LOOK FOR:
+;; 1) Persistence / Save bugs (progress loss)
+;;     “I logged in and my character rolled back 10 minutes”
+;;     Items vanish after relog
+;;     Quest flags reset / duplicate
+;;     Currency desync after crash/restart
+;; 2) Duplication (dupes)
+;;     Double-spend gold (buy twice / sell twice)
+;;     Duplicate items via disconnect timing
+;;     Trading/mail dupes
+;;     Crafting dupes (craft consumes nothing but produces output)
+;; 3) Ownership / control bugs (possession problems)
+;;     Two clients controlling the same character
+;;     One client can move someone else’s entity
+;;     Login spawns extra characters each time
+;;     Wrong account ↔ character mapping
+;; 4) Server authority / desync bugs
+;;     Client shows you moved, server snaps you back
+;;     “Rubber-banding”
+;;     Combat hits on client but not on server
+;;     Dead on server, alive on client (or vice versa)
+;; 5) Timing / race conditions
+;;     Two actions happen “at the same time” and break invariants
+;;     Loot claimed twice by two players
+;;     Quest completion triggers twice
+;;     Damage applied twice because of retries/resends
+;; 6) Economy bugs (always painful)
+;;     Negative gold / overflow
+;;     Vendor buy/sell exploits
+;;     Rounding errors → “free money”
+;;     Auction house inconsistencies
+;; 7) Inventory bugs
+;;     Stack splits merge wrong
+
 (defun die (code fmt &rest args)
   (apply #'format *error-output* (concatenate 'string "~&" fmt "~%") args)
   (sb-ext:exit :code code))

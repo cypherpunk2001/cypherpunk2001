@@ -285,7 +285,9 @@
         (update-training-mode player))
       (if input-blocked
           (setf (ui-hover-npc-name ui) nil)
-          (update-ui-hovered-npc ui npcs world player camera)))))
+          (update-ui-hovered-npc ui npcs world player camera))
+      ;; Update editor when active (handles camera, painting, mode switching)
+      (update-editor editor game dt))))
 
 (defun reset-npc-frame-intents (npcs)
   ;; Clear per-tick intent signals for NPCs.
@@ -383,3 +385,47 @@
            (ui-push-combat-log ui text))
           ((eq type :hud-message)
            (ui-push-hud-log ui text)))))))
+
+(defun run-local (&key (max-seconds 0.0) (max-frames 0))
+  "Run the game in local/standalone mode with full editor access.
+   Unlike run-client, this does not connect to a server and allows zone editing."
+  (with-fatal-error-log ("Local game runtime")
+    (log-verbose "Local game starting")
+    (raylib:with-window ("Hello MMO (Local)" (*window-width* *window-height*))
+      (raylib:set-target-fps 60)
+      (raylib:set-exit-key 0)
+      (raylib:init-audio-device)
+      (let ((game (make-game)))
+        (unwind-protect
+             (let ((ui (game-ui game))
+                   (accumulator 0.0))
+               (loop :with elapsed = 0.0
+                     :with frames = 0
+                     :until (or (raylib:window-should-close)
+                                (ui-exit-requested ui)
+                                (and (> max-seconds 0.0)
+                                     (>= elapsed max-seconds))
+                                (and (> max-frames 0)
+                                     (>= frames max-frames)))
+                     :do (let ((dt (raylib:get-frame-time)))
+                           (incf elapsed dt)
+                           (incf frames)
+                           ;; Input
+                           (update-client-input game dt)
+                           ;; Sync client intent to player (server does this via apply-client-intents)
+                           (apply-client-intent (player-intent (game-player game))
+                                                (game-client-intent game))
+                           ;; Fixed timestep simulation
+                           (incf accumulator dt)
+                           (loop :with steps = 0
+                                 :while (and (>= accumulator *sim-tick-seconds*)
+                                             (< steps *sim-max-steps-per-frame*))
+                                 :do (update-sim game *sim-tick-seconds*)
+                                     (decf accumulator *sim-tick-seconds*)
+                                     (incf steps))
+                           ;; Process events and draw
+                           (process-combat-events game)
+                           (draw-game game))))
+          (shutdown-game game)
+          (raylib:close-audio-device)))))
+  (log-verbose "Local game finished"))

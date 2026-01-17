@@ -25,6 +25,13 @@ make server
 make client
 ```
 
+### Local/Standalone Mode
+For zone editing and single-player testing (no server required):
+```shell
+make local
+```
+This runs the game in standalone mode with full editor access via ESC menu.
+
 ### Verbose Modes
 ```shell
 MMORPG_VERBOSE=1 make server          # Network events, state changes
@@ -53,6 +60,13 @@ Client REPL:
 (mmorpg:run-client :host "127.0.0.1" :port 1337)
 ```
 
+Local/Standalone REPL (zone editing):
+```lisp
+(ql:register-local-projects)
+(ql:quickload :mmorpg)
+(mmorpg:run-local)
+```
+
 ## Storage Backends
 
 **Redis (default)** - Data persists to disk, survives restarts. Requires Valkey running.
@@ -67,6 +81,7 @@ MMORPG_DB_BACKEND=memory make server
 make checkparens        # Balanced parentheses in .lisp files
 make ci                 # Cold compile + UDP handshake (no GPU)
 make test-persistence   # Data integrity tests
+make test-security      # Security tests (input validation, exploits)
 make checkdocs          # Verify docs exist for each src file
 make smoke              # Full client/server with window (2s)
 ```

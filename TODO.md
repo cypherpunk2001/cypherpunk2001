@@ -20,11 +20,13 @@ make test-persistence   # Data integrity tests (serialization, migrations, invar
 make test-security      # Security tests (input validation, exploit prevention)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp```
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
+### When to Write Tests (Decision Criteria)
 **Write tests for:**
 - ✅ **Data corruption risk**: Serialization, migrations, database writes
 - ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
 - ✅ **Backend equivalence**: Storage abstraction must work identically across backends
 - ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
+- ✅ **Security bugs**: Auth/session edge cases, privilege escalation (owning/controlling another entity), replay/forged intent packets, rate-limit abuse, and “double-login” / possession bypasses
 **Skip tests for:**
 - ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
 - ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
@@ -54,18 +56,6 @@ Key design docs:
 - **Write migrations for durable fields**: New persistent fields require schema version bump + migration function
 - **Server is authoritative**: Clients send intents, not state
 - **Test both backends**: Memory for dev, Redis for persistence testing
-### When to Write Tests (Decision Criteria)
-**Write tests for:**
-- ✅ **Data corruption risk**: Serialization, migrations, database writes
-- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
-- ✅ **Backend equivalence**: Storage abstraction must work identically across backends
-- ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
-**Skip tests for:**
-- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
-- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
-- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
-- ❌ **Helper functions**: Utils that don't touch persistent state
-**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
 
 ---
 
