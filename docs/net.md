@@ -16,17 +16,18 @@ Message format (plist, printed with `prin1`)
 - `(:type :snapshot :state <game-state> :events (<event> ...) :player-id <id>)` -> server snapshot + HUD/combat events + assigned player id for this client
 
 Key functions
-- `run-server`: bind UDP on `*net-default-host*`/`*net-default-port*`, track multiple clients, apply intents, tick `server-step`, send per-client snapshots.
-- `run-client`: connect to the server, send intents each frame, apply snapshots for rendering.
-- `send-net-message` / `receive-net-message`: ASCII message helpers with UDP buffers.
+- `run-server`: bind UDP on `*net-default-host*`/`*net-default-port*`, track multiple clients, apply intents, tick `server-step`, send per-client snapshots. Logs handshake/save/load traffic and unknown message types when verbose.
+- `run-client`: connect to the server, send intents each frame, apply snapshots for rendering. Logs unknown message types when verbose.
+- `send-net-message` / `receive-net-message`: ASCII message helpers with UDP buffers; malformed packets are dropped with verbose logs.
 - `intent->plist` / `apply-intent-plist`: serialize/deserialize intent payloads.
-- `apply-snapshot`: apply a snapshot via `apply-game-state`, update the client player id, and queue HUD/combat events.
+- `apply-snapshot`: apply a snapshot via `apply-game-state`, update the client player id, and queue HUD/combat events; logs zone transitions when verbose.
 
 Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.
 - `*read-eval*` is disabled during message parsing for safety.
 - Snapshots include visual fields by calling `serialize-game-state` with `:include-visuals`.
 - Server uses non-blocking UDP receive via `usocket:wait-for-input` with `:timeout 0`.
+- Fatal runtime errors log context (and a backtrace in verbose mode) before exiting.
 
 Performance & Scaling
 - Current server runs ONE zone (tested smooth with hundreds of entities on client).

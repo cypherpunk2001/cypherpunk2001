@@ -147,8 +147,13 @@
 (defun editor-load-tileset-texture (tileset)
   ;; Ensure TILESET has a loaded texture and computed metrics.
   (unless (editor-tileset-texture tileset)
-    (setf (editor-tileset-texture tileset)
-          (raylib:load-texture (editor-tileset-path tileset))))
+    (handler-case
+        (setf (editor-tileset-texture tileset)
+              (raylib:load-texture (editor-tileset-path tileset)))
+      (error (e)
+        (warn "Failed to load editor tileset ~a: ~a" (editor-tileset-path tileset) e)
+        (log-verbose "Editor tileset load error: ~a" e)
+        (setf (editor-tileset-texture tileset) nil))))
   (editor-ensure-tileset-metrics tileset))
 
 (defun editor-current-tileset (editor)
@@ -303,9 +308,13 @@
   ;; Load a zone from PATH and activate it.
   (let ((zone (and path (load-zone path))))
     (if zone
-        (editor-activate-zone editor game zone path
-                              (format nil "Zone loaded: ~a" (basename path)))
-        (editor-status editor "Zone load failed"))))
+        (progn
+          (log-verbose "Editor loaded zone: ~a" path)
+          (editor-activate-zone editor game zone path
+                                (format nil "Zone loaded: ~a" (basename path))))
+        (progn
+          (log-verbose "Editor zone load failed: ~a" path)
+          (editor-status editor "Zone load failed")))))
 
 (defun editor-create-zone (editor game)
   ;; Create a new blank zone and switch to it.
@@ -318,7 +327,9 @@
              (height (max 1 *zone-default-height*))
              (chunk-size (max 1 *zone-default-chunk-size*))
              (zone (make-empty-zone id width height :chunk-size chunk-size)))
-        (write-zone zone path)
+        (unless (write-zone zone path)
+          (log-verbose "Editor zone write failed: ~a" path))
+        (log-verbose "Editor created zone: ~a" path)
         (editor-activate-zone editor game zone path
                               (format nil "Zone created: ~a" path))))))
 
@@ -331,7 +342,11 @@
     (when path
       (if (> count 1)
           (let ((next-path (aref files (mod (1+ index) count))))
-            (ignore-errors (delete-file path))
+            (handler-case
+                (delete-file path)
+              (error (e)
+                (warn "Failed to delete zone ~a: ~a" path e)
+                (log-verbose "Zone delete error for ~a: ~a" path e)))
             (editor-load-zone editor game next-path)
             (editor-status editor (format nil "Zone deleted: ~a" (basename path))))
           (let* ((id (editor-zone-id-from-path path))
@@ -340,6 +355,7 @@
                  (chunk-size (max 1 *zone-default-chunk-size*))
                  (zone (make-empty-zone id width height :chunk-size chunk-size)))
             (write-zone zone path)
+            (log-verbose "Editor reset last zone: ~a" path)
             (editor-activate-zone editor game zone path
                                   "Zone reset (last zone)"))))))
 

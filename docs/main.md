@@ -20,10 +20,10 @@ Client update flow (high level)
 9) Editor mode (when enabled in local testing, disabled in client mode)
 
 Key functions
-- `make-game`: assembles the client game state with audio/UI/render subsystems; defaults the net role to `:client`.
+- `make-game`: assembles the client game state with audio/UI/render subsystems and logs a summary in verbose mode.
 - `make-sim-state` (server.lisp): builds world, player + players array, NPCs, entities, and combat events without client-only subsystems (server-side only).
-- `shutdown-game`: unloads editor tilesets and rendering assets.
-- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests to server when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode.
+- `shutdown-game`: unloads editor tilesets and rendering assets; logs shutdown in verbose mode.
+- `update-client-input`: reads raylib input, writes client intent (including chat), updates hovered NPC UI, toggles the inventory overlay, handles ESC menu Save/Load actions (queues save/load requests to server when in `:client` net role), and drives the right-click context menus (NPC attack/follow/examine, object pickup/examine, inventory examine/drop). Left mouse click-to-move uses a repeat timer while held on world tiles to refresh the walk target. Examine/drop actions emit HUD message events instead of writing to UI directly. Editor toggles are disabled in client mode. Menu actions log to stdout when verbose mode is enabled.
 - `server-step` (server.lisp): applies client intent and runs fixed-tick simulation steps, returning transition counts (server-side only).
 - `update-sim`: runs one fixed-tick simulation step across all players, resolves object pickups, processes chat broadcasts, and feeds UI combat logging (server-side only).
 - `process-combat-events`: reads combat event queue from server snapshots and writes to UI (client-side rendering).

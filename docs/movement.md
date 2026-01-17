@@ -18,6 +18,7 @@ Key concepts
 - `make-world` derives bounds and collision sizes from map data.
 - `apply-zone-to-world` swaps the active zone and rebuilds world bounds.
 - `update-zone-transition` checks the world graph and swaps zones on edge exit.
+- Zone transitions log source/target IDs in verbose mode to aid debugging.
 - `world-open-position` finds the nearest open tile that fits the player collider.
 - `ensure-npcs-open-spawn` snaps NPCs to open tiles (using NPC collider sizes).
 - Zone transitions carry engaged NPCs that are within perception range into the next zone,

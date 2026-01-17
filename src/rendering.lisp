@@ -63,16 +63,37 @@
 
 (defun load-texture-with-color-key (path)
   ;; Load a texture and replace a detected border color with transparency.
-  (let ((image (raylib:load-image path)))
-    (when image
-      (let* ((key (image-border-color-key image))
-             (transparent (raylib:make-color :r 0 :g 0 :b 0 :a 0)))
-        (when key
-          (raylib:image-color-replace image key transparent))
-        (let ((texture (raylib:load-texture-from-image image)))
-          (raylib:unload-image image)
-          texture)))))
+  (handler-case
+      (let ((image (raylib:load-image path)))
+        (when image
+          (let* ((key (image-border-color-key image))
+                 (transparent (raylib:make-color :r 0 :g 0 :b 0 :a 0)))
+            (when key
+              (raylib:image-color-replace image key transparent))
+            (let ((texture (raylib:load-texture-from-image image)))
+              (raylib:unload-image image)
+              texture))))
+    (error (e)
+      (warn "Failed to load texture image ~a: ~a" path e)
+      (log-verbose "Texture image load error for ~a: ~a" path e)
+      nil)))
 
+(defun load-texture-required (path label)
+  ;; Load a required texture or signal a fatal error.
+  (let ((texture nil)
+        (err nil))
+    (handler-case
+        (setf texture (raylib:load-texture path))
+      (error (e)
+        (setf err e)))
+    (if texture
+        (progn
+          (log-verbose "Loaded texture (~a): ~a" label path)
+          texture)
+        (progn
+          (warn "Failed to load required texture (~a) from ~a: ~a" label path err)
+          (log-verbose "Required texture load error (~a): ~a" label err)
+          (error "Required texture load failed for ~a" path)))))
 
 (defun make-render ()
   ;; Allocate reusable rectangles and origin vector for rendering.
@@ -97,28 +118,43 @@
          (npc-animations (make-hash-table :test 'eq))
          (object-textures (make-hash-table :test 'eq))
          (item-textures (make-hash-table :test 'eq))
-         (tileset (raylib:load-texture *tileset-path*))
+         (tileset (load-texture-required *tileset-path* "tileset"))
          (tileset-columns (max 1 (truncate (/ (raylib:texture-width tileset)
                                               (max 1 *tile-size*)))))
-         (down-idle (raylib:load-texture (animation-path player-set :down-idle)))
-         (down-walk (raylib:load-texture (animation-path player-set :down-walk)))
-         (down-attack (raylib:load-texture (animation-path player-set :down-attack)))
-         (up-idle (raylib:load-texture (animation-path player-set :up-idle)))
-         (up-walk (raylib:load-texture (animation-path player-set :up-walk)))
-         (up-attack (raylib:load-texture (animation-path player-set :up-attack)))
-         (side-idle (raylib:load-texture (animation-path player-set :side-idle)))
-         (side-walk (raylib:load-texture (animation-path player-set :side-walk)))
-         (side-attack (raylib:load-texture (animation-path player-set :side-attack)))
-         (blood-down (raylib:load-texture (animation-path blood-set :down)))
-         (blood-up (raylib:load-texture (animation-path blood-set :up)))
-         (blood-side (raylib:load-texture (animation-path blood-set :side))))
+         (down-idle (load-texture-required (animation-path player-set :down-idle)
+                                           "player-down-idle"))
+         (down-walk (load-texture-required (animation-path player-set :down-walk)
+                                           "player-down-walk"))
+         (down-attack (load-texture-required (animation-path player-set :down-attack)
+                                             "player-down-attack"))
+         (up-idle (load-texture-required (animation-path player-set :up-idle)
+                                         "player-up-idle"))
+         (up-walk (load-texture-required (animation-path player-set :up-walk)
+                                         "player-up-walk"))
+         (up-attack (load-texture-required (animation-path player-set :up-attack)
+                                           "player-up-attack"))
+         (side-idle (load-texture-required (animation-path player-set :side-idle)
+                                           "player-side-idle"))
+         (side-walk (load-texture-required (animation-path player-set :side-walk)
+                                           "player-side-walk"))
+         (side-attack (load-texture-required (animation-path player-set :side-attack)
+                                             "player-side-attack"))
+         (blood-down (load-texture-required (animation-path blood-set :down)
+                                            "blood-down"))
+         (blood-up (load-texture-required (animation-path blood-set :up)
+                                          "blood-up"))
+         (blood-side (load-texture-required (animation-path blood-set :side)
+                                            "blood-side")))
     (dolist (id npc-ids)
       (let ((set (get-animation-set id :npc)))
         (setf (gethash id npc-animations)
               (%make-npc-textures
-               :down-idle (raylib:load-texture (animation-path set :down-idle))
-               :up-idle (raylib:load-texture (animation-path set :up-idle))
-               :side-idle (raylib:load-texture (animation-path set :side-idle))))))
+               :down-idle (load-texture-required (animation-path set :down-idle)
+                                                 (format nil "npc-~a-down-idle" id))
+               :up-idle (load-texture-required (animation-path set :up-idle)
+                                               (format nil "npc-~a-up-idle" id))
+               :side-idle (load-texture-required (animation-path set :side-idle)
+                                                 (format nil "npc-~a-side-idle" id))))))
     (loop :for id :across (object-archetype-ids)
           :for archetype = (find-object-archetype id)
           :for sprite = (and archetype (object-archetype-sprite archetype))
@@ -132,6 +168,10 @@
             :do (setf (gethash id item-textures)
                       (load-texture-with-color-key sprite)))
     (setf *tileset-columns* tileset-columns)
+    (log-verbose "Assets ready: npcs=~d objects=~d items=~d"
+                 (hash-table-count npc-animations)
+                 (hash-table-count object-textures)
+                 (hash-table-count item-textures))
     (%make-assets :tileset tileset
                   :down-idle down-idle
                   :down-walk down-walk

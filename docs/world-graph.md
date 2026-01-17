@@ -27,7 +27,7 @@ Example
 ```
 
 Key functions
-- `load-world-graph`: loads edges and builds a zone-id-to-path index.
+- `load-world-graph`: loads edges and builds a zone-id-to-path index; logs counts in verbose mode and falls back to an empty graph when missing.
 - `world-graph-exits`: fetches exits for a given zone.
 - `world-graph-zone-path`: resolves a target zone ID to a file path.
 

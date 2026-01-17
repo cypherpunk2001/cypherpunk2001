@@ -4,10 +4,12 @@ Purpose
 - Provide small, reusable helpers for math and common game tasks.
 
 Why we do it this way
-- Small, pure helpers reduce duplication and make systems easier to test.
-- Keeping helpers side-effect free avoids subtle bugs in the update loop.
+- Small helpers reduce duplication and make systems easier to test.
+- Side-effectful utilities are kept explicit (like verbose logging).
 
 Key helpers
+- `log-verbose`: emit standardized verbose logs when `*verbose*` is enabled.
+- `log-fatal-error`, `with-fatal-error-log`: attach context and backtraces to fatal errors.
 - `clamp`: world bounds and UI limits.
 - `normalize-direction`, `normalize-vector`: avoid faster diagonals.
 - `screen-to-world`: convert mouse to world coordinates with camera zoom.

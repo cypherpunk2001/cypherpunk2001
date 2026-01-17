@@ -15,17 +15,20 @@
   ;; Read a world graph data form without evaluation.
   ;; Returns world graph data on success, NIL on failure (non-fatal).
   (let* ((full-path (resolve-world-graph-path path)))
-    (when (and full-path (probe-file full-path))
-      (handler-case
-          (with-open-file (in full-path :direction :input)
-            (with-standard-io-syntax
-              (let ((*read-eval* nil))
-                (read in nil nil))))
-        (error (e)
-          (warn "Failed to read world graph data from ~a: ~a" full-path e)
-          (when *verbose*
-            (format t "~&[VERBOSE] World graph read error: ~a~%" e))
-          nil)))))
+    (if (and full-path (probe-file full-path))
+        (handler-case
+            (with-open-file (in full-path :direction :input)
+              (with-standard-io-syntax
+                (let ((*read-eval* nil))
+                  (read in nil nil))))
+          (error (e)
+            (warn "Failed to read world graph data from ~a: ~a" full-path e)
+            (log-verbose "World graph read error: ~a" e)
+            nil))
+        (progn
+          (log-verbose "World graph not found at ~a; using empty graph"
+                       (or full-path "<unset>"))
+          nil))))
 
 (defun world-graph-data-plist (data)
   ;; Normalize world graph data to a plist.
@@ -76,11 +79,15 @@
 
 (defun load-world-graph (&optional (path *world-graph-path*) (zone-root *zone-root*))
   ;; Load the world graph and index zone paths.
+  (log-verbose "Loading world graph from ~a" (or path "<default>"))
   (let* ((data (read-world-graph-data path))
          (plist (world-graph-data-plist data))
          (edges (getf plist :edges nil))
          (edges-by-zone (normalize-world-graph-edges edges))
          (zone-paths (build-zone-paths (resolve-zone-path zone-root))))
+    (log-verbose "World graph ready: edges=~d zones=~d"
+                 (hash-table-count edges-by-zone)
+                 (hash-table-count zone-paths))
     (%make-world-graph :edges-by-zone edges-by-zone
                        :zone-paths zone-paths)))
 

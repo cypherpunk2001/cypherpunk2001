@@ -4,12 +4,12 @@
   :serial t
   :components ((:file "src/package")
                (:file "src/config")
+               (:file "src/utils")
                (:file "src/data")
                (:file "src/intent")
                (:file "src/types")
                (:file "src/progression")
                (:file "src/save")
-               (:file "src/utils")
                (:file "src/zone")
                (:file "src/world-graph")
                (:file "src/movement")

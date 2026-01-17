@@ -24,6 +24,10 @@
     (setf (world-minimap-spawns world)
           (build-adjacent-minimap-spawns world player))
     (ensure-npcs-open-spawn npcs world)
+    (log-verbose "Sim state initialized: player-id=~d npcs=~d zone=~a"
+                 (player-id player)
+                 (length npcs)
+                 (zone-label (world-zone world)))
     (when (or *verbose-logs* *verbose-coordinates*)
       (format t "~&[VERBOSE COORDS] tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
               (world-tile-dest-size world)
@@ -112,20 +116,21 @@
 
 (defun run-headless (&key (max-seconds 0.0) (max-frames 0))
   ;; Run a headless server loop without rendering.
-  (let ((game (make-server-game)))
-    (loop :with elapsed = 0.0
-          :with frames = 0
-          :with accumulator = 0.0
-          :until (or (and (> max-seconds 0.0)
-                          (>= elapsed max-seconds))
-                     (and (> max-frames 0)
-                          (>= frames max-frames)))
-          :do (let ((dt *sim-tick-seconds*))
-                (incf elapsed dt)
-                (incf frames)
-                (multiple-value-bind (new-acc transitions)
-                    (server-step game nil dt accumulator)
-                  (setf accumulator new-acc)
-                  (dotimes (_ transitions)
-                    (declare (ignore _))))))
-    game))
+  (with-fatal-error-log ("Headless server runtime")
+    (let ((game (make-server-game)))
+      (loop :with elapsed = 0.0
+            :with frames = 0
+            :with accumulator = 0.0
+            :until (or (and (> max-seconds 0.0)
+                            (>= elapsed max-seconds))
+                       (and (> max-frames 0)
+                            (>= frames max-frames)))
+            :do (let ((dt *sim-tick-seconds*))
+                  (incf elapsed dt)
+                  (incf frames)
+                  (multiple-value-bind (new-acc transitions)
+                      (server-step game nil dt accumulator)
+                    (setf accumulator new-acc)
+                    (dotimes (_ transitions)
+                      (declare (ignore _))))))
+      game)))

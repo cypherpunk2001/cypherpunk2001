@@ -67,6 +67,7 @@ Object palette
 Key responsibilities
 - Maintain editor state (`editor` struct) and cached UI labels.
 - Build a tileset catalog from `*editor-tileset-paths*`/`*editor-tileset-root*` and sync the active sheet.
+- Load editor tilesets defensively; failures warn and keep the editor running.
 - Mutate zone layers and collision tiles in-place for immediate feedback.
 - Update the world wall-map so collisions update live.
 - Export zones with `zone-to-plist` and `zone-slice`.
@@ -76,6 +77,7 @@ Key responsibilities
 
 Design note
 - Painting only touches data: zones drive rendering and collisions, not the editor.
+- Editor zone lifecycle actions (create/load/delete) log to stdout in verbose mode.
 - Use object mode for pickups that render from object archetype sprites.
 - Collision mode paints the selected tile into the collision layer and updates the collision map.
 - Export defaults to `*editor-export-path*` unless a zone path is already set.

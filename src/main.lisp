@@ -15,26 +15,32 @@
                                        :target-y (player-y player))))
       (when *editor-start-enabled*
         (toggle-editor-mode editor player))
-      (%make-game :world world
-                  :player player
-                  :players players
-                  :npcs npcs
-                  :entities entities
-                  :id-source id-source
-                  :audio audio
-                  :ui ui
-                  :render render
-                  :assets assets
-                  :camera camera
-                  :editor editor
-                  :combat-events combat-events
-                  :client-intent client-intent
-                  :net-role :local
-                  :net-requests nil
-                  :net-player-id (player-id player)))))
+      (let ((game (%make-game :world world
+                              :player player
+                              :players players
+                              :npcs npcs
+                              :entities entities
+                              :id-source id-source
+                              :audio audio
+                              :ui ui
+                              :render render
+                              :assets assets
+                              :camera camera
+                              :editor editor
+                              :combat-events combat-events
+                              :client-intent client-intent
+                              :net-role :local
+                              :net-requests nil
+                              :net-player-id (player-id player))))
+        (log-verbose "Client game initialized: player-id=~d npcs=~d zone=~a"
+                     (player-id player)
+                     (length npcs)
+                     (zone-label (world-zone world)))
+        game))))
 
 (defun shutdown-game (game)
   ;; Release game resources before exiting.
+  (log-verbose "Shutting down game resources")
   (shutdown-audio (game-audio game))
   (unload-editor-tilesets (game-editor game) (game-assets game))
   (unload-assets (game-assets game)))
@@ -66,6 +72,7 @@
       (when menu-action
         (case menu-action
           (:toggle-editor
+           (log-verbose "Toggle editor requested")
            (if (eq net-role :client)
                (emit-hud-message-event event-queue
                                        "Editor disabled in client mode.")
@@ -73,11 +80,13 @@
                  (toggle-editor-mode editor player)
                  (setf (ui-menu-open ui) nil))))
           (:save-game
+           (log-verbose "Save requested (net-role=~a)" net-role)
            (if (eq net-role :client)
                (queue-net-request game (list :type :save))
                (when (save-game game *save-filepath*)
                  (emit-hud-message-event event-queue "Game saved."))))
           (:load-game
+           (log-verbose "Load requested (net-role=~a)" net-role)
            (if (eq net-role :client)
                (queue-net-request game (list :type :load))
                (let ((zone-id (load-game game *save-filepath*)))
@@ -378,4 +387,3 @@
            (ui-push-combat-log ui text))
           ((eq type :hud-message)
            (ui-push-hud-log ui text)))))))
-

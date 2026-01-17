@@ -14,11 +14,12 @@ Key responsibilities
 - Apply tunables to config variables.
 - Register animation sets, NPC archetypes (including descriptions), items (including optional sprites and descriptions), object archetypes, and loot tables into hash tables.
 - Validate section entries so malformed data fails fast.
+- Treat data read/parse/apply failures as non-fatal (warn + fall back to defaults).
 - Item archetypes can include equipment slots and stat modifier values for progression.
 - Object archetypes can include respawn cooldowns for repeatable pickups.
 
 Key functions
-- `load-game-data`: entry point; clears registries, loads data, registers defaults.
+- `load-game-data`: entry point; clears registries, loads data, registers defaults, and logs counts in verbose mode.
 - `ensure-game-data`: guard that loads once when needed.
 - `get-animation-set`, `find-npc-archetype`, `npc-archetype-ids`: lookup helpers.
 - `find-item-archetype`, `item-archetype-ids`, `find-object-archetype`, `find-object-archetype-by-item`,

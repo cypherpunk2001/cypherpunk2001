@@ -9,14 +9,14 @@ Why we do it this way
 - The draw pipeline is tile-based so we can add chunk culling and caching later.
 
 Pipeline overview
-1) Load textures in `load-assets` (tileset columns derive from texture width).
+1) Load textures in `load-assets` (tileset columns derive from texture width; required textures fail fast, optional object/item sprites are skipped with warnings).
 2) Draw world layers and debug overlays in `draw-world` (layers can bind their own tilesets).
 3) Draw placed zone objects and entities (NPCs + player).
 4) When `*debug-npc-logs*` is on, NPCs render an AI text overlay (state/hits).
 5) Draw click markers above entities in world space, then HUD (stamina + zone label + stats + hover name + HUD log), inventory overlay, minimap (centered on player with adjacent zone spawn previews), loading overlay, editor overlays (including the tileset preview), debug combat log, context menu, and menu overlays.
 
 Key functions
-- `load-assets`, `unload-assets`.
+- `load-assets`, `unload-assets` (logs asset counts in verbose mode).
 - `draw-world`, `draw-zone-objects`.
 - `draw-player`, `draw-npc`, `draw-health-bar`, `draw-hit-effect`.
 - `draw-hud`, `draw-inventory`, `draw-combat-log`, `draw-click-marker`, `draw-context-menu`,

@@ -331,8 +331,7 @@
               (parse-game-data-forms (nreverse forms)))))
       (error (e)
         (warn "Failed to read game data from ~a: ~a" path e)
-        (when *verbose*
-          (format t "~&[VERBOSE] Game data read error: ~a~%" e))
+        (log-verbose "Game data read error: ~a" e)
         nil))))
 
 (defun apply-tunables (tunables)
@@ -616,6 +615,7 @@
 (defun load-game-data (&optional (path *game-data-path*))
   ;; Load tunables, animation sets, and archetypes from disk once.
   (unless *game-data-loaded-p*
+    (log-verbose "Loading game data from ~a" (or path "<default>"))
     (clrhash *animation-sets*)
     (clrhash *npc-archetypes*)
     (clrhash *item-archetypes*)
@@ -624,16 +624,34 @@
     (register-default-animation-sets)
     (let ((data (read-game-data path)))
       (when (and data (listp data) (not (plist-form-p data)))
-        (setf data (parse-game-data-forms (list data))))
-      (when data
-        (apply-tunables (getf data :tunables))
-        (load-animation-sets (getf data :animation-sets))
-        (load-npc-archetypes (getf data :npc-archetypes))
-        (load-items (getf data :items))
-        (load-object-archetypes (getf data :object-archetypes))
-        (load-loot-tables (getf data :loot-tables))))
+        (handler-case
+            (setf data (parse-game-data-forms (list data)))
+          (error (e)
+            (warn "Failed to parse game data: ~a" e)
+            (log-verbose "Game data parse error: ~a" e)
+            (setf data nil))))
+      (handler-case
+          (when data
+            (apply-tunables (getf data :tunables))
+            (load-animation-sets (getf data :animation-sets))
+            (load-npc-archetypes (getf data :npc-archetypes))
+            (load-items (getf data :items))
+            (load-object-archetypes (getf data :object-archetypes))
+            (load-loot-tables (getf data :loot-tables)))
+        (error (e)
+          (warn "Failed to apply game data: ~a" e)
+          (log-verbose "Game data apply error: ~a" e)
+          (setf data nil)))
+      (when (null data)
+        (log-verbose "Game data missing or invalid; using defaults")))
     (ensure-default-npc-archetype)
     (ensure-default-items)
+    (log-verbose "Game data ready: animations=~d npcs=~d items=~d objects=~d loot=~d"
+                 (hash-table-count *animation-sets*)
+                 (hash-table-count *npc-archetypes*)
+                 (hash-table-count *item-archetypes*)
+                 (hash-table-count *object-archetypes*)
+                 (hash-table-count *loot-tables*))
     (setf *game-data-loaded-p* t)))
 
 (defun ensure-game-data ()

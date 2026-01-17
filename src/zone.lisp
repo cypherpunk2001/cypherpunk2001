@@ -52,8 +52,7 @@
                 (read in nil nil))))
         (error (e)
           (warn "Failed to read zone data from ~a: ~a" full-path e)
-          (when *verbose*
-            (format t "~&[VERBOSE] Zone data read error: ~a~%" e))
+          (log-verbose "Zone data read error: ~a" e)
           nil)))))
 
 (defun zone-data-plist (data)
@@ -430,11 +429,11 @@
                 (let ((*print-pretty* t)
                       (*print-right-margin* 100))
                   (pprint (zone-to-plist zone) out))))
+            (log-verbose "Zone saved: ~a" full-path)
             t)
         (error (e)
           (warn "Failed to write zone to ~a: ~a" full-path e)
-          (when *verbose*
-            (format t "~&[VERBOSE] Zone write error: ~a~%" e))
+          (log-verbose "Zone write error: ~a" e)
           nil)))))
 
 (defun load-zone (path)
@@ -442,24 +441,35 @@
   (let* ((data (read-zone-data path))
          (plist (zone-data-plist data)))
     (when plist
-      (let* ((id (getf plist :id))
-             (chunk-size (or (getf plist :chunk-size) 32))
-             (width (getf plist :width))
-             (height (getf plist :height))
-             (layer-specs (getf plist :layers nil))
-             (layers (mapcar (lambda (spec)
-                               (zone-layer-from-spec spec chunk-size))
-                             layer-specs))
-             (objects (getf plist :objects nil))
-             (spawns (getf plist :spawns nil))
-             (collision-tiles (build-zone-collision-tiles layers chunk-size)))
-        (unless (and (numberp width) (numberp height))
-          (error "Zone requires :width and :height: ~s" plist))
-        (%make-zone :id id
-                    :chunk-size chunk-size
-                    :width width
-                    :height height
-                    :layers (coerce layers 'vector)
-                    :collision-tiles collision-tiles
-                    :objects objects
-                    :spawns spawns)))))
+      (handler-case
+          (let* ((id (getf plist :id))
+                 (chunk-size (or (getf plist :chunk-size) 32))
+                 (width (getf plist :width))
+                 (height (getf plist :height))
+                 (layer-specs (getf plist :layers nil))
+                 (layers (mapcar (lambda (spec)
+                                   (zone-layer-from-spec spec chunk-size))
+                                 layer-specs))
+                 (objects (getf plist :objects nil))
+                 (spawns (getf plist :spawns nil))
+                 (collision-tiles (build-zone-collision-tiles layers chunk-size)))
+            (unless (and (numberp width) (numberp height))
+              (error "Zone requires :width and :height: ~s" plist))
+            (log-verbose "Zone loaded: ~a id=~a size=~dx~d layers=~d"
+                         (or path "<memory>")
+                         id
+                         width
+                         height
+                         (length layers))
+            (%make-zone :id id
+                        :chunk-size chunk-size
+                        :width width
+                        :height height
+                        :layers (coerce layers 'vector)
+                        :collision-tiles collision-tiles
+                        :objects objects
+                        :spawns spawns))
+        (error (e)
+          (warn "Failed to load zone from ~a: ~a" path e)
+          (log-verbose "Zone load error: ~a" e)
+          nil)))))

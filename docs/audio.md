@@ -8,13 +8,13 @@ Why we do it this way
   commands from UI. This keeps the main loop small.
 
 What it does
-- Loads music streams on startup.
+- Loads music streams on startup, skipping tracks that fail to load.
 - Sets the initial volume from config defaults before playback.
 - Keeps display labels for the menu.
 - Updates the current track and auto-advances when a track ends.
 
 Key functions
-- `make-audio`, `shutdown-audio`.
+- `make-audio`, `shutdown-audio` (logs loaded track counts in verbose mode).
 - `update-audio`, `audio-advance-track`, `audio-adjust-volume`.
 
 Walkthrough: track switching

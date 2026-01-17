@@ -30,32 +30,9 @@ mmorpg/
 
 ## Current Tasks / TODO
 
-1. performance
+- Ensure that when (defparameter *verbose* nil) ;; General verbose mode: logs network events, state changes, and diagnostic info. is t that we are obtaining as much as is possible (sanely) to stdout for future debugging and troubleshooting purposes.
 
-Do this if it's not done already: per your SERVER_PERFORMANCE.md file.
-
-+## Immediate Optimizations (Low-Hanging Fruit)
-+
-+### 1. Non-Blocking UDP Receive
-+**Current**: Tight loop with blocking receive
-+**Fix**: Add timeout to `usocket:wait-for-input`
-+
-+```lisp
-+(when (usocket:wait-for-input socket :timeout 0.001 :ready-only t)
-+  (receive-net-message socket recv-buffer))
-+```
-
-- I note that you say - Bottleneck would be network bandwidth, not CPU
-but i'm probably going to run this on a monolith so if there's a way to make server run the server taking optional argument from nproc
-to use my threads that would be helpful, if it's low hanging and smart?
-
-- stage and commit anything at this point from above.
-
-2. Go ahead and make sure you add an optional verbose mode to the client and the server runtimes. Leave the visual collision debug mode alone, that is useful for me to keep. But the other verbose mode is more verbose about coordinates so it should be a very particular verbose coordinates option. A brand new verbose mode needs to be created which is just standard that our server and client will log what is occuring in a very noisy way when this is enabled, to be the typical thing when we are chasing after gremlins later. So go through every line of code in the codebase and make sure that we are outputting additional useful information if we have this new verbose mode enabled.
-
-stage and commit this option and update README.md about how to run server and client with make in optional verbose mode.
-
-3. Similarly, we need to make sure that we have all possible exceptions covered, and determine as much as possible what should be a fatal exception vs what should not be a fatal exception, lets just do our best to follow best programming practices and cover our exceptions code-base-wide.
+- Similarly, we need to make sure that we have all possible exceptions covered, and determine as much as possible what should be a fatal exception vs what should not be a fatal exception, lets just do our best to follow best programming practices and cover our exceptions code-base-wide like real pros.
 
 ## Future Tasks / Roadmap
 - Persistent world storage and migrations

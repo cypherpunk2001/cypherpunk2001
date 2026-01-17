@@ -16,45 +16,59 @@
 
 (defun make-audio ()
   ;; Load music streams and initialize audio state.
-  (let* ((soundtrack-count (length *soundtrack-tracks*))
-         (soundtrack-music (make-array soundtrack-count))
-         (soundtrack-names (make-array soundtrack-count))
-         (soundtrack-labels (make-array soundtrack-count))
-         (soundtrack-index 0)
-         (menu-no-music-label "No music loaded")
-         (current-track-label menu-no-music-label)
-         (volume-steps (max 1 *music-volume-steps*))
+  (let* ((volume-steps (max 1 *music-volume-steps*))
          (volume-level (clamp *music-default-volume-level* 0 volume-steps))
          (volume-bars (build-volume-bars volume-steps))
          (music-volume (/ volume-level (float volume-steps 1.0)))
-         (current-music nil))
-    (loop :for index :from 0 :below soundtrack-count
+         (menu-no-music-label "No music loaded")
+         (tracks nil)
+         (names nil)
+         (labels nil))
+    (loop :for index :from 0 :below (length *soundtrack-tracks*)
           :for path = (aref *soundtrack-tracks* index)
           :for display = (if (and (< index (length *soundtrack-display-names*))
                                   (aref *soundtrack-display-names* index))
                              (aref *soundtrack-display-names* index)
                              (basename path))
           :for label = (format nil "Now Playing: ~a" display)
-          :do (setf (aref soundtrack-names index) display
-                    (aref soundtrack-labels index) label
-                    (aref soundtrack-music index)
-                    (raylib:load-music-stream path)))
-    (when (> soundtrack-count 0)
-      (setf current-music (aref soundtrack-music 0)
-            current-track-label (aref soundtrack-labels 0))
-      (raylib:play-music-stream current-music)
-      (raylib:set-music-volume current-music music-volume))
-    (%make-audio :soundtrack-count soundtrack-count
-                 :soundtrack-music soundtrack-music
-                 :soundtrack-names soundtrack-names
-                 :soundtrack-labels soundtrack-labels
-                 :soundtrack-index soundtrack-index
-                 :current-music current-music
-                 :current-track-label current-track-label
-                 :volume-steps volume-steps
-                 :volume-level volume-level
-                 :volume-bars volume-bars
-                 :music-volume music-volume)))
+          :do (handler-case
+                  (let ((stream (raylib:load-music-stream path)))
+                    (push stream tracks)
+                    (push display names)
+                    (push label labels)
+                    (log-verbose "Loaded music track: ~a" path))
+                (error (e)
+                  (warn "Failed to load music track ~a: ~a" path e)
+                  (log-verbose "Music load error for ~a: ~a" path e))))
+    (let* ((soundtrack-music (coerce (nreverse tracks) 'vector))
+           (soundtrack-names (coerce (nreverse names) 'vector))
+           (soundtrack-labels (coerce (nreverse labels) 'vector))
+           (soundtrack-count (length soundtrack-music))
+           (soundtrack-index 0)
+           (current-track-label (if (> soundtrack-count 0)
+                                    (aref soundtrack-labels 0)
+                                    menu-no-music-label))
+           (current-music (if (> soundtrack-count 0)
+                              (aref soundtrack-music 0)
+                              nil)))
+      (when current-music
+        (raylib:play-music-stream current-music)
+        (raylib:set-music-volume current-music music-volume))
+      (when (zerop soundtrack-count)
+        (warn "No music tracks loaded; audio will be silent"))
+      (log-verbose "Audio ready: tracks=~d volume=~d/~d"
+                   soundtrack-count volume-level volume-steps)
+      (%make-audio :soundtrack-count soundtrack-count
+                   :soundtrack-music soundtrack-music
+                   :soundtrack-names soundtrack-names
+                   :soundtrack-labels soundtrack-labels
+                   :soundtrack-index soundtrack-index
+                   :current-music current-music
+                   :current-track-label current-track-label
+                   :volume-steps volume-steps
+                   :volume-level volume-level
+                   :volume-bars volume-bars
+                   :music-volume music-volume))))
 
 (defun shutdown-audio (audio)
   ;; Unload music streams stored in audio state.

@@ -48,14 +48,14 @@ Example zone
 ```
 
 Key functions
-- `load-zone`: reads a zone file and builds chunk/layer structures.
+- `load-zone`: reads a zone file and builds chunk/layer structures (warns + returns nil on malformed data; logs details in verbose mode).
 - `zone-wall-map`: converts collision layers into a wall map array.
 - `zone-layer-tile-at`: fetches a tile index from chunk data.
 - `ensure-zone-layer`, `zone-layer-set-tile`: editor helpers for mutating layers.
 - `zone-add-object`, `zone-remove-object-at`: editor helpers for object placement.
 - `zone-add-spawn`, `zone-remove-spawn-at`: editor helpers for spawn placement.
 - `make-empty-zone`, `zone-resize`: helpers used by editor zone lifecycle tools.
-- `zone-slice`, `zone-to-plist`, `write-zone`: export helpers for editor saves.
+- `zone-slice`, `zone-to-plist`, `write-zone`: export helpers for editor saves (with verbose logging on save).
 
 Design note
 - Collision tiles are precomputed into a hash for fast lookups.

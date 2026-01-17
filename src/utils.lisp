@@ -1,6 +1,28 @@
 ;; NOTE: If you change behavior here, update docs/utils.md :)
 (in-package #:mmorpg)
 
+(defun log-verbose (fmt &rest args)
+  ;; Emit a verbose log line when *verbose* is enabled.
+  (when *verbose*
+    (format t "~&[VERBOSE] ")
+    (apply #'format t fmt args)
+    (format t "~%")
+    (finish-output)))
+
+(defun log-fatal-error (context condition)
+  ;; Emit fatal error context and optional backtrace.
+  (warn "~a: ~a" context condition)
+  (log-verbose "~a: ~a" context condition)
+  #+sbcl
+  (when *verbose*
+    (format t "~&[VERBOSE] Backtrace (most recent call first):~%")
+    (sb-debug:print-backtrace :stream *standard-output* :count 25)))
+
+(defmacro with-fatal-error-log ((context) &body body)
+  `(handler-bind ((error (lambda (e)
+                           (log-fatal-error ,context e))))
+     ,@body))
+
 (defun clamp (value min-value max-value)
   ;; Clamp VALUE between MIN-VALUE and MAX-VALUE for bounds checks.
   (max min-value (min value max-value)))

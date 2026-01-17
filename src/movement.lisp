@@ -803,11 +803,15 @@
                             (edge-offset-ratio (world-wall-min-x world)
                                                (world-wall-max-x world)
                                                (player-x player))
-                            (edge-offset-ratio (world-wall-min-y world)
-                                               (world-wall-max-y world)
-                                               (player-y player)))
+            (edge-offset-ratio (world-wall-min-y world)
+                               (world-wall-max-y world)
+                               (player-y player)))
                         0.5)))
         (when zone
+          (log-verbose "Zone transition: ~a -> ~a via ~a"
+                       current-zone-id
+                       (zone-id zone)
+                       edge)
           (setf *zone-path* target-path)
           (apply-zone-to-world world zone)
           (setf (world-zone-label world) (zone-label zone))
@@ -828,7 +832,7 @@
                                (+ (player-y player) target-offset-y)))
           (setf (player-attacking player) nil
                 (player-attack-hit player) nil
-                (player-attack-timer player) 0.0)
+                    (player-attack-timer player) 0.0)
           (setf (world-minimap-spawns world)
                 (build-adjacent-minimap-spawns world player))
           (let* ((players (game-players game))
@@ -893,7 +897,7 @@
                         collision-half-width))
          (wall-min-y (+ (* (+ *wall-origin-y* 1) tile-dest-size)
                         collision-half-height))
-         (wall-max-y (- (* (+ *wall-origin-y* (1- wall-map-height))
+        (wall-max-y (- (* (+ *wall-origin-y* (1- wall-map-height))
                            tile-dest-size)
                         collision-half-height)))
     (let ((world (%make-world :tile-size-f tile-size-f
@@ -915,6 +919,12 @@
                               :wall-max-x wall-max-x
                               :wall-min-y wall-min-y
                               :wall-max-y wall-max-y)))
+      (log-verbose "World ready: zone=~a walls=~dx~d tile=~,2f dest=~,2f"
+                   (zone-label zone)
+                   wall-map-width
+                   wall-map-height
+                   tile-size-f
+                   tile-dest-size)
       (setf (world-minimap-spawns world)
             (build-adjacent-minimap-spawns world))
       (setf (world-minimap-collisions world)

@@ -44,12 +44,12 @@
              (size (length octets)))
         (when (> size *net-buffer-size*)
           (warn "Dropping UDP payload (~d bytes) over buffer size ~d" size *net-buffer-size*)
+          (log-verbose "UDP payload too large: ~d bytes (limit ~d)" size *net-buffer-size*)
           (return-from send-net-message nil))
         (usocket:socket-send socket octets size :host host :port port)
         t)
     (error (e)
-      (when *verbose*
-        (format t "~&[VERBOSE] Failed to send message to ~a:~d: ~a~%" host port e))
+      (log-verbose "Failed to send message to ~a:~d: ~a" host port e)
       nil)))
 
 (defun get-nproc ()
@@ -77,8 +77,14 @@
         (usocket:socket-receive socket buffer (length buffer))
       (declare (ignore recv))
       (when (and size (> size 0))
-        (let ((text (octets-to-string buffer size)))
-          (values (decode-net-message text) (host-to-string host) port))))))
+        (let* ((text (octets-to-string buffer size))
+               (message (decode-net-message text)))
+          (unless message
+            (log-verbose "Dropped malformed packet from ~a:~d (~d bytes)"
+                         (host-to-string host)
+                         port
+                         size))
+          (values message (host-to-string host) port))))))
 
 (defstruct (net-client (:constructor %make-net-client))
   ;; Server-side view of a connected client.
@@ -154,9 +160,8 @@
                             (spawn-player-at-world (game-world game)
                                                    (game-id-source game)))))
                (client (make-net-client host port player)))
-          (when *verbose*
-            (format t "~&[VERBOSE] New client registered: ~a:~d -> player-id=~d~%"
-                    host port (player-id player)))
+          (log-verbose "New client registered: ~a:~d -> player-id=~d"
+                       host port (player-id player))
           (reset-player-for-client player)
           (setf (net-client-last-heard client) timestamp)
           (values client (cons client clients) t)))))
@@ -313,6 +318,7 @@
         (multiple-value-bind (zone-id zone-changed)
             (apply-game-state game state :apply-zone t)
           (when zone-changed
+            (log-verbose "Client zone transitioned to ~a" zone-id)
             (handle-zone-transition game))
           (let ((queue (game-combat-events game)))
             (dolist (event-plist event-plists)
@@ -326,8 +332,7 @@
           zone-id))
     (error (e)
       (warn "Failed to apply snapshot: ~a" e)
-      (when *verbose*
-        (format t "~&[VERBOSE] Snapshot application error: ~a~%" e))
+      (log-verbose "Snapshot application error: ~a" e)
       nil)))
 
 (defun send-intent-message (socket intent &key host port)
@@ -382,146 +387,154 @@
   ;;   - N = parallel sending across N threads (for high client counts)
   ;;   - Recommended: (get-nproc) on multi-core machines
   ;;   - Safe: Only parallelizes network I/O, simulation remains serial
-  (let* ((socket (usocket:socket-connect nil nil
-                                        :protocol :datagram
-                                        :local-host host
-                                        :local-port port))
-         (recv-buffer (make-net-buffer))
-         (game (make-server-game))
-         (clients nil)
-         (stop-flag nil)
-         (stop-reason nil))
-    (format t "~&SERVER: listening on ~a:~d (worker-threads=~d)~%" host port worker-threads)
-    (when *verbose*
-      (format t "~&[VERBOSE] Server config: tick=~,3fs buffer=~d workers=~d~%"
-              *sim-tick-seconds* *net-buffer-size* worker-threads))
-    (finish-output)
-    (unwind-protect
-         (handler-case
-             (loop :with elapsed = 0.0
-                   :with frames = 0
-                   :with accumulator = 0.0
-                   :until (or stop-flag
-                              (and (> max-seconds 0.0)
-                                   (>= elapsed max-seconds))
-                              (and (> max-frames 0)
-                                   (>= frames max-frames)))
-                   :do ;; 1. Receive all pending intents (non-blocking UDP receive)
-                       (loop
-                         (multiple-value-bind (message host port)
-                             (receive-net-message socket recv-buffer)
-                           (unless message
-                             (return))
-                           (multiple-value-bind (client next-clients _new)
-                               (register-net-client game clients host port
-                                                    :timestamp elapsed)
-                             (declare (ignore _new))
-                             (setf clients next-clients)
-                             (case (getf message :type)
-                               (:hello nil)
-                               (:intent
-                                (when client
-                                  (apply-intent-plist
-                                   (net-client-intent client)
-                                   (getf message :payload))))
-                               (:save
-                                (when (save-game game *save-filepath*)
-                                  (emit-hud-message-event (game-combat-events game)
-                                                          "Game saved.")))
-                               (:load
-                                (handle-server-load game)
-                                (setf clients
-                                      (reconcile-net-clients game clients)))))))
-                       ;; 2. Apply client intents to player state (O(clients), cheap)
-                       (apply-client-intents clients)
-                       ;; 3. Run fixed-tick simulation (O(players * npcs), main bottleneck)
-                       (let ((dt *sim-tick-seconds*))
-                         (incf elapsed dt)
-                         (incf frames)
-                         (multiple-value-bind (new-acc transitions)
-                             (server-step game nil dt accumulator)
-                           (setf accumulator new-acc)
-                           (dotimes (_ transitions)
-                             (declare (ignore _)))))
-                       ;; 4. Send snapshots to all clients (serialize once, send N times)
-                       ;; OPTIMIZATION: Serialization happens once and is shared across clients.
-                       ;; For 500 clients this is much better than 500 serializations.
-                       ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
-                       ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
-                       (when clients
-                         (handler-case
-                             (let* ((events (pop-combat-events (game-combat-events game)))
-                                    (event-plists (mapcar #'combat-event->plist events))
-                                    (state (serialize-game-state game :include-visuals t)))
-                               (send-snapshots-parallel socket clients state event-plists
-                                                        worker-threads))
-                           (error (e)
-                             (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
-                             (when *verbose*
-                               (format t "~&[VERBOSE] Snapshot error, skipping frame~%")))))
-                       (sleep *sim-tick-seconds*))
-           #+sbcl
-           (sb-sys:interactive-interrupt ()
-             (setf stop-flag t stop-reason "interrupt")))
-      (when stop-reason
-        (format t "~&SERVER: shutdown requested (~a).~%" stop-reason)
-        (finish-output))
-      (usocket:socket-close socket))))
+  (with-fatal-error-log ((format nil "Server runtime (~a:~d)" host port))
+    (let* ((socket (usocket:socket-connect nil nil
+                                          :protocol :datagram
+                                          :local-host host
+                                          :local-port port))
+           (recv-buffer (make-net-buffer))
+           (game (make-server-game))
+           (clients nil)
+           (stop-flag nil)
+           (stop-reason nil))
+      (format t "~&SERVER: listening on ~a:~d (worker-threads=~d)~%" host port worker-threads)
+      (log-verbose "Server config: tick=~,3fs buffer=~d workers=~d"
+                   *sim-tick-seconds* *net-buffer-size* worker-threads)
+      (finish-output)
+      (unwind-protect
+           (handler-case
+               (loop :with elapsed = 0.0
+                     :with frames = 0
+                     :with accumulator = 0.0
+                     :until (or stop-flag
+                                (and (> max-seconds 0.0)
+                                     (>= elapsed max-seconds))
+                                (and (> max-frames 0)
+                                     (>= frames max-frames)))
+                     :do ;; 1. Receive all pending intents (non-blocking UDP receive)
+                         (loop
+                           (multiple-value-bind (message host port)
+                               (receive-net-message socket recv-buffer)
+                             (unless message
+                               (return))
+                             (multiple-value-bind (client next-clients _new)
+                                 (register-net-client game clients host port
+                                                      :timestamp elapsed)
+                               (declare (ignore _new))
+                               (setf clients next-clients)
+                               (case (getf message :type)
+                                 (:hello
+                                  (log-verbose "Handshake received from ~a:~d" host port))
+                                 (:intent
+                                  (when client
+                                    (apply-intent-plist
+                                     (net-client-intent client)
+                                     (getf message :payload))))
+                                 (:save
+                                  (log-verbose "Save requested by ~a:~d" host port)
+                                  (when (save-game game *save-filepath*)
+                                    (emit-hud-message-event (game-combat-events game)
+                                                            "Game saved.")))
+                                 (:load
+                                  (log-verbose "Load requested by ~a:~d" host port)
+                                  (handle-server-load game)
+                                  (setf clients
+                                        (reconcile-net-clients game clients)))
+                                 (t
+                                  (log-verbose "Unknown message type from ~a:~d -> ~s"
+                                               host port (getf message :type)))))))
+                         ;; 2. Apply client intents to player state (O(clients), cheap)
+                         (apply-client-intents clients)
+                         ;; 3. Run fixed-tick simulation (O(players * npcs), main bottleneck)
+                         (let ((dt *sim-tick-seconds*))
+                           (incf elapsed dt)
+                           (incf frames)
+                           (multiple-value-bind (new-acc transitions)
+                               (server-step game nil dt accumulator)
+                             (setf accumulator new-acc)
+                             (dotimes (_ transitions)
+                               (declare (ignore _)))))
+                         ;; 4. Send snapshots to all clients (serialize once, send N times)
+                         ;; OPTIMIZATION: Serialization happens once and is shared across clients.
+                         ;; For 500 clients this is much better than 500 serializations.
+                         ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
+                         ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
+                         (when clients
+                           (handler-case
+                               (let* ((events (pop-combat-events (game-combat-events game)))
+                                      (event-plists (mapcar #'combat-event->plist events))
+                                      (state (serialize-game-state game :include-visuals t)))
+                                 (send-snapshots-parallel socket clients state event-plists
+                                                          worker-threads))
+                             (error (e)
+                               (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
+                               (log-verbose "Snapshot error, skipping frame: ~a" e))))
+                         (sleep *sim-tick-seconds*))
+             #+sbcl
+             (sb-sys:interactive-interrupt ()
+               (setf stop-flag t stop-reason "interrupt")))
+        (when stop-reason
+          (format t "~&SERVER: shutdown requested (~a).~%" stop-reason)
+          (finish-output))
+        (usocket:socket-close socket)))))
 
 (defun run-client (&key (host *net-default-host*)
                         (port *net-default-port*)
                         (max-seconds 0.0)
                         (max-frames 0))
   ;; Run a client that connects to the UDP server and renders snapshots.
-  (when *verbose*
-    (format t "~&[VERBOSE] Client starting: connecting to ~a:~d~%" host port))
-  (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
-    (raylib:set-target-fps 60)
-    (raylib:set-exit-key 0)
-    (raylib:init-audio-device)
-    (let* ((socket (usocket:socket-connect host port :protocol :datagram))
-           (recv-buffer (make-net-buffer))
-           (game (make-game)))
-      (setf (game-net-role game) :client)
-      (send-net-message socket (list :type :hello))
-      (unwind-protect
-           (loop :with elapsed = 0.0
-                 :with frames = 0
-                 :until (or (raylib:window-should-close)
-                            (ui-exit-requested (game-ui game))
-                            (and (> max-seconds 0.0)
-                                 (>= elapsed max-seconds))
-                            (and (> max-frames 0)
-                                 (>= frames max-frames)))
-                 :do (let ((dt (raylib:get-frame-time)))
-                       (incf elapsed dt)
-                       (incf frames)
-                       (update-client-input game dt)
-                       (dolist (request (drain-net-requests game))
-                         (send-net-message socket request))
-                       (send-intent-message socket (game-client-intent game))
-                       (clear-requested-chat-message (game-client-intent game))
-                       (let ((latest-state nil)
-                             (latest-events nil)
-                             (latest-player-id nil))
-                         (loop
-                           (multiple-value-bind (message _host _port)
-                               (receive-net-message socket recv-buffer)
-                             (declare (ignore _host _port))
-                             (unless message
-                               (return))
-                             (case (getf message :type)
-                               (:snapshot
-                                (setf latest-state (getf message :state)
-                                      latest-player-id (or (getf message :player-id)
-                                                           latest-player-id))
-                                (dolist (event (getf message :events))
-                                  (push event latest-events))))))
-                         (when latest-state
-                           (apply-snapshot game latest-state (nreverse latest-events)
-                                           :player-id latest-player-id))))
-                       (process-combat-events game)
-                       (draw-game game)))
-        (shutdown-game game)
-        (usocket:socket-close socket)
-        (raylib:close-audio-device))))
+  (with-fatal-error-log ((format nil "Client runtime (~a:~d)" host port))
+    (log-verbose "Client starting: connecting to ~a:~d" host port)
+    (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
+      (raylib:set-target-fps 60)
+      (raylib:set-exit-key 0)
+      (raylib:init-audio-device)
+      (let* ((socket (usocket:socket-connect host port :protocol :datagram))
+             (recv-buffer (make-net-buffer))
+             (game (make-game)))
+        (setf (game-net-role game) :client)
+        (send-net-message socket (list :type :hello))
+        (unwind-protect
+             (loop :with elapsed = 0.0
+                   :with frames = 0
+                   :until (or (raylib:window-should-close)
+                              (ui-exit-requested (game-ui game))
+                              (and (> max-seconds 0.0)
+                                   (>= elapsed max-seconds))
+                              (and (> max-frames 0)
+                                   (>= frames max-frames)))
+                   :do (let ((dt (raylib:get-frame-time)))
+                         (incf elapsed dt)
+                         (incf frames)
+                         (update-client-input game dt)
+                         (dolist (request (drain-net-requests game))
+                           (send-net-message socket request))
+                         (send-intent-message socket (game-client-intent game))
+                         (clear-requested-chat-message (game-client-intent game))
+                         (let ((latest-state nil)
+                               (latest-events nil)
+                               (latest-player-id nil))
+                           (loop
+                             (multiple-value-bind (message _host _port)
+                                 (receive-net-message socket recv-buffer)
+                               (declare (ignore _host _port))
+                               (unless message
+                                 (return))
+                               (case (getf message :type)
+                                 (:snapshot
+                                  (setf latest-state (getf message :state)
+                                        latest-player-id (or (getf message :player-id)
+                                                             latest-player-id))
+                                  (dolist (event (getf message :events))
+                                    (push event latest-events)))
+                                 (t
+                                  (log-verbose "Unknown message type from server: ~s"
+                                               (getf message :type)))))
+                           (when latest-state
+                             (apply-snapshot game latest-state (nreverse latest-events)
+                                             :player-id latest-player-id))))
+                         (process-combat-events game)
+                         (draw-game game)))
+          (shutdown-game game)
+          (usocket:socket-close socket)
+          (raylib:close-audio-device))))))

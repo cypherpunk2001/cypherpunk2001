@@ -408,8 +408,7 @@
   ;; Save game state to FILEPATH. Returns T on success, NIL on failure (non-fatal).
   (handler-case
       (progn
-        (when *verbose*
-          (format t "~&[VERBOSE] Serializing game state for save...~%"))
+        (log-verbose "Serializing game state for save")
         (let ((state (serialize-game-state game)))
           (with-open-file (out filepath
                                :direction :output
@@ -417,13 +416,11 @@
                                :if-does-not-exist :create)
             (prin1 state out))
           (format t "~&Saved game to ~a~%" filepath)
-          (when *verbose*
-            (format t "~&[VERBOSE] Save completed successfully~%"))
+          (log-verbose "Save completed successfully")
           t))
     (error (e)
       (warn "Failed to save game to ~a: ~a" filepath e)
-      (when *verbose*
-        (format t "~&[VERBOSE] Save error: ~a~%" e))
+      (log-verbose "Save error: ~a" e)
       nil)))
 
 (defun load-game (game filepath &key (apply-zone t))
@@ -432,8 +429,7 @@
   (if (probe-file filepath)
       (handler-case
           (progn
-            (when *verbose*
-              (format t "~&[VERBOSE] Loading game from ~a...~%" filepath))
+            (log-verbose "Loading game from ~a" filepath)
             (let* ((state (with-open-file (in filepath :direction :input)
                             (let ((*read-eval* nil)) ; Security: disable eval in read
                               (read in)))))
@@ -441,13 +437,11 @@
                   (apply-game-state game state :apply-zone apply-zone)
                 (declare (ignore _zone-loaded))
                 (format t "~&Loaded game from ~a (zone: ~a)~%" filepath loaded-zone-id)
-                (when *verbose*
-                  (format t "~&[VERBOSE] Load completed, zone transitioned to ~a~%" loaded-zone-id))
+                (log-verbose "Load completed, zone transitioned to ~a" loaded-zone-id)
                 loaded-zone-id)))
         (error (e)
           (warn "Failed to load game from ~a: ~a" filepath e)
-          (when *verbose*
-            (format t "~&[VERBOSE] Load error (possibly corrupt save): ~a~%" e))
+          (log-verbose "Load error (possibly corrupt save): ~a" e)
           nil))
       (progn
         (warn "Save file not found: ~a" filepath)
