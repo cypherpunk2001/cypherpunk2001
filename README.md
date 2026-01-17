@@ -5,104 +5,13 @@
 - Emacs + SLIME (or any Common Lisp REPL)
 - raylib + raygui
 - claw-raylib (prebuild branch recommended)
-- redis (valkey)
-
-## Redis notes
-
-Redis defaults:
-  - ✅ appendfsync everysec - already set
-  - ✅ auto-aof-rewrite-percentage 100 - already set
-  - ✅ auto-aof-rewrite-min-size 64mb - already set
-  - ✅ dir /var/lib/valkey/ - data directory configured
-  - ✅ stop-writes-on-bgsave-error yes - safety enabled
-Missing:
-  - ❌ appendonly no - Needs to be yes (critical for durability)
-  - ❌ No save directives - Needs RDB snapshots for backups
-
-Enable missing:
-
-```bash
-sudo sed -i 's/^appendonly no$/appendonly yes/' /etc/valkey/valkey.conf
-echo -e '\n# RDB snapshot settings for MMORPG persistence\nsave 300 1\nsave 60 1000' | sudo tee -a /etc/valkey/valkey.conf
-sudo systemctl restart valkey
-systemctl status valkey
-```
-
-✅ AOF Enabled:
-
-appendonly yes
-
-✅ RDB Snapshots Configured:
-
-save 300 1
-
-save 60 1000
-
-✅ Valkey Started Successfully with Persistence:
-
-The key lines in the status show AOF is working:
-Creating AOF base file appendonly.aof.1.base.rdb on server start
-Creating AOF incr file appendonly.aof.1.incr.aof on server start
-Ready to accept connections tcp
-
-Your Valkey is now configured for maximum durability with:
-- AOF: Logs every write operation (max 1 second data loss)
-- RDB: Snapshots every 5 minutes (if anything changed) or every 1 minute (if 1000+ changes)
-
-
-**Redis is now the default storage backend.**
-
-`make server` uses Redis by default - develop close to production!
-
-**Storage Backends**
-
-Redis Storage (:redis) - **DEFAULT**
-
-What it is:
-- Data persisted to disk via Valkey (Redis-compatible)
-- Data survives server restarts, crashes, code reloads
-- Requires Valkey running on port 6379
-
-This is the default because:
-- ✅ Dev close to production: Catch persistence bugs early
-- ✅ Test real durability: Migrations, crash recovery, tier-1 writes
-- ✅ Long-running dev sessions: Build up a character over multiple runs
-- ✅ No surprises: What works locally works in production
-
-Memory Storage (:memory) - for CI/testing only
-
-What it is:
-- Everything stored in a Lisp hash table in RAM
-- Data completely lost when server stops
-- No external dependencies (doesn't need Valkey running)
-
-Use cases:
-- ✅ CI/automated tests: `make ci` and `make smoke` use memory backend
-- ✅ Clean slate testing: Explicit opt-in when you need fresh state
-- ✅ Working offline: When Valkey isn't available
-
-To use memory storage explicitly:
-```shell
-MMORPG_DB_BACKEND=memory make server
-```
-
-**Practical Example (with Redis default)**
-
-```shell
-# Run 1: Create character, gain XP, reach level 5
-make server   # Uses Redis by default
-# Stop server (Ctrl+C)
-
-# Run 2: Character still level 5 with all XP/items intact!
-make server
-```
-
-**Bottom line**: Redis is default. Use `MMORPG_DB_BACKEND=memory` only when you explicitly need a clean slate or don't have Valkey running.
-
+- Valkey/Redis (for persistence)
 
 ## Setup
 - Follow the claw-raylib build instructions; on the prebuild branch, skip steps 1-2 and start at step 3.
 - Register the repo with Quicklisp once per session.
+- Start Valkey: `sudo systemctl start valkey`
+- For Redis configuration, see [deploy/README.md](deploy/README.md)
 
 ## Run (Client/Server UDP)
 Server must start first.
@@ -117,31 +26,18 @@ make client
 ```
 
 ### Verbose Modes
-Enable diagnostic logging for debugging:
-
 ```shell
-# General verbose mode (network events, state changes)
-MMORPG_VERBOSE=1 make server
-MMORPG_VERBOSE=1 make client
-
-# Verbose coordinates mode (entity positions per frame, very noisy)
-MMORPG_VERBOSE_COORDS=1 make server
-MMORPG_VERBOSE_COORDS=1 make client
-
-# Both verbose modes
-MMORPG_VERBOSE=1 MMORPG_VERBOSE_COORDS=1 make server
+MMORPG_VERBOSE=1 make server          # Network events, state changes
+MMORPG_VERBOSE_COORDS=1 make server   # Entity positions per frame (noisy)
 ```
 
 ### Performance Tuning
 ```shell
-# Use multiple worker threads for parallel snapshot sending
-MMORPG_WORKER_THREADS=4 make server
-
-# Use all CPU cores
-MMORPG_WORKER_THREADS=$(nproc) make server
+MMORPG_WORKER_THREADS=4 make server      # Parallel snapshot sending
+MMORPG_WORKER_THREADS=$(nproc) make server   # Use all CPU cores
 ```
 
-SLIME (two Emacs sessions, one per process):
+### SLIME (two Emacs sessions)
 
 Server REPL:
 ```lisp
@@ -157,92 +53,31 @@ Client REPL:
 (mmorpg:run-client :host "127.0.0.1" :port 1337)
 ```
 
+## Storage Backends
+
+**Redis (default)** - Data persists to disk, survives restarts. Requires Valkey running.
+
+**Memory** - RAM only, lost on shutdown. For CI/testing:
+```shell
+MMORPG_DB_BACKEND=memory make server
+```
+
 ## Tests
-- `make checkparens` Checks all `.lisp` files in `data/` and `src/` for balanced parentheses and general sexp structure.
-- `make ci` runs a cold compile check (no window, no GPU needed) and performs a UDP handshake smoke test.
-- `make smoke` starts a UDP server + client, opens the client window briefly, and exits automatically.
-  It runs from `src/` so existing `../assets` paths resolve correctly.
-  The smoke target is wrapped in a Linux `timeout` to kill hung runs.
-  Defaults: 2 seconds runtime, 5 seconds timeout.
-- `make test-persistence` Data integrity unit tests (serialization, migrations, invariants)
-- `make checkdocs` Checks that every `src/foo.lisp` has a matching `docs/foo.md`, errors if any are missing, otherwise prints a friendly reminder when all pass.
+```shell
+make checkparens        # Balanced parentheses in .lisp files
+make ci                 # Cold compile + UDP handshake (no GPU)
+make test-persistence   # Data integrity tests
+make checkdocs          # Verify docs exist for each src file
+make smoke              # Full client/server with window (2s)
+```
 
 Test env overrides:
-- `MMORPG_NET_TEST_PORT` override UDP port (default 1337).
-- `MMORPG_NET_TEST_SECONDS` override UDP server duration in CI.
+- `MMORPG_NET_TEST_PORT` - UDP port (default 1337)
+- `MMORPG_NET_TEST_SECONDS` - UDP server duration in CI
 
-## DevOps: Automated Backups
+## Deployment
 
-Redis backups are handled via systemd timer. Backups are stored in `/var/mmorpg/db/backups/` with timestamps and automatic rotation.
-
-### Install Backup System
-
-```bash
-# Copy script and make executable
-sudo cp deploy/mmorpg-backup.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/mmorpg-backup.sh
-
-# Create backup directory
-sudo mkdir -p /var/mmorpg/db/backups
-
-# Install systemd units
-sudo cp deploy/mmorpg-backup.service /etc/systemd/system/
-sudo cp deploy/mmorpg-backup.timer /etc/systemd/system/
-
-# Enable and start the timer
-sudo systemctl daemon-reload
-sudo systemctl enable mmorpg-backup.timer
-sudo systemctl start mmorpg-backup.timer
-
-# Verify timer is active
-systemctl list-timers | grep mmorpg
-```
-
-### Backup Configuration
-
-Environment variables (set in `/etc/systemd/system/mmorpg-backup.service`):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MMORPG_BACKUP_DIR` | `/var/mmorpg/db/backups` | Where backups are stored |
-| `MMORPG_REDIS_HOST` | `127.0.0.1` | Redis host |
-| `MMORPG_REDIS_PORT` | `6379` | Redis port |
-| `MMORPG_REDIS_DATA_DIR` | `/var/lib/valkey` | Where Redis stores dump.rdb |
-| `MMORPG_KEEP_BACKUPS` | `168` | Number of backups to keep (168 = 7 days hourly) |
-
-### Manual Backup
-
-```bash
-# Run backup immediately
-sudo systemctl start mmorpg-backup.service
-
-# Check backup status
-sudo journalctl -u mmorpg-backup.service -n 20
-
-# List backups
-ls -lh /var/mmorpg/db/backups/
-```
-
-### Restore from Backup
-
-```bash
-# Stop game server first!
-sudo systemctl stop mmorpg-server  # or however you run it
-
-# Stop Redis
-sudo systemctl stop valkey
-
-# Replace dump.rdb with backup
-sudo cp /var/mmorpg/db/backups/dump-YYYYMMDD-HHMMSS.rdb /var/lib/valkey/dump.rdb
-sudo chown valkey:valkey /var/lib/valkey/dump.rdb
-
-# Start Redis (will load the backup)
-sudo systemctl start valkey
-
-# Start game server
-sudo systemctl start mmorpg-server
-```
-
-### Performance Note
-
-Redis `BGSAVE` runs in a forked child process - the main Redis continues serving requests without interruption. For our game scale, backup overhead is negligible.
+See [deploy/README.md](deploy/README.md) for:
+- Redis/Valkey configuration
+- Automated backup setup
+- Restore procedures
