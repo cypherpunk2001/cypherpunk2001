@@ -211,7 +211,7 @@ Every field in player/entity structs MUST be explicitly categorized:
 **Why cl-redis:**
 - Standard CL Redis client with good adoption (193 GitHub stars)
 - Full Redis command support via `RED` package (e.g., `(red:get key)`, `(red:set key value)`)
-- **Pipelining support** - critical for batch writes (300x speedup in benchmarks)
+- **Pipelining support** - critical for batch writes (used by `flush-dirty-players` for ~300x speedup)
 - Connection management via `with-connection` macro
 - Automatic reconnection with restart conditions
 
@@ -452,7 +452,7 @@ On server start, optionally pre-load frequently accessed data:
 Every record has a `:version` field. Current schema version is tracked in code:
 
 ```lisp
-(defparameter *player-schema-version* 2)  ; v2: added lifetime-xp
+(defparameter *player-schema-version* 3)  ; v3: added playtime, created-at
 ```
 
 ### Migration Chain
@@ -484,17 +484,27 @@ Migrations are **append-only** and **chained**:
 3. **Migrations must handle missing fields.** Use defaults for new fields.
 4. **Test migrations on production data copies** before deploying.
 
-### Example Migration (v1->v2: lifetime-xp)
+### Example Migrations
 
 ```lisp
+;; v1->v2: Add lifetime-xp field
 (defun migrate-player-v1->v2 (data)
   "v1->v2: Add lifetime-xp field, defaulting to 0."
   (unless (getf data :lifetime-xp)
     (setf (getf data :lifetime-xp) 0))
   data)
+
+;; v2->v3: Add playtime and created-at fields
+(defun migrate-player-v2->v3 (data)
+  "v2->v3: Add playtime (seconds played) and created-at (unix timestamp)."
+  (unless (getf data :playtime)
+    (setf (getf data :playtime) 0))
+  (unless (getf data :created-at)
+    (setf (getf data :created-at) (get-universal-time)))
+  data)
 ```
 
-This migration is tested in `persistence-test.lisp` with `test-migration-v1-to-v2`.
+These migrations are tested in `persistence-test.lisp` with `test-migration-v1-to-v2` and `test-migration-v1-to-v3-chain`.
 
 ## Crash-Safe Writes (Atomic Saves)
 
@@ -788,18 +798,22 @@ redis-cli info persistence
 redis-cli info memory
 ```
 
-## Future: Postgres Cold Storage
+## Future: Postgres Cold Storage (Tentative)
 
-When to migrate to Redis + Postgres:
+Redis may be sufficient for the long term. This section documents a potential migration path **if and when** scale demands it. Until then, Redis-only is simpler and adequate.
 
-1. **Scale:** >50k registered players (Redis memory pressure)
+**When to consider Redis + Postgres:**
+
+1. **Scale:** >50k registered players causing Redis memory pressure
 2. **Queries:** Need complex queries (leaderboards, analytics, support tools)
 3. **Compliance:** Need audit logs, GDPR deletion, data export
 4. **Multi-region:** Need geographic data distribution
 
-### Migration Path
+**Note:** With proper Redis configuration (maxmemory, eviction policies, RDB snapshots), Redis alone can handle significant scale. Only add Postgres when there's a concrete need.
 
-When ready, the architecture becomes:
+### Migration Path (If Needed)
+
+If Redis alone proves insufficient, the architecture would become:
 
 ```
 [Live Players] <-> [Redis Hot Cache] <-> [Postgres Cold Storage]

@@ -61,18 +61,7 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-### DB Spec vs Implementation Mismatches (Review Required)
-
-These items need a decision: either update the spec (docs/db.md) or fix the code to match spec.
-
-1. **Pipelining for batch writes** - docs/db.md (lines 220-226) documents Redis pipelining for tier-2 batch flushes promising 300x speedup. Code in `flush-dirty-players()` does sequential saves instead. Decision: implement pipelining or remove from spec?
-This sounds amazing. Should we do it? I dont know why not?
-
-2. **Player schema version** - docs/db.md shows examples with version 2, but src/migrations.lisp defines `*player-schema-version* 3`. The v2→v3 migration (added `:playtime` and `:created-at`) exists in code but not documented in spec.
-update doc on this point.
-
-3. **Postgres cold storage** - docs/db.md (lines 659-700) documents Redis + Postgres architecture. Not implemented (labeled "Future" in spec, so this is expected - just noting for tracking).
-update doc on this point, but just say, to effect, redis might be just fine, but if it's not, then this is the plan. so tentative longterm.
+(No active tasks)
 
 ## Future Tasks / Roadmap
 
