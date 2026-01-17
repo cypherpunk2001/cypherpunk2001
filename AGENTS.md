@@ -30,7 +30,29 @@ mmorpg/
 
 ## Current Tasks / TODO
 
+**Implement Redis persistence layer per docs/db.md spec**
 
+Before starting, read:
+- `docs/db.md` - authoritative persistence architecture spec
+- `docs/save.md` - serialization format (save.lisp handles format, db.lisp handles storage)
+
+Prerequisites (DONE):
+- Redis (Valkey) installed and running on dev machine (`systemctl status valkey`)
+- Valkey is a Redis-compatible fork, cl-redis works with it
+
+Implementation checklist:
+- [ ] Add cl-redis dependency to mmorpg.asd
+- [ ] Implement storage abstraction layer (storage protocol + redis-storage class)
+- [ ] Implement memory-storage for testing
+- [ ] Implement key schema: `player:{id}`, `zone:{id}:objects`, `server:*`
+- [ ] Wire up serialization (use existing serialize-game-state from save.lisp)
+- [ ] Add dirty flag + batch flush (tier-2 writes every 30s)
+- [ ] Add immediate writes for tier-1 operations (trade, bank, death, level-up)
+- [ ] Add login/logout Redis read/write
+- [ ] Add migration system (version field, migration chain)
+- [ ] Ensure HP is durable (prevents logout-heal exploit)
+- [ ] Add graceful shutdown flush
+- [ ] Test with verbose mode enabled
 
 ## Future Tasks / Roadmap
 - Editor upgrades for world-graph, spawns, and content validation
