@@ -266,12 +266,18 @@
         (subseq value 0 *chat-max-length*)
         value)))
 
+(defun %clamp-direction (value)
+  ;; Clamp movement direction to [-1.0, 1.0] range.
+  ;; Security: Prevents speed hacks via large move-dx/move-dy values.
+  ;; Client sends normalized direction (-1 to 1), server multiplies by speed.
+  (clamp (%float-or value 0.0) -1.0 1.0))
+
 (defun apply-intent-plist (intent plist)
   ;; Apply PLIST values to INTENT in place.
   ;; Security: All values are validated/sanitized to prevent type confusion attacks.
   (when (and intent plist)
-    (setf (intent-move-dx intent) (%float-or (getf plist :move-dx) 0.0)
-          (intent-move-dy intent) (%float-or (getf plist :move-dy) 0.0)
+    (setf (intent-move-dx intent) (%clamp-direction (getf plist :move-dx))
+          (intent-move-dy intent) (%clamp-direction (getf plist :move-dy))
           (intent-face-dx intent) (%float-or (getf plist :face-dx) 0.0)
           (intent-face-dy intent) (%float-or (getf plist :face-dy) 0.0)
           (intent-target-x intent) (%float-or (getf plist :target-x) 0.0)
