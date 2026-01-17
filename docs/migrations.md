@@ -105,6 +105,7 @@ Current migrations
 | Version | Migration | Description |
 |---------|-----------|-------------|
 | 2 | migrate-player-v1->v2 | Add `lifetime-xp` field (default 0) |
+| 3 | migrate-player-v2->v3 | Add `playtime` (default 0) and `created-at` (default current time) |
 
 Relationship to other files
 - **types.lisp**: Player struct definition (add new fields here)

@@ -345,6 +345,9 @@
             :do (combatant-update-hit-effect entity dt))
       (loop :for current-player :across players
             :do (consume-intent-actions (player-intent current-player)))
+      ;; Increment playtime for all connected players (server-side tracking)
+      (loop :for current-player :across players
+            :do (incf (player-playtime current-player) dt))
       transitioned)))
 
 (defun process-combat-events (game)

@@ -8,7 +8,7 @@
   pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
   click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
-  facing-sign class hp lifetime-xp
+  facing-sign class hp lifetime-xp playtime created-at
   frame-index frame-timer
   attacking attack-timer attack-hit
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
@@ -297,6 +297,8 @@
                   :class class
                   :hp max-hp
                   :lifetime-xp 0
+                  :playtime 0
+                  :created-at (get-universal-time)
                   :frame-index 0
                   :frame-timer 0.0
                   :attacking nil

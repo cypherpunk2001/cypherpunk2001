@@ -46,7 +46,10 @@
                 #'test-migration-v1-to-v2
                 #'test-migration-applies-defaults
                 #'test-lifetime-xp-roundtrip
-                #'test-lifetime-xp-incremented)))
+                #'test-lifetime-xp-incremented
+                #'test-migration-v1-to-v3-chain
+                #'test-playtime-roundtrip
+                #'test-created-at-roundtrip)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -677,6 +680,58 @@
     (let ((new-lifetime (player-lifetime-xp player)))
       (assert-equal (+ initial-lifetime 100) new-lifetime
                    "lifetime-xp didn't increase by award amount"))
+    t))
+
+(defun test-migration-v1-to-v3-chain ()
+  "Test: v1 player data migrates correctly through v2 to v3 (chain migration)."
+  ;; Create v1-style data (no lifetime-xp, no playtime, no created-at)
+  (let ((v1-data '(:version 1
+                   :id 42
+                   :x 100.0
+                   :y 200.0
+                   :hp 10
+                   :stats (:attack (:xp 0 :level 1)
+                           :strength (:xp 0 :level 1)
+                           :defense (:xp 0 :level 1)
+                           :hitpoints (:xp 0 :level 1))
+                   :inventory nil
+                   :equipment nil)))
+    ;; Run migration chain (v1 -> v2 -> v3)
+    (let ((migrated (migrate-player-data v1-data)))
+      ;; Verify version updated to current (v3)
+      (assert-equal 3 (getf migrated :version) "Version not updated to v3")
+      ;; Verify v2 field (lifetime-xp) added
+      (assert-equal 0 (getf migrated :lifetime-xp) "lifetime-xp not added by v2 migration")
+      ;; Verify v3 fields (playtime, created-at) added
+      (assert-equal 0 (getf migrated :playtime) "playtime not added by v3 migration")
+      (assert-true (getf migrated :created-at) "created-at not added by v3 migration")
+      ;; Verify original fields preserved
+      (assert-equal 42 (getf migrated :id) "ID not preserved")
+      (assert-equal 100.0 (getf migrated :x) "X not preserved")
+      (assert-equal 10 (getf migrated :hp) "HP not preserved"))
+    t))
+
+(defun test-playtime-roundtrip ()
+  "Test: playtime survives serialization roundtrip."
+  (let* ((player (make-test-player)))
+    ;; Set a known playtime value (in seconds, as float)
+    (setf (player-playtime player) 3661.5)  ; 1 hour, 1 minute, 1.5 seconds
+    ;; Serialize and deserialize
+    (let* ((plist (serialize-player player))
+           (restored (deserialize-player plist *inventory-size* (length *equipment-slot-ids*))))
+      ;; Verify playtime preserved
+      (assert-equal 3661.5 (player-playtime restored) "playtime not preserved"))
+    t))
+
+(defun test-created-at-roundtrip ()
+  "Test: created-at survives serialization roundtrip."
+  (let* ((player (make-test-player))
+         (original-created-at (player-created-at player)))
+    ;; Serialize and deserialize
+    (let* ((plist (serialize-player player))
+           (restored (deserialize-player plist *inventory-size* (length *equipment-slot-ids*))))
+      ;; Verify created-at preserved
+      (assert-equal original-created-at (player-created-at restored) "created-at not preserved"))
     t))
 
 ;;; Export for REPL usage

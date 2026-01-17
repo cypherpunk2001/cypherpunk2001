@@ -28,6 +28,7 @@ Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to
 
 Key design docs:
 - `docs/db.md` - Persistence architecture, storage abstraction, write tiers
+- `docs/migrations.md` - Schema versioning, migration functions, admin commands
 - `docs/save.md` - Serialization format, durable vs ephemeral classification
 - `docs/net.md` - UDP protocol, message format, snapshot streaming
 - `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
@@ -37,7 +38,7 @@ Key design docs:
 
 ## Important Reminders
 
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make smoke && make test-persistence && make checkdocs`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
 - **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
@@ -46,6 +47,7 @@ Key design docs:
 - **Storage abstraction is mandatory**: Never call Redis/database directly from game logic
 - **Classify all new state**: Every field must be marked durable or ephemeral
 - **Use correct persistence tier**: Tier-1 for critical, tier-2 for routine, tier-3 for logout
+- **Write migrations for durable fields**: New persistent fields require schema version bump + migration function
 - **Server is authoritative**: Clients send intents, not state
 - **Test both backends**: Memory for dev, Redis for persistence testing
 
@@ -59,7 +61,9 @@ Key design docs:
    - [x] Migration applies defaults for new fields (lifetime-xp → 0)
    - [x] lifetime-xp survives serialization roundtrip
    - [x] lifetime-xp increments on XP award
-   - [ ] Multiple version jumps work (v1 → v3 skipping v2) - future when v3 added
+   - [x] Multiple version jumps work (v1 → v3 chain migration)
+   - [x] playtime survives serialization roundtrip
+   - [x] created-at survives serialization roundtrip
 
 ### When to Write Tests (Decision Criteria)
 

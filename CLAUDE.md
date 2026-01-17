@@ -243,10 +243,12 @@ Add durable fields to `serialize-player` (base payload), add ephemeral fields on
 ### Current Schema
 
 ```lisp
-*player-schema-version* = 2
+*player-schema-version* = 3
 
-*player-migrations* = '((2 . migrate-player-v1->v2))
+*player-migrations* = '((2 . migrate-player-v1->v2)
+                        (3 . migrate-player-v2->v3))
 ;; v1→v2: Added lifetime-xp field (default 0)
+;; v2→v3: Added playtime (default 0) and created-at (default current time)
 ```
 
 ### How Migrations Work

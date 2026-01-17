@@ -6,7 +6,7 @@
 ;;;; Migrations run lazily on player load (default) or eagerly via admin command.
 ;;;; Each migration function takes a plist and returns the updated plist.
 
-(defparameter *player-schema-version* 2
+(defparameter *player-schema-version* 3
   "Current player schema version. Increment when changing player format.")
 
 (defun migrate-player-v1->v2 (data)
@@ -15,8 +15,19 @@
     (setf (getf data :lifetime-xp) 0))
   data)
 
+(defun migrate-player-v2->v3 (data)
+  "v2->v3: Add playtime and created-at fields.
+   playtime defaults to 0 (seconds played).
+   created-at defaults to current time for existing players."
+  (unless (getf data :playtime)
+    (setf (getf data :playtime) 0))
+  (unless (getf data :created-at)
+    (setf (getf data :created-at) (get-universal-time)))
+  data)
+
 (defparameter *player-migrations*
-  '((2 . migrate-player-v1->v2))
+  '((2 . migrate-player-v1->v2)
+    (3 . migrate-player-v2->v3))
   "Alist of (version . migration-function) for player data.
    Each migration takes a plist and returns the updated plist.
    Migrations are chained: v1->v2, v2->v3, etc.")
