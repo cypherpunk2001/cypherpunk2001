@@ -30,39 +30,12 @@ mmorpg/
 
 ## Current Tasks / TODO
 
-**Implement Redis persistence layer per docs/db.md spec**
+Review the codebase and make no changes. Review all README.md and AGENTS.md docs/ and src/ files and data/ as necessary, I have now especially implemented UDP and Redis and you need to familiarize.
 
-Before starting, read:
-- `docs/db.md` - authoritative persistence architecture spec
-- `docs/save.md` - serialization format (save.lisp handles format, db.lisp handles storage)
-
-Prerequisites (DONE):
-- Redis (Valkey) installed and running on dev machine (`systemctl status valkey`)
-- Valkey is a Redis-compatible fork, cl-redis works with it
-
-Implementation checklist:
-- [x] Add cl-redis dependency to mmorpg.asd
-- [x] Implement storage abstraction layer (storage protocol + redis-storage class)
-- [x] Implement memory-storage for testing
-- [x] Implement key schema: `player:{id}`, `zone:{id}:objects`, `server:*`
-- [x] Wire up serialization (use existing serialize-game-state from save.lisp)
-- [x] Add dirty flag + batch flush (tier-2 writes every 30s)
-- [x] Add immediate writes for tier-1 operations (trade, bank, death, level-up)
-- [x] Add login/logout Redis read/write
-- [x] Add migration system (version field, migration chain)
-- [x] Ensure HP is durable (prevents logout-heal exploit)
-- [x] Add graceful shutdown flush
-- [x] Test with verbose mode enabled (CI + smoke tests passed)
-- [x] Integrate db.lisp functions into game server lifecycle
-- [x] Wire up periodic batch flush to game loop
-- [x] Add tier-1 writes to critical game operations (death, level-up)
+## Future Tasks / Roadmap
 - [ ] Test Redis persistence end-to-end (login, save, logout, reload)
 - [ ] Switch from memory-storage to redis-storage backend
 - [ ] Verify Redis (Valkey) connectivity and data persistence
-
-## Future Tasks / Roadmap
-- Editor upgrades for world-graph, spawns, and content validation
-- Asset pipeline for animation sets, atlases, and build-time validation
 
 ---
 
