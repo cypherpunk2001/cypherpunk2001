@@ -354,7 +354,7 @@
                 (when (and allow-player-control
                            (intent-attack current-intent))
                   (start-player-attack current-player current-intent)))
-      (when (or *verbose-logs* *verbose-coordinates*)
+      (when (and player (or *verbose-logs* *verbose-coordinates*))
         (log-player-position player world))
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))

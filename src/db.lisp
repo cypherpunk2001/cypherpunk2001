@@ -404,6 +404,68 @@
       (unregister-player-session player-id)
       (log-verbose "Player ~a logged out, saved to storage" player-id))))
 
+;;;; Account Management
+
+(defparameter *account-schema-version* 1
+  "Current schema version for account records.")
+
+(defun account-key (username)
+  "Return storage key for account USERNAME."
+  (format nil "account:~a" (string-downcase username)))
+
+(defun db-save-account (username password character-id)
+  "Save account to storage. Returns T on success."
+  (when (and *storage* username password)
+    (let* ((key (account-key username))
+           (data (list :version *account-schema-version*
+                      :username (string-downcase username)
+                      :password password
+                      :character-id character-id)))
+      (storage-save *storage* key data)
+      (log-verbose "Saved account ~a to storage" username)
+      t)))
+
+(defun db-load-account (username)
+  "Load account from storage. Returns plist or NIL if not found."
+  (when (and *storage* username)
+    (let ((key (account-key username)))
+      (storage-load *storage* key))))
+
+(defun db-account-exists-p (username)
+  "Return T if account USERNAME exists in storage."
+  (when (and *storage* username)
+    (let ((key (account-key username)))
+      (storage-exists-p *storage* key))))
+
+(defun db-create-account (username password)
+  "Create new account with USERNAME and PASSWORD. Returns T on success, NIL if username taken."
+  (when (db-account-exists-p username)
+    (log-verbose "Account creation failed: username ~a already exists" username)
+    (return-from db-create-account nil))
+  (db-save-account username password nil)
+  (log-verbose "Created new account: ~a" username)
+  t)
+
+(defun db-verify-credentials (username password)
+  "Verify username/password. Returns T if credentials are valid, NIL otherwise."
+  (let ((account (db-load-account username)))
+    (when account
+      (let ((stored-password (getf account :password)))
+        (string= password stored-password)))))
+
+(defun db-get-character-id (username)
+  "Get character-id for account USERNAME. Returns character-id or NIL."
+  (let ((account (db-load-account username)))
+    (when account
+      (getf account :character-id))))
+
+(defun db-set-character-id (username character-id)
+  "Set character-id for account USERNAME. Returns T on success."
+  (let ((account (db-load-account username)))
+    (when account
+      (let ((password (getf account :password)))
+        (db-save-account username password character-id)))))
+
 ;;;; Graceful Shutdown
 
 (defun db-shutdown-flush ()

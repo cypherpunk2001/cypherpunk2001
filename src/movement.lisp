@@ -859,12 +859,14 @@
 
 (defun update-zone-transition (game)
   ;; Handle edge-based world graph transitions for the player.
+  ;; NOTE: Returns nil if no player (server with no authenticated clients).
   (let* ((world (game-world game))
-         (player (game-player game))
-         (edge (and world (world-exit-edge world player)))
-         (exit (and edge (world-edge-exit world edge))))
-    (when exit
-      (transition-zone game exit edge))))
+         (player (game-player game)))
+    (when player
+      (let* ((edge (and world (world-exit-edge world player)))
+             (exit (and edge (world-edge-exit world edge))))
+        (when exit
+          (transition-zone game exit edge))))))
 
 (defun log-player-position (player world)
   ;; Emit verbose position and tile diagnostics for debugging.

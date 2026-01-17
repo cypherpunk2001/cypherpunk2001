@@ -1,0 +1,314 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Common Lisp + raylib MMORPG prototype with a clean client/server UDP architecture. The codebase emphasizes data-driven design, intent-based actions, server authority, and strict separation between game logic and rendering.
+
+**Stack:** SBCL, Quicklisp, raylib, claw-raylib, usocket (UDP), cl-redis (Redis/Valkey persistence)
+
+## Essential Commands
+
+### Building and Testing
+
+**CRITICAL: Before claiming any task is complete, ALL tests must pass:**
+
+```bash
+make checkparens    # Verify balanced parentheses in all .lisp files
+make ci             # Cold compile + UDP handshake test (no GPU needed)
+make checkdocs      # Verify docs/foo.md exists for each src/foo.lisp
+make smoke          # Full client/server smoke test with window (2s default)
+```
+
+**Never skip tests.** If you implement a feature but don't run all four test targets, the work is incomplete.
+
+### Running Client/Server
+Server must start first. Uses UDP port 1337 by default.
+
+```bash
+make server         # Start server
+make client         # Start client (in separate terminal)
+
+# Environment variable overrides
+MMORPG_VERBOSE=1 make server                    # Enable diagnostic logging
+MMORPG_VERBOSE_COORDS=1 make server             # Log entity positions (very verbose)
+MMORPG_WORKER_THREADS=4 make server             # Parallel snapshot sends (default: 1)
+MMORPG_WORKER_THREADS=$(nproc) make server      # Use all CPU cores
+
+# Database backend configuration
+MMORPG_DB_BACKEND=redis make server             # Use Redis (default: memory)
+MMORPG_REDIS_HOST=127.0.0.1 make server         # Redis host (default: 127.0.0.1)
+MMORPG_REDIS_PORT=6379 make server              # Redis port (default: 6379)
+```
+
+### Development with SLIME
+Use two separate Emacs sessions (server + client):
+
+```lisp
+;; Server REPL
+(ql:register-local-projects)
+(ql:quickload :mmorpg)
+(mmorpg:run-server :host "127.0.0.1" :port 1337)
+
+;; Client REPL (separate session)
+(ql:register-local-projects)
+(ql:quickload :mmorpg)
+(mmorpg:run-client :host "127.0.0.1" :port 1337)
+```
+
+## Architecture Overview
+
+### Load Order (mmorpg.asd)
+Files load in dependency order:
+1. **package, config, utils** - Foundation
+2. **data, intent, types** - Data structures and protocols
+3. **progression, save, db** - Game systems and persistence
+4. **zone, world-graph, movement** - World and navigation
+5. **input, combat, chat, ai** - Game mechanics
+6. **audio, ui, editor, rendering** - Presentation layer
+7. **server, main, net** - Entry points and networking
+
+### Core Architectural Patterns
+
+#### Client/Server Split (UDP)
+- **Server**: Authoritative simulation. Receives intents from clients, runs fixed-tick game loop, broadcasts snapshots.
+- **Client**: Rendering and input. Sends intents to server, applies snapshots for display.
+- **Message Format**: ASCII plists (`:type :hello`, `:type :intent`, `:type :snapshot`, `:type :save`, `:type :load`)
+- **Snapshot Optimization**: State serialized once per frame, shared across all clients. Optional parallel sends via worker threads.
+
+#### Intent-Based Actions
+Clients never send state - only intent (what they want to do). Server validates and applies changes.
+```lisp
+;; Client sends intent
+(:move-dx 1.0 :move-dy 0.0 :attack t)
+
+;; Server validates, updates state, broadcasts result
+```
+
+#### Serialization Strategy
+- **save.lisp**: Game state ↔ plist conversion
+- **Database saves**: Exclude ephemeral fields (attack timers, targets, run stamina)
+- **Network snapshots**: Include visual fields (`:include-visuals t`) for rendering
+- **Versioning**: All persistent data includes `:version N` for migrations
+
+#### Storage Abstraction (CRITICAL)
+**Game code MUST NOT directly call Redis or any database client.**
+
+```lisp
+;; WRONG - direct database access
+(redis:set "player:123" data)
+
+;; CORRECT - use storage abstraction
+(db-save-player player)
+(storage-save *storage* key data)
+```
+
+All persistence goes through `src/db.lisp`. Supports memory (testing/dev) and Redis (production) backends via environment variables.
+
+#### Persistence Tiers
+| Tier | When | Examples | Implementation |
+|------|------|----------|----------------|
+| **Tier 1: Immediate** | Before ACK to client | Death, level-up, trade, bank | `db-save-player-immediate` |
+| **Tier 2: Batched** | Every 30s checkpoint | HP/XP/position changes | `mark-player-dirty` + `flush-dirty-players` |
+| **Tier 3: Logout** | Session end | Final save + cleanup | `db-player-logout` |
+
+**Dirty flag system**: Session tracking with `register-player-session`, `mark-player-dirty`, periodic batch flushes.
+
+### Data Classification
+
+When adding features, classify ALL new state as **durable** or **ephemeral**:
+
+**Durable (must persist to DB):**
+- XP, levels, stats, HP, inventory, equipment, currency, position, zone-id, quests
+
+**Ephemeral (OK to lose on crash/logout):**
+- Attack/follow targets, combat timers, animation frames, AI state, buffs/debuffs, trade windows
+
+Add durable fields to `serialize-player` (base payload), add ephemeral fields only to `:include-visuals` section.
+
+### Zone System
+- **Zone data**: `data/zones/*.lisp` - tile layers, collision, spawns, objects
+- **World graph**: `data/world-graph.lisp` - zone connections and transitions
+- **Multi-zone**: Players carry zone-id; transitions update session zone and trigger dirty flag
+- **Scaling**: Each server process runs ONE zone. For 10k users @ 500/zone = 20 server processes (horizontal scaling).
+
+### Update/Draw Separation
+- **update-sim**: Fixed timestep game logic (combat, AI, movement). No rendering dependencies.
+- **draw-game**: Rendering only. Reads state, never modifies it.
+- Server runs only update-sim. Client runs both.
+
+## Memory vs Redis Storage
+
+**Memory Storage** (`:backend :memory`, default for CI/smoke):
+- Hash table in RAM, lost on shutdown
+- No external dependencies
+- Fast iteration, clean slate each run
+
+**Redis Storage** (`:backend :redis`):
+- Persists to disk via Valkey/Redis (AOF + RDB)
+- Survives restarts/crashes
+- Requires Valkey running on port 6379
+- Configure via `MMORPG_DB_BACKEND=redis`
+
+**Dev Workflow**: Use `:memory` for 95% of feature work. Switch to `:redis` when testing persistence, migrations, or crash recovery.
+
+## Code Style Rules
+
+### Modular & Reusable by Default
+
+We are building reusable game systems, not one-off demo code.
+
+**Bias:** Write small, composable functions, CLOS objects, and data-driven systems that can be reused by players, NPCs, and future worlds.
+
+**Rules:**
+- No gameplay logic in the main loop — it only orchestrates systems
+- Entities hold data; systems implement behavior
+- Rendering is separate from game logic
+- Avoid hardcoded values that may vary later
+- If it could apply to NPCs, write it generically now
+
+**Agent Self-Check** - Before outputting code, ensure:
+- Reusable beyond a single entity
+- Logic works without rendering
+- Behavior is not special-cased
+- Future client/server split wouldn't break it
+- Any new state is classified as durable or ephemeral
+- No direct database calls from game logic (use storage abstraction)
+
+If unsure, refactor toward reuse.
+
+### Security: Untrusted Client Principle
+```lisp
+;; WRONG - trusting client claims
+(setf (player-gold player) (intent-claimed-gold intent))
+
+;; CORRECT - server calculates truth
+(let ((sale-price (calculate-sale-value item)))
+  (incf (player-gold player) sale-price))
+```
+
+Always use `*read-eval* nil` when deserializing data.
+
+### Versioned Serialization
+All persistent data includes `:version N`. When changing schema:
+1. Increment `*player-schema-version*`
+2. Write migration function `migrate-player-vN->vN+1`
+3. Add to migrations list
+4. NEVER delete old migrations (players skip versions)
+5. Test on copy of production data
+
+### Performance Matters
+
+**Hot loop optimization:**
+- Avoid per-frame consing in hot loops: reuse rectangles, vectors, strings, and animation state
+- Keep entity data in arrays/structs, not lists; use object pools
+- Separate update/draw; keep animation state lightweight
+
+**Rendering optimization:**
+- Cull off-screen tiles/sprites; draw only what's visible
+- Chunk the map (e.g., 32×32 tiles) and cache static chunks in a render texture
+- Batch draw calls when possible
+
+## Key Files and Their Roles
+
+| File | Purpose |
+|------|---------|
+| **net.lisp** | UDP client/server, message protocol, snapshot streaming |
+| **db.lisp** | Storage abstraction, Redis/memory backends, dirty flag system, migrations |
+| **save.lisp** | Game state serialization (durable vs ephemeral classification) |
+| **server.lisp** | Server-only game loop (no rendering), fixed timestep simulation |
+| **main.lisp** | Client entry point with rendering |
+| **movement.lisp** | Physics, collision, zone transitions |
+| **combat.lisp** | Damage, HP, death, tier-1 immediate saves |
+| **progression.lisp** | XP, levels, inventory, equipment, tier-2 dirty marking |
+| **ai.lisp** | NPC behaviors (idle, wander, aggressive, flee, retaliate) |
+| **zone.lisp** | Zone loading, tile layers, collision maps |
+| **world-graph.lisp** | Zone connections, edge transitions |
+
+## Common Development Patterns
+
+### Adding a New Persistent Field
+```lisp
+;; 1. Add to player struct (src/types.lisp)
+(defstruct player ... new-field ...)
+
+;; 2. Classify: durable or ephemeral?
+
+;; 3a. If DURABLE - add to serialize-player base payload
+(defun serialize-player (player &key ...)
+  (list :id ... :new-field (player-new-field player) ...))
+
+;; 3b. If EPHEMERAL - add only to :include-visuals section
+(when include-visuals
+  (append payload (list :new-field (player-new-field player))))
+
+;; 4. If durable - mark dirty when changed
+(setf (player-new-field player) value)
+(mark-player-dirty (player-id player))
+
+;; 5. Update deserialize-player
+(setf (player-new-field player) (getf plist :new-field default))
+```
+
+### Triggering a Save
+```lisp
+;; Tier 1: Immediate (critical, irreversible)
+(db-save-player-immediate player)
+
+;; Tier 2: Batched (routine state changes)
+(mark-player-dirty (player-id player))
+;; Server auto-flushes dirty players every 30s
+```
+
+### Handling Zone Transitions
+```lisp
+;; movement.lisp does this automatically, but if manual:
+(update-player-session-zone (player-id player) new-zone-id)
+(mark-player-dirty (player-id player))
+```
+
+## Testing Redis Persistence
+
+1. Start Valkey: `sudo systemctl start valkey`
+2. Configure AOF: `appendonly yes` in `/etc/valkey/valkey.conf`
+3. Run server with Redis: `MMORPG_DB_BACKEND=redis make server`
+4. Test crash recovery:
+   - Create character, gain XP, move around
+   - Kill server (Ctrl+C)
+   - Restart server
+   - Reconnect client - verify HP/XP/position/inventory intact
+
+## Performance Notes
+
+- **Current scale**: Tested smooth with hundreds of NPCs on client
+- **Server capacity**: ~500 concurrent users per zone per server process
+- **Horizontal scaling**: For 10k users @ 500/zone = 20 separate server processes
+- **Worker threads**: Use `MMORPG_WORKER_THREADS=$(nproc)` for parallel snapshot sends (high client counts)
+- **Snapshot optimization**: State serialized once per tick, shared across clients (efficient)
+
+See `docs/SERVER_PERFORMANCE.md` for detailed scaling strategies.
+
+## Documentation
+
+Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to verify.
+
+Key design docs:
+- `docs/db.md` - Persistence architecture, storage abstraction, write tiers
+- `docs/save.md` - Serialization format, durable vs ephemeral classification
+- `docs/net.md` - UDP protocol, message format, snapshot streaming
+- `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
+- `docs/movement.md` - Physics, collision, zone transitions
+
+## Important Reminders
+
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL four test targets in order: `make checkparens && make ci && make checkdocs && make smoke`. No exceptions.
+- **Never commit with unbalanced parens**: Run `make checkparens` before committing
+- **CI must pass**: `make ci` runs cold compile + UDP handshake test
+- **Docs must be complete**: `make checkdocs` verifies every src file has matching documentation
+- **Smoke test must work**: `make smoke` tests actual client/server with graphics
+- **Storage abstraction is mandatory**: Never call Redis/database directly from game logic
+- **Classify all new state**: Every field must be marked durable or ephemeral
+- **Use correct persistence tier**: Tier-1 for critical, tier-2 for routine, tier-3 for logout
+- **Server is authoritative**: Clients send intents, not state
+- **Test both backends**: Memory for dev, Redis for persistence testing

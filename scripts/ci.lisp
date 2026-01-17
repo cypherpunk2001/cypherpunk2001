@@ -50,12 +50,33 @@
                            host port :protocol :datagram)))
       (unwind-protect
            (progn
+             ;; Authenticate first (required for snapshots)
              (funcall (read-from-string "mmorpg::send-net-message") socket
-                      (list :type :hello))
+                      (list :type :register
+                            :username "smoke-test"
+                            :password "smoke-test"))
+             ;; Wait for auth-ok
+             (let* ((deadline (+ (get-internal-real-time)
+                                 (floor (* 2 internal-time-units-per-second))))
+                    (authenticated nil))
+               (loop :while (and (not authenticated)
+                                 (< (get-internal-real-time) deadline))
+                     :do (multiple-value-bind (message _host _port)
+                             (funcall (read-from-string "mmorpg::receive-net-message")
+                                      socket buffer)
+                           (declare (ignore _host _port))
+                           (when (and message
+                                      (eq (getf message :type) :auth-ok))
+                             (setf authenticated t)))
+                         (sleep 0.01))
+               (unless authenticated
+                 (die 1 "NET-SMOKE: authentication failed")))
+             ;; Send intent
              (funcall (read-from-string "mmorpg::send-net-message") socket
                       (list :type :intent
                             :payload (funcall (read-from-string "mmorpg::intent->plist")
                                               (funcall (read-from-string "mmorpg::make-intent")))))
+             ;; Wait for snapshot
              (let* ((deadline (+ (get-internal-real-time)
                                  (floor (* 2 internal-time-units-per-second))))
                     (snapshot nil))

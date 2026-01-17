@@ -11,23 +11,37 @@
                    :id (when id-source
                          (allocate-entity-id id-source))))))
 
-(defun make-sim-state ()
+(defun make-sim-state (&key (server-mode nil))
   ;; Build authoritative simulation state without client-only subsystems.
+  ;; If SERVER-MODE is T, starts with no players (auth system adds players).
+  ;; If SERVER-MODE is NIL (client/local), creates one initial player.
   (load-game-data)
   (let* ((world (make-world))
          (id-source (make-id-source))
-         (player (spawn-player-at-world world id-source))
-         (players (make-array 1 :initial-element player))
+         (player (if server-mode
+                     nil
+                     (spawn-player-at-world world id-source)))
+         (players (if server-mode
+                      (make-array 0)
+                      (make-array 1 :initial-element player)))
          (npcs (make-npcs player world :id-source id-source))
          (entities (make-entities players npcs))
          (combat-events (make-combat-event-queue)))
-    (setf (world-minimap-spawns world)
-          (build-adjacent-minimap-spawns world player))
+    (if server-mode
+        ;; Server: don't build minimap spawns until players connect
+        (setf (world-minimap-spawns world) nil)
+        ;; Client: build minimap spawns for the initial player
+        (setf (world-minimap-spawns world)
+              (build-adjacent-minimap-spawns world player)))
     (ensure-npcs-open-spawn npcs world)
-    (log-verbose "Sim state initialized: player-id=~d npcs=~d zone=~a"
-                 (player-id player)
-                 (length npcs)
-                 (zone-label (world-zone world)))
+    (if player
+        (log-verbose "Sim state initialized: player-id=~d npcs=~d zone=~a"
+                     (player-id player)
+                     (length npcs)
+                     (zone-label (world-zone world)))
+        (log-verbose "Sim state initialized (server): npcs=~d zone=~a"
+                     (length npcs)
+                     (zone-label (world-zone world))))
     (when (or *verbose-logs* *verbose-coordinates*)
       (format t "~&[VERBOSE COORDS] tile-size=~,2f collider-half=~,2f,~,2f wall=[~,2f..~,2f, ~,2f..~,2f]~%"
               (world-tile-dest-size world)
@@ -43,7 +57,7 @@
 (defun make-server-game ()
   ;; Build a headless game state for server-only simulation.
   (multiple-value-bind (world player players npcs entities id-source combat-events)
-      (make-sim-state)
+      (make-sim-state :server-mode t)
     (%make-game :world world
                 :player player
                 :players players

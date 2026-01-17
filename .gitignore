@@ -11,3 +11,5 @@
 
 # Local savegame snapshot
 /data/savegame.lisp
+
+.claude

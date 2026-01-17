@@ -154,6 +154,12 @@
               :exit-requested exit-requested
               :loading-label loading-label
               :loading-timer loading-timer
+              :login-active t
+              :auth-complete nil
+              :username-buffer ""
+              :password-buffer ""
+              :auth-error-message nil
+              :server-selector-index 0
               :menu-padding menu-padding
               :menu-panel-width menu-panel-width
               :menu-panel-height menu-panel-height
@@ -529,3 +535,155 @@
   (when (> (ui-loading-timer ui) 0.0)
     (setf (ui-loading-timer ui)
           (max 0.0 (- (ui-loading-timer ui) dt)))))
+
+;;;; Login Screen
+
+(defparameter *login-max-username-length* 20
+  "Maximum characters for username input.")
+
+(defparameter *login-max-password-length* 30
+  "Maximum characters for password input.")
+
+(defun update-login-input (ui)
+  "Handle text input for username and password fields."
+  (when (ui-login-active ui)
+    (let ((key (raylib:get-char-pressed)))
+      (loop :while (not (zerop key))
+            :do (let ((char (code-char key)))
+                  ;; Add to username buffer (simple, no field focus for MVP)
+                  (when (and (graphic-char-p char)
+                            (< (length (ui-username-buffer ui)) *login-max-username-length*))
+                    (setf (ui-username-buffer ui)
+                          (concatenate 'string (ui-username-buffer ui) (string char)))))
+                (setf key (raylib:get-char-pressed))))
+
+    ;; Handle backspace
+    (when (raylib:is-key-pressed +key-backspace+)
+      (let ((username (ui-username-buffer ui)))
+        (when (plusp (length username))
+          (setf (ui-username-buffer ui)
+                (subseq username 0 (1- (length username)))))))))
+
+(defun draw-login-screen (ui)
+  "Draw the login/register screen."
+  (when (ui-login-active ui)
+    (let* ((screen-width *window-width*)
+           (screen-height *window-height*)
+           (panel-width 500)
+           (panel-height 550)
+           (panel-x (truncate (/ (- screen-width panel-width) 2)))
+           (panel-y (truncate (/ (- screen-height panel-height) 2)))
+           (title-text "MMORPG Login")
+           (title-size 40)
+           (label-size 20)
+           (input-size 18)
+           (error-size 16)
+           (button-width 200)
+           (button-height 50)
+           (input-width 400)
+           (input-height 45)
+           (padding 30)
+           (bg-color (raylib:make-color :r 20 :g 20 :b 30 :a 255))
+           (panel-color (raylib:make-color :r 40 :g 40 :b 50 :a 255))
+           (text-color (raylib:make-color :r 220 :g 220 :b 220 :a 255))
+           (input-bg-color (raylib:make-color :r 30 :g 30 :b 40 :a 255))
+           (button-color (raylib:make-color :r 60 :g 120 :b 180 :a 255))
+           (button-hover-color (raylib:make-color :r 80 :g 150 :b 220 :a 255))
+           (register-button-color (raylib:make-color :r 80 :g 140 :b 80 :a 255))
+           (register-button-hover-color (raylib:make-color :r 100 :g 180 :b 100 :a 255))
+           (error-color (raylib:make-color :r 220 :g 60 :b 60 :a 255)))
+
+      ;; Background
+      (raylib:clear-background bg-color)
+
+      ;; Panel
+      (raylib:draw-rectangle panel-x panel-y panel-width panel-height panel-color)
+
+      ;; Title
+      (let* ((title-width (raylib:measure-text title-text title-size))
+             (title-x (truncate (/ (- screen-width title-width) 2)))
+             (title-y (+ panel-y padding)))
+        (raylib:draw-text title-text title-x title-y title-size text-color))
+
+      ;; Username label
+      (let ((username-label-y (+ panel-y padding 80)))
+        (raylib:draw-text "Username:" (+ panel-x padding) username-label-y label-size text-color)
+
+        ;; Username input box
+        (let ((input-x (+ panel-x (truncate (/ (- panel-width input-width) 2))))
+              (input-y (+ username-label-y 30)))
+          (raylib:draw-rectangle input-x input-y input-width input-height input-bg-color)
+          (raylib:draw-rectangle-lines input-x input-y input-width input-height text-color)
+          (raylib:draw-text (ui-username-buffer ui) (+ input-x 10) (+ input-y 12) input-size text-color)))
+
+      ;; Password label and hint (no real password input for MVP - just text saying to use username)
+      (let ((password-label-y (+ panel-y padding 200)))
+        (raylib:draw-text "Password:" (+ panel-x padding) password-label-y label-size text-color)
+        (raylib:draw-text "(For MVP: will be same as username)"
+                         (+ panel-x padding)
+                         (+ password-label-y 25)
+                         14
+                         (raylib:make-color :r 150 :g 150 :b 150 :a 255)))
+
+      ;; Error message (if any)
+      (when (ui-auth-error-message ui)
+        (let* ((error-y (+ panel-y padding 280))
+               (error-text (ui-auth-error-message ui))
+               (error-width (raylib:measure-text error-text error-size))
+               (error-x (truncate (/ (- screen-width error-width) 2))))
+          (raylib:draw-text error-text error-x error-y error-size error-color)))
+
+      ;; Login button
+      (let* ((button-y (+ panel-y 330))
+             (login-button-x (truncate (/ (- screen-width button-width) 2)))
+             (mouse-x (raylib:get-mouse-x))
+             (mouse-y (raylib:get-mouse-y))
+             (login-hover (and (>= mouse-x login-button-x)
+                              (<= mouse-x (+ login-button-x button-width))
+                              (>= mouse-y button-y)
+                              (<= mouse-y (+ button-y button-height))))
+             (login-color (if login-hover button-hover-color button-color)))
+
+        (raylib:draw-rectangle login-button-x button-y button-width button-height login-color)
+        (let* ((text "Login")
+               (text-width (raylib:measure-text text 24))
+               (text-x (+ login-button-x (truncate (/ (- button-width text-width) 2))))
+               (text-y (+ button-y 12)))
+          (raylib:draw-text text text-x text-y 24 text-color))
+
+        ;; Return :login if clicked
+        (when (and login-hover (raylib:is-mouse-button-pressed +mouse-left+))
+          (return-from draw-login-screen :login)))
+
+      ;; Register button
+      (let* ((button-y (+ panel-y 400))
+             (register-button-x (truncate (/ (- screen-width button-width) 2)))
+             (mouse-x (raylib:get-mouse-x))
+             (mouse-y (raylib:get-mouse-y))
+             (register-hover (and (>= mouse-x register-button-x)
+                                 (<= mouse-x (+ register-button-x button-width))
+                                 (>= mouse-y button-y)
+                                 (<= mouse-y (+ button-y button-height))))
+             (register-color (if register-hover register-button-hover-color register-button-color)))
+
+        (raylib:draw-rectangle register-button-x button-y button-width button-height register-color)
+        (let* ((text "Register")
+               (text-width (raylib:measure-text text 24))
+               (text-x (+ register-button-x (truncate (/ (- button-width text-width) 2))))
+               (text-y (+ button-y 12)))
+          (raylib:draw-text text text-x text-y 24 text-color))
+
+        ;; Return :register if clicked
+        (when (and register-hover (raylib:is-mouse-button-pressed +mouse-left+))
+          (return-from draw-login-screen :register)))
+
+      ;; Server selector (localhost:1337 for now)
+      (let ((server-y (+ panel-y panel-height (- padding) 5)))
+        (raylib:draw-text "Server: localhost:1337"
+                         (+ panel-x padding)
+                         server-y
+                         14
+                         (raylib:make-color :r 150 :g 150 :b 150 :a 255))))
+
+    ;; Return nil if no button clicked
+    nil))

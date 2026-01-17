@@ -88,16 +88,29 @@
 
 (defstruct (net-client (:constructor %make-net-client))
   ;; Server-side view of a connected client.
-  host port player intent last-heard)
+  host port player intent last-heard
+  authenticated-p       ; T after successful login, NIL before
+  account-username)     ; Username of logged-in account
+
+(defparameter *active-sessions* (make-hash-table :test 'equal)
+  "Map of username (lowercase) -> net-client for logged-in accounts.")
+
+(defparameter *client-timeout-seconds* 30.0
+  "Seconds of inactivity before a client is considered disconnected.")
 
 (defun make-net-client (host port player)
   ;; Build a client record with an intent seeded to PLAYER position.
+  ;; If player is nil (unauthenticated), creates a default intent at origin.
   (%make-net-client :host host
                     :port port
                     :player player
-                    :intent (make-intent :target-x (player-x player)
-                                         :target-y (player-y player))
-                    :last-heard 0.0))
+                    :intent (if player
+                                (make-intent :target-x (player-x player)
+                                             :target-y (player-y player))
+                                (make-intent :target-x 0 :target-y 0))
+                    :last-heard 0.0
+                    :authenticated-p nil
+                    :account-username nil))
 
 (defun find-net-client (clients host port)
   ;; Return the matching CLIENT for HOST/PORT, if any.
@@ -147,26 +160,28 @@
           (make-entities new-players (game-npcs game))))
   player)
 
+(defun remove-player-from-game (game player)
+  "Remove PLAYER from GAME and refresh entity list."
+  (let* ((players (game-players game))
+         (filtered (remove player players :test #'eq)))
+    (when (< (length filtered) (length players))
+      ;; Player was found and removed
+      (setf (game-players game) filtered
+            (game-entities game)
+            (make-entities filtered (game-npcs game)))
+      t)))
+
 (defun register-net-client (game clients host port &key (timestamp 0.0))
   ;; Ensure a client exists for HOST/PORT and return updated list.
+  ;; Note: Does NOT spawn a player - players are spawned during authentication
+  (declare (ignore game))
   (let ((client (find-net-client clients host port)))
     (if client
         (progn
           (setf (net-client-last-heard client) timestamp)
           (values client clients nil))
-        (let* ((player (or (find-unassigned-player game clients)
-                           (add-player-to-game
-                            game
-                            (spawn-player-at-world (game-world game)
-                                                   (game-id-source game)))))
-               (client (make-net-client host port player))
-               (world (game-world game))
-               (zone (and world (world-zone world)))
-               (zone-id (and zone (zone-id zone))))
-          (log-verbose "New client registered: ~a:~d -> player-id=~d"
-                       host port (player-id player))
-          (reset-player-for-client player)
-          (register-player-session player :zone-id zone-id)
+        (let ((client (make-net-client host port nil)))
+          (log-verbose "New client registered: ~a:~d (unauthenticated)" host port)
           (setf (net-client-last-heard client) timestamp)
           (values client (cons client clients) t)))))
 
@@ -183,22 +198,24 @@
 
 (defun reconcile-net-clients (game clients)
   ;; Rebind clients to players that exist in the current game state.
+  ;; Only reconciles authenticated clients; unauthenticated clients stay as nil.
   (let ((players (game-players game)))
     (dolist (client clients)
-      (let* ((current (net-client-player client))
-             (current-id (and current (player-id current)))
-             (matching (and current-id (find-player-by-id players current-id))))
-        (cond
-          ((and matching (not (eq matching current)))
-           (setf (net-client-player client) matching))
-          ((null matching)
-           (let ((assigned (or (find-unassigned-player game clients)
-                               (add-player-to-game
-                                game
-                                (spawn-player-at-world (game-world game)
-                                                       (game-id-source game))))))
-             (reset-player-for-client assigned)
-             (setf (net-client-player client) assigned)))))))
+      (when (net-client-authenticated-p client)
+        (let* ((current (net-client-player client))
+               (current-id (and current (player-id current)))
+               (matching (and current-id (find-player-by-id players current-id))))
+          (cond
+            ((and matching (not (eq matching current)))
+             (setf (net-client-player client) matching))
+            ((null matching)
+             (let ((assigned (or (find-unassigned-player game clients)
+                                 (add-player-to-game
+                                  game
+                                  (spawn-player-at-world (game-world game)
+                                                         (game-id-source game))))))
+               (reset-player-for-client assigned)
+               (setf (net-client-player client) assigned))))))))
   clients)
 
 (defun intent->plist (intent)
@@ -266,54 +283,60 @@
 (defun send-snapshots-parallel (socket clients state event-plists worker-threads)
   ;; Send snapshots to clients using WORKER-THREADS parallel threads.
   ;; Falls back to serial sending if worker-threads <= 1.
-  (if (<= worker-threads 1)
-      ;; Serial: Send to each client in order
-      (dolist (client clients)
-        (send-net-message socket
-                          (list :type :snapshot
-                                :state state
-                                :events event-plists
-                                :player-id (player-id (net-client-player client)))
-                          :host (net-client-host client)
-                          :port (net-client-port client)))
-      ;; Parallel: Distribute clients across worker threads with socket synchronization
-      #+sbcl
-      (let* ((client-count (length clients))
-             (chunk-size (ceiling client-count worker-threads))
-             (socket-lock (sb-thread:make-mutex :name "snapshot-socket-lock"))
-             (threads nil))
-        (loop :for start :from 0 :below client-count :by chunk-size
-              :do (let ((end (min (+ start chunk-size) client-count)))
-                    (push
-                     (sb-thread:make-thread
-                      (lambda ()
-                        (loop :for i :from start :below end
-                              :for client = (nth i clients)
-                              ;; Synchronize socket access across threads
-                              :do (sb-thread:with-mutex (socket-lock)
-                                    (send-net-message socket
-                                                      (list :type :snapshot
-                                                            :state state
-                                                            :events event-plists
-                                                            :player-id (player-id
-                                                                        (net-client-player client)))
-                                                      :host (net-client-host client)
-                                                      :port (net-client-port client)))))
-                      :name (format nil "snapshot-sender-~d" start))
-                     threads)))
-        ;; Wait for all threads to complete
-        (dolist (thread threads)
-          (sb-thread:join-thread thread)))
-      #-sbcl
-      ;; Non-SBCL: Fall back to serial
-      (dolist (client clients)
-        (send-net-message socket
-                          (list :type :snapshot
-                                :state state
-                                :events event-plists
-                                :player-id (player-id (net-client-player client)))
-                          :host (net-client-host client)
-                          :port (net-client-port client)))))
+  ;; Only sends to authenticated clients with a player.
+  (let ((authenticated-clients (remove-if-not
+                                (lambda (c)
+                                  (and (net-client-authenticated-p c)
+                                       (net-client-player c)))
+                                clients)))
+    (if (<= worker-threads 1)
+        ;; Serial: Send to each client in order
+        (dolist (client authenticated-clients)
+          (send-net-message socket
+                            (list :type :snapshot
+                                  :state state
+                                  :events event-plists
+                                  :player-id (player-id (net-client-player client)))
+                            :host (net-client-host client)
+                            :port (net-client-port client)))
+        ;; Parallel: Distribute clients across worker threads with socket synchronization
+        #+sbcl
+        (let* ((client-count (length authenticated-clients))
+               (chunk-size (ceiling client-count worker-threads))
+               (socket-lock (sb-thread:make-mutex :name "snapshot-socket-lock"))
+               (threads nil))
+          (loop :for start :from 0 :below client-count :by chunk-size
+                :do (let ((end (min (+ start chunk-size) client-count)))
+                      (push
+                       (sb-thread:make-thread
+                        (lambda ()
+                          (loop :for i :from start :below end
+                                :for client = (nth i authenticated-clients)
+                                ;; Synchronize socket access across threads
+                                :do (sb-thread:with-mutex (socket-lock)
+                                      (send-net-message socket
+                                                        (list :type :snapshot
+                                                              :state state
+                                                              :events event-plists
+                                                              :player-id (player-id
+                                                                          (net-client-player client)))
+                                                        :host (net-client-host client)
+                                                        :port (net-client-port client)))))
+                        :name (format nil "snapshot-sender-~d" start))
+                       threads)))
+          ;; Wait for all threads to complete
+          (dolist (thread threads)
+            (sb-thread:join-thread thread)))
+        #-sbcl
+        ;; Non-SBCL: Fall back to serial
+        (dolist (client authenticated-clients)
+          (send-net-message socket
+                            (list :type :snapshot
+                                  :state state
+                                  :events event-plists
+                                  :player-id (player-id (net-client-player client)))
+                            :host (net-client-host client)
+                            :port (net-client-port client))))))
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
@@ -379,6 +402,165 @@
                                   (format nil "Game loaded (~a)." zone-id)))
         (emit-hud-message-event event-queue "Load failed."))
     zone-id))
+
+;;;; Account Authentication Handlers
+
+(defun handle-register-request (client host port message socket game)
+  "Handle account registration request."
+  (let ((username (getf message :username))
+        (password (getf message :password)))
+    (cond
+      ((not (and username password))
+       (send-net-message socket
+                        (list :type :auth-fail :reason :missing-credentials)
+                        :host host :port port)
+       (log-verbose "Registration failed from ~a:~d - missing credentials" host port))
+      ((db-create-account username password)
+       ;; Account created successfully - spawn new character
+       (let* ((world (game-world game))
+              (player (spawn-player-at-world world (game-id-source game)))
+              (player-id (player-id player)))
+         ;; Link account to new character
+         (db-set-character-id username player-id)
+         ;; Add player to game
+         (add-player-to-game game player)
+         ;; Mark client as authenticated
+         (setf (net-client-player client) player)
+         (setf (net-client-authenticated-p client) t)
+         (setf (net-client-account-username client) (string-downcase username))
+         ;; Register session for persistence
+         (let* ((zone (world-zone world))
+                (zone-id (and zone (zone-id zone))))
+           (register-player-session player :zone-id zone-id))
+         ;; Track active session
+         (setf (gethash (string-downcase username) *active-sessions*) client)
+         ;; Send success response
+         (send-net-message socket
+                          (list :type :auth-ok :player-id player-id)
+                          :host host :port port)
+         (log-verbose "Registration successful: ~a (~a:~d) -> player-id=~d"
+                     username host port player-id)))
+      (t
+       ;; Username already exists
+       (send-net-message socket
+                        (list :type :auth-fail :reason :username-taken)
+                        :host host :port port)
+       (log-verbose "Registration failed from ~a:~d - username ~a already taken"
+                   host port username)))))
+
+(defun handle-login-request (client host port message socket game clients elapsed)
+  "Handle account login request."
+  (let ((username (getf message :username))
+        (password (getf message :password)))
+    (cond
+      ((not (and username password))
+       (send-net-message socket
+                        (list :type :auth-fail :reason :missing-credentials)
+                        :host host :port port)
+       (log-verbose "Login failed from ~a:~d - missing credentials" host port))
+      ;; Check if already logged in
+      ((gethash (string-downcase username) *active-sessions*)
+       (send-net-message socket
+                        (list :type :auth-fail :reason :already-logged-in)
+                        :host host :port port)
+       (log-verbose "Login failed from ~a:~d - account ~a already logged in"
+                   host port username))
+      ;; Verify credentials
+      ((not (db-verify-credentials username password))
+       (send-net-message socket
+                        (list :type :auth-fail :reason :bad-credentials)
+                        :host host :port port)
+       (log-verbose "Login failed from ~a:~d - bad credentials for ~a"
+                   host port username))
+      (t
+       ;; Login successful
+       (let* ((character-id (db-get-character-id username))
+              (world (game-world game))
+              (zone (world-zone world))
+              (zone-id (and zone (zone-id zone)))
+              (player nil))
+         (cond
+           ;; Existing character - load from DB
+           (character-id
+            (setf player (db-load-player character-id))
+            (when player
+              ;; Remove any existing player with same ID (from stale session)
+              (let ((existing (find (player-id player) (game-players game)
+                                   :key #'player-id)))
+                (when existing
+                  (remove-player-from-game game existing)
+                  (log-verbose "Removed stale player ~d before re-adding"
+                              (player-id player))))
+              ;; Add loaded player to game
+              (add-player-to-game game player)
+              (log-verbose "Loaded existing character ~d for account ~a"
+                          character-id username)))
+           ;; No character yet - spawn new one (shouldn't happen after registration)
+           (t
+            (setf player (spawn-player-at-world world (game-id-source game)))
+            (db-set-character-id username (player-id player))
+            (add-player-to-game game player)
+            (log-verbose "Created new character ~d for account ~a"
+                        (player-id player) username)))
+
+         (when player
+           ;; Mark client as authenticated
+           (setf (net-client-player client) player)
+           (setf (net-client-authenticated-p client) t)
+           (setf (net-client-account-username client) (string-downcase username))
+           (setf (net-client-last-heard client) elapsed)
+           ;; Register session for persistence
+           (register-player-session player :zone-id zone-id)
+           ;; Track active session
+           (setf (gethash (string-downcase username) *active-sessions*) client)
+           ;; Send success response
+           (send-net-message socket
+                            (list :type :auth-ok :player-id (player-id player))
+                            :host host :port port)
+           (log-verbose "Login successful: ~a (~a:~d) -> player-id=~d"
+                       username host port (player-id player))))))))
+
+(defun handle-logout-request (client host port game)
+  "Handle logout request from authenticated client."
+  (when (and client (net-client-authenticated-p client))
+    (let ((username (net-client-account-username client))
+          (player (net-client-player client)))
+      (when username
+        ;; Remove from active sessions
+        (remhash username *active-sessions*)
+        (log-verbose "Logout: ~a (~a:~d)" username host port))
+      (when player
+        ;; Save and unregister session
+        (db-logout-player player)
+        ;; Remove player from game world
+        (remove-player-from-game game player))
+      ;; Clear authentication
+      (setf (net-client-authenticated-p client) nil)
+      (setf (net-client-account-username client) nil))))
+
+(defun check-client-timeouts (clients elapsed game)
+  "Check for timed-out clients and free their sessions. Returns updated client list."
+  (let ((updated-clients nil))
+    (dolist (client clients)
+      (let ((inactive-time (- elapsed (net-client-last-heard client))))
+        (if (and (net-client-authenticated-p client)
+                 (> inactive-time *client-timeout-seconds*))
+            ;; Client timed out - free the session
+            (let ((username (net-client-account-username client))
+                  (player (net-client-player client)))
+              (when username
+                (remhash username *active-sessions*)
+                (log-verbose "Client timeout: ~a (inactive for ~,1fs)"
+                            username inactive-time))
+              (when player
+                (db-logout-player player)
+                ;; Remove player from game world
+                (remove-player-from-game game player))
+              ;; Don't add to updated list - remove this client
+              )
+            ;; Client still active - keep it
+            (push client updated-clients))))
+    (nreverse updated-clients)))
 
 (defun run-server (&key (host *net-default-host*)
                         (port *net-default-port*)
@@ -454,21 +636,30 @@
                                (case (getf message :type)
                                  (:hello
                                   (log-verbose "Handshake received from ~a:~d" host port))
+                                 (:register
+                                  (handle-register-request client host port message socket game))
+                                 (:login
+                                  (handle-login-request client host port message socket game
+                                                       clients elapsed))
+                                 (:logout
+                                  (handle-logout-request client host port game))
                                  (:intent
-                                  (when client
+                                  (when (and client (net-client-authenticated-p client))
                                     (apply-intent-plist
                                      (net-client-intent client)
                                      (getf message :payload))))
                                  (:save
-                                  (log-verbose "Save requested by ~a:~d" host port)
-                                  (when (save-game game *save-filepath*)
-                                    (emit-hud-message-event (game-combat-events game)
-                                                            "Game saved.")))
+                                  (when (and client (net-client-authenticated-p client))
+                                    (log-verbose "Save requested by ~a:~d" host port)
+                                    (when (save-game game *save-filepath*)
+                                      (emit-hud-message-event (game-combat-events game)
+                                                              "Game saved."))))
                                  (:load
-                                  (log-verbose "Load requested by ~a:~d" host port)
-                                  (handle-server-load game)
-                                  (setf clients
-                                        (reconcile-net-clients game clients)))
+                                  (when (and client (net-client-authenticated-p client))
+                                    (log-verbose "Load requested by ~a:~d" host port)
+                                    (handle-server-load game)
+                                    (setf clients
+                                          (reconcile-net-clients game clients))))
                                  (t
                                   (log-verbose "Unknown message type from ~a:~d -> ~s"
                                                host port (getf message :type)))))))
@@ -487,6 +678,8 @@
                          (when (>= (- elapsed last-flush-time) *batch-flush-interval*)
                            (flush-dirty-players)
                            (setf last-flush-time elapsed))
+                         ;; 3c. Check for timed-out clients (free sessions after 30s inactivity)
+                         (setf clients (check-client-timeouts clients elapsed game))
                          ;; 4. Send snapshots to all clients (serialize once, send N times)
                          ;; OPTIMIZATION: Serialization happens once and is shared across clients.
                          ;; For 500 clients this is much better than 500 serializations.
@@ -526,14 +719,14 @@
       (raylib:init-audio-device)
       (let* ((socket (usocket:socket-connect host port :protocol :datagram))
              (recv-buffer (make-net-buffer))
-             (game (make-game)))
+             (game (make-game))
+             (ui (game-ui game)))
         (setf (game-net-role game) :client)
-        (send-net-message socket (list :type :hello))
         (unwind-protect
              (loop :with elapsed = 0.0
                    :with frames = 0
                    :until (or (raylib:window-should-close)
-                              (ui-exit-requested (game-ui game))
+                              (ui-exit-requested ui)
                               (and (> max-seconds 0.0)
                                    (>= elapsed max-seconds))
                               (and (> max-frames 0)
@@ -541,35 +734,92 @@
                    :do (let ((dt (raylib:get-frame-time)))
                          (incf elapsed dt)
                          (incf frames)
-                         (update-client-input game dt)
-                         (dolist (request (drain-net-requests game))
-                           (send-net-message socket request))
-                         (send-intent-message socket (game-client-intent game))
-                         (clear-requested-chat-message (game-client-intent game))
-                         (let ((latest-state nil)
-                               (latest-events nil)
-                               (latest-player-id nil))
-                           (loop
-                             (multiple-value-bind (message _host _port)
-                                 (receive-net-message socket recv-buffer)
-                               (declare (ignore _host _port))
-                               (unless message
-                                 (return))
-                               (case (getf message :type)
-                                 (:snapshot
-                                  (setf latest-state (getf message :state)
-                                        latest-player-id (or (getf message :player-id)
-                                                             latest-player-id))
-                                  (dolist (event (getf message :events))
-                                    (push event latest-events)))
-                                 (t
-                                  (log-verbose "Unknown message type from server: ~s"
-                                               (getf message :type)))))
-                           (when latest-state
-                             (apply-snapshot game latest-state (nreverse latest-events)
-                                             :player-id latest-player-id))))
-                         (process-combat-events game)
-                         (draw-game game)))
+
+                         ;; Login screen phase
+                         (cond
+                           ((and (ui-login-active ui) (not (ui-auth-complete ui)))
+                            ;; Update login input
+                            (update-login-input ui)
+                            ;; Check for login messages from server
+                            (loop
+                              (multiple-value-bind (message _host _port)
+                                  (receive-net-message socket recv-buffer)
+                                (declare (ignore _host _port))
+                                (unless message
+                                  (return))
+                                (case (getf message :type)
+                                  (:auth-ok
+                                   (setf (ui-auth-complete ui) t)
+                                   (setf (ui-login-active ui) nil)
+                                   (log-verbose "Authentication successful"))
+                                  (:auth-fail
+                                   (let ((reason (getf message :reason)))
+                                     (setf (ui-auth-error-message ui)
+                                           (case reason
+                                             (:bad-credentials "Invalid username or password")
+                                             (:username-taken "Username already taken")
+                                             (:already-logged-in "Account already logged in")
+                                             (:missing-credentials "Missing username or password")
+                                             (t "Authentication failed")))
+                                     (log-verbose "Authentication failed: ~a" reason)))
+                                  (t
+                                   (log-verbose "Unexpected message during login: ~s"
+                                               (getf message :type))))))
+                            ;; Draw login screen and handle button clicks
+                            (raylib:begin-drawing)
+                            (let ((action (draw-login-screen ui)))
+                              (when action
+                                (let ((username (ui-username-buffer ui)))
+                                  (when (and username (plusp (length username)))
+                                    ;; For MVP: password = username
+                                    (case action
+                                      (:login
+                                       (send-net-message socket
+                                                        (list :type :login
+                                                              :username username
+                                                              :password username))
+                                       (setf (ui-auth-error-message ui) nil)
+                                       (log-verbose "Sending login request for ~a" username))
+                                      (:register
+                                       (send-net-message socket
+                                                        (list :type :register
+                                                              :username username
+                                                              :password username))
+                                       (setf (ui-auth-error-message ui) nil)
+                                       (log-verbose "Sending register request for ~a" username)))))))
+                            (raylib:end-drawing))
+
+                           ;; Gameplay phase (after authentication)
+                           (t
+                            (update-client-input game dt)
+                            (dolist (request (drain-net-requests game))
+                              (send-net-message socket request))
+                            (send-intent-message socket (game-client-intent game))
+                            (clear-requested-chat-message (game-client-intent game))
+                            (let ((latest-state nil)
+                                  (latest-events nil)
+                                  (latest-player-id nil))
+                              (loop
+                                (multiple-value-bind (message _host _port)
+                                    (receive-net-message socket recv-buffer)
+                                  (declare (ignore _host _port))
+                                  (unless message
+                                    (return))
+                                  (case (getf message :type)
+                                    (:snapshot
+                                     (setf latest-state (getf message :state)
+                                           latest-player-id (or (getf message :player-id)
+                                                                latest-player-id))
+                                     (dolist (event (getf message :events))
+                                       (push event latest-events)))
+                                    (t
+                                     (log-verbose "Unknown message type from server: ~s"
+                                                  (getf message :type)))))
+                              (when latest-state
+                                (apply-snapshot game latest-state (nreverse latest-events)
+                                                :player-id latest-player-id)))
+                            (process-combat-events game)
+                            (draw-game game))))))
           (shutdown-game game)
           (usocket:socket-close socket)
           (raylib:close-audio-device))))))
