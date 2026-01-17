@@ -4,48 +4,110 @@ These docs are meant to teach the architecture and the design choices behind thi
 The goal is to help you learn the reasoning, not just the API.
 
 ## Why This Architecture
+- **Client/Server split**: Server is authoritative; clients send intents, receive snapshots.
 - **Systems over scripts**: behavior lives in systems, not in the main loop.
 - **Intent layer**: input and AI both write intent; movement/combat consume it.
 - **Data-driven**: tunables and archetypes live in `data/game-data.lisp`.
 - **Rendering is read-only**: the render pipeline never mutates gameplay state.
+- **Storage abstraction**: game logic never calls database directly (uses db.lisp).
 
 ## How To Read
-Start with the game loop, then follow the data flow:
-1) `docs/main.md` (orchestration)
-2) `docs/types.md` and `docs/intent.md` (data layout and action layer)
-3) `docs/progression.md` (stats + XP + loot)
-4) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
-5) `docs/zone.md`, `docs/world-graph.md`, `docs/rendering.md`, `docs/editor.md` (world data + travel + draw pipeline + editor)
-6) `docs/ui.md` and `docs/audio.md` (player-facing polish)
-7) `docs/data.md` and `docs/config.md` (tuning and data-driven behavior)
-8) `docs/utils.md` and `docs/package.md` (supporting helpers)
+
+**Architecture overview:**
+1) `docs/net.md` (UDP protocol, client/server split, snapshots)
+2) `docs/db.md` (persistence tiers, storage abstraction, dirty flags)
+3) `docs/save.md` (serialization format, durable vs ephemeral)
+
+**Game loop and data flow:**
+1) `docs/main.md` (client orchestration)
+2) `docs/server.md` (server-side game loop)
+3) `docs/types.md` and `docs/intent.md` (data layout and action layer)
+
+**Core systems:**
+1) `docs/progression.md` (stats + XP + loot)
+2) `docs/input.md`, `docs/ai.md`, `docs/movement.md`, `docs/combat.md` (core systems)
+3) `docs/chat.md` (chat processing)
+
+**World and rendering:**
+1) `docs/zone.md`, `docs/world-graph.md` (world data + travel)
+2) `docs/rendering.md`, `docs/editor.md` (draw pipeline + editor)
+3) `docs/ui.md` and `docs/audio.md` (player-facing polish)
+
+**Configuration and data:**
+1) `docs/config.md` (all tunables, organized by category)
+2) `docs/data.md` (data-driven behavior, archetypes)
+3) `docs/migrations.md` (schema versioning, migration functions)
+
+**Supporting files:**
+1) `docs/utils.md` and `docs/package.md` (helpers)
+2) `docs/admin.md` (admin commands)
 
 ## Design Principles Used Here
+- Server is authoritative; clients are untrusted.
 - Behavior lives in systems, not in the main loop.
 - Entities hold data; systems consume data and intent.
 - Rendering never drives gameplay.
 - Data is external and editable (tunable configs and archetypes).
 - Performance matters: reuse objects and cull work early.
+- All persistence goes through the storage abstraction layer.
+- State is classified as durable (persisted) or ephemeral (lost on crash).
 
 ## Flow Diagrams
 
-Update flow (one frame)
+Client/Server flow
 ```
-Input + UI
+Client                          Server
+------                          ------
+Input -> Intent
+        -----> UDP :intent ---->
+                                Validate + Apply
+                                Simulation tick
+        <---- UDP :snapshot <---
+Apply snapshot
+Render
+```
+
+Update flow (one simulation tick)
+```
+Receive intents from clients
    |
    v
-Intent (player + NPC)
+Validate + sync targets (server authority)
    |
    v
-Movement + Combat
+Movement + Combat + AI
    |
    v
 Animation + Effects
+   |
+   v
+Broadcast snapshots
 ```
 
-Render flow (one frame)
+Render flow (client, one frame)
 ```
 World (tiles + walls) -> Entities -> HUD -> Menu
+```
+
+Persistence flow
+```
+Game event (death, level-up, etc.)
+   |
+   v
+Tier-1: Immediate save (critical)
+   or
+Tier-2: Mark dirty (batched every 30s)
+   or
+Tier-3: Logout save (session end)
+   |
+   v
+serialize-player (save.lisp)
+   |
+   v
+storage-save (db.lisp)
+   |
+   v
+Redis / Memory backend
 ```
 
 Data flow (startup)
@@ -64,26 +126,43 @@ world + assets
 
 ## File Index
 
-Engine files
-- [package.md](package.md)
-- [config.md](config.md)
-- [data.md](data.md)
-- [zone.md](zone.md)
-- [world-graph.md](world-graph.md)
-- [intent.md](intent.md)
-- [progression.md](progression.md)
-- [types.md](types.md)
-- [utils.md](utils.md)
-- [input.md](input.md)
-- [movement.md](movement.md)
-- [combat.md](combat.md)
-- [ai.md](ai.md)
-- [audio.md](audio.md)
-- [ui.md](ui.md)
-- [editor.md](editor.md)
-- [rendering.md](rendering.md)
-- [main.md](main.md)
+**Networking & Persistence**
+- [net.md](net.md) - UDP protocol, client/server, snapshots, interpolation, prediction
+- [db.md](db.md) - Storage abstraction, Redis/memory backends, write tiers, dirty flags
+- [save.md](save.md) - Serialization format, durable vs ephemeral classification
+- [migrations.md](migrations.md) - Schema versioning, migration functions
+- [server.md](server.md) - Server-side game loop
 
-Reference docs
+**Core Systems**
+- [types.md](types.md) - Data structures (player, NPC, world, etc.)
+- [intent.md](intent.md) - Intent layer (what entities want to do)
+- [input.md](input.md) - Client input handling
+- [movement.md](movement.md) - Physics, collision, zone transitions
+- [combat.md](combat.md) - Damage, HP, death, XP awards
+- [ai.md](ai.md) - NPC behaviors (idle, wander, aggressive, flee)
+- [progression.md](progression.md) - Stats, XP, levels, inventory, equipment
+- [chat.md](chat.md) - Chat message processing
+
+**World & Rendering**
+- [zone.md](zone.md) - Zone loading, tile layers, collision maps
+- [world-graph.md](world-graph.md) - Zone connections, edge transitions
+- [rendering.md](rendering.md) - Draw pipeline, sprites, tiles
+- [editor.md](editor.md) - Zone editor mode
+
+**UI & Polish**
+- [ui.md](ui.md) - Menus, HUD, login screen
+- [audio.md](audio.md) - Music playback, volume control
+
+**Configuration**
+- [config.md](config.md) - All tunables (immediate effect vs restart required)
+- [data.md](data.md) - Data-driven behavior, archetypes, tunables
+
+**Supporting**
+- [main.md](main.md) - Client entry point
+- [admin.md](admin.md) - Admin commands (ban, kick, broadcast, etc.)
+- [utils.md](utils.md) - Helper functions
+- [package.md](package.md) - Package definition
+
+**Reference**
 - [raylib_cheatsheet.md](raylib_cheatsheet.md)
 - [claw-raylib-readme.org](claw-raylib-readme.org)
