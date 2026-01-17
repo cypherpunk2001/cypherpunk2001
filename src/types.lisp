@@ -172,7 +172,7 @@
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
-  world player players npcs entities id-source audio ui render assets camera editor
+  world player players npcs entities id-source npc-id-source audio ui render assets camera editor
   combat-events client-intent net-role net-requests net-player-id)
 
 (defun queue-net-request (game request)

@@ -277,7 +277,7 @@
       (setf (editor-camera-x editor) (player-x player)
             (editor-camera-y editor) (player-y player)))
     (let ((npcs (make-npcs player world
-                           :id-source (game-id-source game))))
+                           :id-source (game-npc-id-source game))))
       (ensure-npcs-open-spawn npcs world)
       (setf (game-npcs game) npcs
             (game-entities game) (make-entities players npcs))))))

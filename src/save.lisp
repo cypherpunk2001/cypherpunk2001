@@ -404,7 +404,7 @@
         (let* ((player (game-player game))
                (players (game-players game))
                (npcs (make-npcs player world
-                                :id-source (game-id-source game))))
+                                :id-source (game-npc-id-source game))))
           (ensure-npcs-open-spawn npcs world)
           (setf (game-npcs game) npcs
                 (game-entities game) (make-entities players npcs))))

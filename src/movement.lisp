@@ -777,10 +777,9 @@
               :do (setf (aref result i) npc))
         result)))
 
-(defun transition-zone (game exit edge)
-  ;; Apply a zone transition using EXIT metadata.
+(defun transition-zone (game player exit edge)
+  ;; Apply a zone transition using EXIT metadata for the given PLAYER.
   (let* ((world (game-world game))
-         (player (game-player game))
          (intent (player-intent player))
          (current-zone (world-zone world))
          (current-zone-id (and current-zone (zone-id current-zone)))
@@ -847,7 +846,7 @@
                  (cached (cached-zone-npcs world target-zone-id))
                  (npcs (or cached
                            (make-npcs player world
-                                      :id-source (game-id-source game))))
+                                      :id-source (game-npc-id-source game))))
                  (carried (reposition-transition-npcs carry player world)))
             ;; Update session zone-id for persistence
             (update-player-session-zone (player-id player) target-zone-id)
@@ -858,15 +857,20 @@
           t)))))
 
 (defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for the player.
-  ;; NOTE: Returns nil if no player (server with no authenticated clients).
+  ;; Handle edge-based world graph transitions for all players.
+  ;; NOTE: Returns nil if no players.
   (let* ((world (game-world game))
-         (player (game-player game)))
-    (when player
-      (let* ((edge (and world (world-exit-edge world player)))
-             (exit (and edge (world-edge-exit world edge))))
-        (when exit
-          (transition-zone game exit edge))))))
+         (players (game-players game))
+         (transitioned nil))
+    (when (and players (> (length players) 0))
+      (loop :for player :across players
+            :do (let* ((edge (and world (world-exit-edge world player)))
+                       (exit (and edge (world-edge-exit world edge))))
+                  (when exit
+                    (transition-zone game player exit edge)
+                    (setf transitioned t)
+                    (return)))))  ; Only transition first player that hits edge
+    transitioned))
 
 (defun log-player-position (player world)
   ;; Emit verbose position and tile diagnostics for debugging.

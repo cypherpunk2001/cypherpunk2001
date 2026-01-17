@@ -3,7 +3,7 @@
 
 (defun make-game ()
   ;; Assemble game state and log setup if verbose is enabled.
-  (multiple-value-bind (world player players npcs entities id-source combat-events)
+  (multiple-value-bind (world player players npcs entities id-source npc-id-source combat-events)
       (make-sim-state)
     (let* ((audio (make-audio))
            (ui (make-ui))
@@ -21,6 +21,7 @@
                               :npcs npcs
                               :entities entities
                               :id-source id-source
+                              :npc-id-source npc-id-source
                               :audio audio
                               :ui ui
                               :render render

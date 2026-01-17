@@ -61,11 +61,11 @@
               (world-wall-min-y world)
               (world-wall-max-y world))
       (finish-output))
-    (values world player players npcs entities id-source combat-events)))
+    (values world player players npcs entities id-source npc-id-source combat-events)))
 
 (defun make-server-game ()
   ;; Build a headless game state for server-only simulation.
-  (multiple-value-bind (world player players npcs entities id-source combat-events)
+  (multiple-value-bind (world player players npcs entities id-source npc-id-source combat-events)
       (make-sim-state :server-mode t)
     (%make-game :world world
                 :player player
@@ -73,6 +73,7 @@
                 :npcs npcs
                 :entities entities
                 :id-source id-source
+                :npc-id-source npc-id-source
                 :audio nil
                 :ui nil
                 :render nil
