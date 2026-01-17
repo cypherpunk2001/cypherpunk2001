@@ -59,20 +59,7 @@ Key design docs:
 
 ## Current Tasks / TODO
 
- I think the logout button on the escape menu should logout the user but also  take them back to the main menu in case they want to register another or login again later. And we don't need the "Quit" button on the escape menu anymore, it really does not serve purpose, but it could go on the main login screen
-  menu, I suppose.
-
-## Future Tasks / Roadmap
-
-Networking polish that unlocks “MMO feel”
-After ownership, the next noticeable improvement is:
-Interpolation for remote entities (if not already)
-Basic rate limiting + sanity checks (intent frequency, movement bounds)
-Optional later: prediction for local player, but only after everything’s stable
-
-----------------------------------
-
-Make persistence boring and safe (still simple)
+ Make persistence boring and safe (still simple)
 
 ### What We Already Have ✓
 - **Versioned save schema + migrations**: `*save-format-version*` and `*player-schema-version*` in save.lisp
@@ -101,12 +88,13 @@ the userbase, e.g. bans, wipes, grant item, get info like ip addresses user has 
 but doing this would save us from having to create some cli tool or more GUI shit.
 - **Impact**: Easy debugging/testing without manual Redis commands
 
-**Recommendation**: Start with Phase 1 only. Atomic saves = biggest safety win for minimal code.
+## Future Tasks / Roadmap
 
-----------------------------------
-
-
-
+Networking polish that unlocks “MMO feel”
+After ownership, the next noticeable improvement is:
+Interpolation for remote entities (if not already)
+Basic rate limiting + sanity checks (intent frequency, movement bounds)
+Optional later: prediction for local player, but only after everything’s stable
 
 ----------------------------------
 - [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
