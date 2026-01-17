@@ -87,12 +87,18 @@
       nil)))
 
 (defmethod storage-save ((storage redis-storage) key data)
-  "Save data to Redis. Returns T on success."
+  "Save data to Redis using atomic write-then-rename pattern.
+   Writes to a temp key first, then atomically renames to the real key.
+   This prevents data corruption if the server crashes during write."
   (handler-case
-      (progn
+      (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
         (redis:with-connection (:host (redis-storage-host storage)
                                 :port (redis-storage-port storage))
-          (red:set key (prin1-to-string data)))
+          ;; Write to temporary key
+          (red:set temp-key (prin1-to-string data))
+          ;; Atomically rename temp key to real key
+          ;; RENAME overwrites the destination key if it exists
+          (red:rename temp-key key))
         t)
     (error (e)
       (warn "Redis save error for key ~a: ~a" key e)

@@ -69,9 +69,9 @@ Key design docs:
 
 ### What We Need ❌
 
-#### Phase 1: Atomic Saves (Safety) - HIGH PRIORITY
-- [ ] Implement write-new-then-rename pattern in db.lisp
-- [ ] Replace direct Redis SET with temp key + atomic RENAME
+#### Phase 1: Atomic Saves (Safety) - COMPLETE ✓
+- [x] Implement write-new-then-rename pattern in db.lisp
+- [x] Replace direct Redis SET with temp key + atomic RENAME
 - **Impact**: Crash during save won't corrupt existing data
 
 #### Phase 2: Backup Snapshots (Recovery) - MEDIUM PRIORITY
@@ -84,7 +84,7 @@ Key design docs:
 #### Phase 3: Admin Commands (Testing) - LOW PRIORITY
 - [ ] Add REPL helpers: `admin-wipe-character`, `admin-grant-item`, `admin-print-save`
 - This is really cool idea, admin can always use slime repl to server and should have a full almost "API" of tools to manage
-the userbase, e.g. bans, wipes, grant item, get info like ip addresses user has logged in from history and times ... etc. Can you think of anything else? Let's get a wishlist/spec for this. We cant implement all yet for example because we dont even track IPs or have a mechanism to ban people yet haha.
+the userbase, e.g. bans, teleport player to X, wipes, grant item, get info like ip addresses user has logged in from history and times ... etc. Can you think of anything else? Let's get a wishlist/spec for this. We cant implement all yet for example because we dont even track IPs or have a mechanism to ban people yet haha.
 but doing this would save us from having to create some cli tool or more GUI shit.
 - **Impact**: Easy debugging/testing without manual Redis commands
 

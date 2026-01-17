@@ -60,7 +60,13 @@ The game server and client MUST NOT know where data comes from or where it goes.
         (read-from-string raw)))))
 
 (defmethod storage-save ((storage redis-storage) key data)
-  (redis:set key (prin1-to-string data))
+  ;; Atomic write-then-rename pattern for crash safety
+  ;; 1. Write to temp key first
+  ;; 2. Atomically RENAME to real key
+  ;; If crash during step 1, real key is untouched
+  (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
+    (redis:set temp-key (prin1-to-string data))
+    (redis:rename temp-key key))  ; Atomic, overwrites if exists
   t)
 
 ;; In-memory implementation (for testing)
@@ -480,6 +486,26 @@ Migrations are **append-only** and **chained**:
 ```
 
 This migration is tested in `persistence-test.lisp` with `test-migration-v1-to-v2`.
+
+## Crash-Safe Writes (Atomic Saves)
+
+To prevent data corruption during crashes, all Redis saves use the **write-new-then-rename** pattern:
+
+```lisp
+;; Instead of directly overwriting:
+(redis:set "player:123" new-data)  ; DANGEROUS: crash mid-write corrupts key
+
+;; We write to a temp key first, then atomically rename:
+(redis:set "temp:player:123:12345" new-data)  ; Crash here = temp key orphaned
+(redis:rename "temp:player:123:12345" "player:123")  ; Atomic, overwrites safely
+```
+
+**Why this works:**
+1. If crash during step 1 (writing temp key): Original data in `player:123` is untouched
+2. If crash during step 2 (rename): Redis RENAME is atomic - either happens fully or not at all
+3. Orphaned temp keys (`temp:*`) are harmless and can be cleaned up periodically
+
+**Impact:** A server crash during save will never corrupt existing player data. At worst, the latest changes (since last successful save) are lost, but you never end up with half-written garbage.
 
 ## Crash Recovery
 
