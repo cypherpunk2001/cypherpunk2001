@@ -21,31 +21,31 @@
 
 ;;; Helper functions
 
-(defun find-player-by-id (player-id)
-  "Find player struct by ID from player sessions."
+(defun admin--find-player-by-id (player-id)
+  "Find player struct by ID from player sessions (admin helper)."
   (let ((session (gethash player-id *player-sessions*)))
     (when session
       (player-session-player session))))
 
-(defun find-player-by-username (username)
+(defun admin--find-player-by-username (username)
   "Find player struct by username (case-insensitive)."
   (maphash (lambda (player-id session)
              (declare (ignore player-id))
              (let ((player (player-session-player session)))
                (when (and player
                           (string-equal (player-username player) username))
-                 (return-from find-player-by-username player))))
+                 (return-from admin--find-player-by-username player))))
            *player-sessions*)
   nil)
 
-(defun find-player (id-or-username)
-  "Find player by ID (integer) or username (string)."
+(defun admin--find-player (id-or-username)
+  "Find player by ID (integer) or username (string) (admin helper)."
   (etypecase id-or-username
-    (integer (find-player-by-id id-or-username))
-    (string (find-player-by-username id-or-username))))
+    (integer (admin--find-player-by-id id-or-username))
+    (string (admin--find-player-by-username id-or-username))))
 
-(defun find-net-client (player-id)
-  "Find net-client for given player-id."
+(defun admin--find-net-client (player-id)
+  "Find net-client for given player-id (admin helper)."
   (when *server-clients*
     (find-if (lambda (client)
                (and (net-client-player client)
@@ -56,7 +56,7 @@
 
 (defun admin-print-save (id-or-username)
   "Pretty-print player's saved data. Returns plist or NIL."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let ((data (serialize-player player)))
           (format t "~&Player ~a (ID ~d):~%"
@@ -119,7 +119,7 @@
 
 (defun admin-grant-item (id-or-username item-id count)
   "Give item to player. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (progn
           (add-inventory-item player item-id count)
@@ -135,7 +135,7 @@
 
 (defun admin-remove-item (id-or-username item-id count)
   "Remove item from player. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let ((removed (remove-inventory-item player item-id count)))
           (mark-player-dirty (player-id player))
@@ -150,7 +150,7 @@
 
 (defun admin-clear-inventory (id-or-username)
   "Wipe player inventory. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (progn
           (clear-inventory player)
@@ -166,7 +166,7 @@
 
 (defun admin-set-hp (id-or-username new-hp)
   "Set player current HP. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let ((max-hp (calculate-max-hp player)))
           (setf (player-hp player) (clamp new-hp 0 max-hp))
@@ -182,7 +182,7 @@
 
 (defun admin-set-xp (id-or-username new-xp)
   "Set player XP and recalculate level. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (progn
           (setf (player-xp player) (max 0 new-xp))
@@ -203,7 +203,7 @@
 
 (defun admin-set-level (id-or-username new-level)
   "Set player level and adjust XP to match. Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (progn
           (setf (player-hitpoints-level player) (max 1 new-level))
@@ -222,7 +222,7 @@
 
 (defun admin-set-coins (id-or-username new-coins)
   "Set player coins (gold). Returns T on success, NIL on failure."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let ((inventory (player-inventory player)))
           (when inventory
@@ -241,12 +241,12 @@
   "Teleport player to zone/coords or to another player.
    Usage: (admin-teleport id :overworld 500 300)
           (admin-teleport id :to-player other-id)"
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (cond
           ;; Teleport to another player
           ((eq zone-or-keyword :to-player)
-           (let ((target-player (find-player x)))
+           (let ((target-player (admin--find-player x)))
              (if target-player
                  (let ((target-session (gethash (player-id target-player) *player-sessions*)))
                    (setf (player-x player) (player-x target-player))
@@ -287,7 +287,7 @@
 
 (defun admin-wipe-character (id-or-username)
   "Delete character from database (irreversible). Returns T on success."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let ((player-id (player-id player))
               (username (player-username player)))
@@ -314,9 +314,9 @@
 
 (defun admin-kick (id-or-username reason)
   "Disconnect player from server. Returns T on success."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
-        (let ((client (find-net-client (player-id player))))
+        (let ((client (admin--find-net-client (player-id player))))
           (if client
               (progn
                 ;; Send a message to the client before disconnecting
@@ -343,7 +343,7 @@
 
 (defun admin-reset-position (id-or-username)
   "Move player to their zone spawn point (unstuck). Returns T on success."
-  (let ((player (find-player id-or-username)))
+  (let ((player (admin--find-player id-or-username)))
     (if player
         (let* ((session (gethash (player-id player) *player-sessions*))
                (zone-id (player-session-zone-id session))

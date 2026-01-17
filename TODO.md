@@ -59,33 +59,7 @@ Key design docs:
 
 ## Current Tasks / TODO
 
- Make persistence boring and safe (still simple)
-
-### What We Already Have ✓
-- **Versioned save schema + migrations**: `*save-format-version*` and `*player-schema-version*` in save.lisp
-- **Migration system**: `migrate-player-v1->v2`, `*player-migrations*` list, automatic migration on load
-- **Storage abstraction**: db.lisp provides backend-agnostic API (memory/redis via env var)
-- **Three-tier persistence**: Tier-1 immediate (critical), Tier-2 batched (30s), Tier-3 logout
-
-### What We Need ❌
-
-#### Phase 1: Atomic Saves (Safety) - COMPLETE ✓
-- [x] Implement write-new-then-rename pattern in db.lisp
-- [x] Replace direct Redis SET with temp key + atomic RENAME
-- **Impact**: Crash during save won't corrupt existing data
-
-#### Phase 2: Backup Snapshots (Recovery) - COMPLETE ✓
-- [x] Systemd timer for hourly Redis backups (deploy/mmorpg-backup.*)
-- [x] Timestamped backups in /var/mmorpg/db/backups/
-- [x] Automatic rotation (keeps 7 days of hourly backups by default)
-- [x] DevOps instructions in README.md
-- **Impact**: Can restore from backup if player data corrupted
-
-#### Phase 3: Admin Commands (Testing) - IN PROGRESS
-- [x] Implement Tier A commands (see [docs/admin.md](docs/admin.md) for full spec)
-- [ ] Add admin action logging (future enhancement)
-- **Impact**: Easy debugging/testing without manual Redis commands
-- **Status**: All Tier A commands implemented and exported from `mmorpg` package
+- I'm wondering about player connectivity, and general use of things like "retry" in the codebase. Sometimes in my life as a webdev certain ops were more professional if they used a simple retry mechanism. I know we use UDP already which is pretty forgiving, but if there is any sections of the codebase that might benefit from a simple retry once in a while, let's add that because it seems like it is a cheap way to make the game more professional.
 
 ## Future Tasks / Roadmap
 
@@ -117,5 +91,3 @@ Optional later: prediction for local player, but only after everything's stable
 - [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
 
 ------------------------------
-
-- I'm wondering about player connectivity, and general use of things like "retry" in the codebase. Sometimes in my life as a webdev certain ops were more professional if they used a simple retry mechanism. I know we use UDP already which is pretty forgiving, but if there is any sections of the codebase that might benefit from a simple retry once in a while, let's add that because it seems like it is a cheap way to make the game more professional.
