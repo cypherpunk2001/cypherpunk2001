@@ -546,6 +546,142 @@
        (ironclad:ascii-string-to-byte-array computed-key-hex)
        (ironclad:ascii-string-to-byte-array stored-key-hex)))))
 
+;;;; Network Encryption (X25519 + AES-256-GCM)
+;;;;
+;;;; Encrypts authentication messages (login/register) to prevent wifi sniffing.
+;;;; Game traffic (snapshots, intents) remains unencrypted for latency reasons.
+;;;;
+;;;; Protocol:
+;;;; 1. Server has static X25519 keypair (generated once, persisted)
+;;;; 2. Client generates ephemeral X25519 keypair per auth request
+;;;; 3. Client computes shared secret via ECDH (ephemeral-private + server-public)
+;;;; 4. Client encrypts credentials with AES-256-GCM using SHA256(shared-secret)
+;;;; 5. Client sends: ephemeral-public-key || nonce || ciphertext || tag
+;;;; 6. Server computes same shared secret (server-private + ephemeral-public)
+;;;; 7. Server decrypts credentials, verifies tag
+
+(defparameter *server-keypair* nil
+  "Server's X25519 keypair for auth encryption. NIL until initialized.")
+
+(defparameter *server-public-key-hex* nil
+  "Server's public key as hex string for embedding in client config.")
+
+(defun generate-server-keypair ()
+  "Generate a new X25519 keypair for the server.
+   Returns (values private-key public-key)."
+  (let ((keypair (ironclad:generate-key-pair :curve25519)))
+    (values (ironclad:destructure-private-key keypair)
+            (ironclad:destructure-public-key keypair))))
+
+(defun init-server-encryption ()
+  "Initialize server encryption keypair. Generates new keys if none exist."
+  (multiple-value-bind (priv pub) (generate-server-keypair)
+    (setf *server-keypair* (cons priv pub))
+    (setf *server-public-key-hex* (bytes-to-hex pub))
+    (log-verbose "Server encryption initialized. Public key: ~a..."
+                 (subseq *server-public-key-hex* 0 16))
+    *server-public-key-hex*))
+
+(defun get-server-public-key ()
+  "Get server's public key as hex string."
+  (unless *server-keypair*
+    (init-server-encryption))
+  *server-public-key-hex*)
+
+(defun compute-shared-secret (my-private-key their-public-key)
+  "Compute X25519 shared secret from private and public keys (byte vectors)."
+  (ironclad:diffie-hellman :curve25519 my-private-key their-public-key))
+
+(defun derive-encryption-key (shared-secret)
+  "Derive a 256-bit encryption key from shared secret using SHA-256.
+   This adds key derivation to the raw ECDH output."
+  (ironclad:digest-sequence :sha256 shared-secret))
+
+(defun encrypt-auth-payload (payload server-public-key-hex)
+  "Encrypt PAYLOAD (string) for server using its public key.
+   Returns hex string: ephemeral-public || nonce || ciphertext || tag
+   PAYLOAD should be a plist serialized as string."
+  (let* (;; Generate ephemeral keypair
+         (ephemeral-keypair (ironclad:generate-key-pair :curve25519))
+         (ephemeral-private (ironclad:destructure-private-key ephemeral-keypair))
+         (ephemeral-public (ironclad:destructure-public-key ephemeral-keypair))
+         ;; Compute shared secret
+         (server-public (hex-to-bytes server-public-key-hex))
+         (shared-secret (compute-shared-secret ephemeral-private server-public))
+         (encryption-key (derive-encryption-key shared-secret))
+         ;; Generate random nonce (12 bytes for AES-GCM)
+         (nonce (ironclad:random-data 12))
+         ;; Encrypt with AES-256-GCM
+         (plaintext (ironclad:ascii-string-to-byte-array payload))
+         (cipher (ironclad:make-authenticated-encryption-mode
+                  :gcm
+                  :cipher-name :aes
+                  :key encryption-key
+                  :initialization-vector nonce))
+         (ciphertext (make-array (length plaintext)
+                                 :element-type '(unsigned-byte 8)))
+         (tag (make-array 16 :element-type '(unsigned-byte 8))))
+    ;; Perform encryption
+    (ironclad:process-associated-data cipher #())
+    (ironclad:encrypt cipher plaintext ciphertext)
+    (ironclad:produce-tag cipher :tag tag)
+    ;; Concatenate: ephemeral-public (32) || nonce (12) || ciphertext || tag (16)
+    (let* ((result-len (+ 32 12 (length ciphertext) 16))
+           (result (make-array result-len :element-type '(unsigned-byte 8))))
+      (replace result ephemeral-public :start1 0)
+      (replace result nonce :start1 32)
+      (replace result ciphertext :start1 44)
+      (replace result tag :start1 (+ 44 (length ciphertext)))
+      (bytes-to-hex result))))
+
+(defun decrypt-auth-payload (encrypted-hex)
+  "Decrypt an auth payload encrypted by client.
+   ENCRYPTED-HEX is: ephemeral-public || nonce || ciphertext || tag
+   Returns decrypted payload string, or NIL if decryption fails."
+  (unless *server-keypair*
+    (warn "Server encryption not initialized")
+    (return-from decrypt-auth-payload nil))
+  (handler-case
+      (let* ((encrypted (hex-to-bytes encrypted-hex))
+             (len (length encrypted)))
+        (when (< len (+ 32 12 16))  ; minimum: pubkey + nonce + tag
+          (warn "Encrypted payload too short")
+          (return-from decrypt-auth-payload nil))
+        ;; Extract components
+        (let* ((ephemeral-public (subseq encrypted 0 32))
+               (nonce (subseq encrypted 32 44))
+               (ciphertext-end (- len 16))
+               (ciphertext (subseq encrypted 44 ciphertext-end))
+               (tag (subseq encrypted ciphertext-end))
+               ;; Compute shared secret using server's private key
+               (server-private (car *server-keypair*))
+               (shared-secret (compute-shared-secret server-private ephemeral-public))
+               (encryption-key (derive-encryption-key shared-secret))
+               ;; Decrypt with AES-GCM, providing tag for verification
+               ;; If tag doesn't match, ironclad signals bad-authentication-tag
+               (cipher (ironclad:make-authenticated-encryption-mode
+                        :gcm
+                        :cipher-name :aes
+                        :key encryption-key
+                        :initialization-vector nonce
+                        :tag tag))
+               (plaintext (make-array (length ciphertext)
+                                      :element-type '(unsigned-byte 8))))
+          ;; Decrypt (tag verified automatically via cipher creation)
+          (ironclad:process-associated-data cipher #())
+          (ironclad:decrypt cipher ciphertext plaintext)
+          ;; Convert to string
+          (let ((result (make-string (length plaintext))))
+            (dotimes (i (length plaintext))
+              (setf (aref result i) (code-char (aref plaintext i))))
+            result)))
+    (ironclad:bad-authentication-tag ()
+      (warn "Auth payload tag verification failed - possible tampering")
+      nil)
+    (error (e)
+      (warn "Failed to decrypt auth payload: ~a" e)
+      nil)))
+
 ;;;; Account Management
 
 (defparameter *account-schema-version* 2

@@ -606,6 +606,50 @@
                       :host host
                       :port port)))
 
+(defun send-auth-message (socket msg-type username password &key host port)
+  "Send an authentication message (login or register).
+   If *auth-encryption-enabled* and *server-auth-public-key* are set,
+   encrypts the credentials. Otherwise sends plaintext."
+  (if (and *auth-encryption-enabled* *server-auth-public-key*)
+      ;; Encrypted auth: send encrypted credentials payload
+      (let* ((creds-plist (format nil "(:username ~s :password ~s)" username password))
+             (encrypted (encrypt-auth-payload creds-plist *server-auth-public-key*)))
+        (send-net-message socket
+                          (list :type msg-type
+                                :encrypted-payload encrypted)
+                          :host host :port port)
+        (log-verbose "Sent encrypted ~a request for ~a" msg-type username))
+      ;; Plaintext auth: send username and password directly
+      (send-net-message socket
+                        (list :type msg-type
+                              :username username
+                              :password password)
+                        :host host :port port)))
+
+(defun extract-auth-credentials (message)
+  "Extract username and password from an auth message.
+   Supports both encrypted (:encrypted-payload) and plaintext (:username/:password).
+   Returns (values username password) or (values NIL NIL) on failure."
+  (let ((encrypted-payload (getf message :encrypted-payload)))
+    (if encrypted-payload
+        ;; Encrypted auth: decrypt and parse
+        (let ((decrypted (decrypt-auth-payload encrypted-payload)))
+          (if decrypted
+              (let* ((*read-eval* nil)
+                     (creds (ignore-errors (read-from-string decrypted))))
+                (if (listp creds)
+                    (values (getf creds :username)
+                            (getf creds :password))
+                    (progn
+                      (warn "Failed to parse decrypted auth credentials")
+                      (values nil nil))))
+              (progn
+                (log-verbose "Failed to decrypt auth payload")
+                (values nil nil))))
+        ;; Plaintext auth: extract directly
+        (values (getf message :username)
+                (getf message :password)))))
+
 (defun handle-server-load (game)
   ;; Load game state on the server and reset transient flags.
   (let* ((event-queue (game-combat-events game))
@@ -640,9 +684,10 @@
 ;;;; Account Authentication Handlers
 
 (defun handle-register-request (client host port message socket game)
-  "Handle account registration request."
-  (let ((username (getf message :username))
-        (password (getf message :password)))
+  "Handle account registration request.
+   Supports both encrypted and plaintext credentials."
+  (multiple-value-bind (username password)
+      (extract-auth-credentials message)
     (cond
       ((not (and username password))
        (send-net-message-with-retry socket
@@ -698,9 +743,11 @@
                    host port username)))))
 
 (defun handle-login-request (client host port message socket game clients elapsed)
-  "Handle account login request."
-  (let ((username (getf message :username))
-        (password (getf message :password)))
+  "Handle account login request.
+   Supports both encrypted and plaintext credentials."
+  (declare (ignore clients))
+  (multiple-value-bind (username password)
+      (extract-auth-credentials message)
     (cond
       ((not (and username password))
        (send-net-message-with-retry socket
@@ -872,6 +919,12 @@
                                "6379"))
            (redis-port (or (ignore-errors (parse-integer redis-port-str)) 6379)))
       (init-storage :backend backend :host redis-host :port redis-port))
+    ;; Initialize auth encryption (generates server keypair)
+    ;; The server public key should be shared with clients for encrypted auth
+    (when *auth-encryption-enabled*
+      (let ((pub-key (init-server-encryption)))
+        (format t "~&SERVER: Auth encryption enabled. Public key: ~a~%" pub-key)
+        (finish-output)))
     (let* ((socket (usocket:socket-connect nil nil
                                           :protocol :datagram
                                           :local-host host
@@ -1015,10 +1068,8 @@
                             ;; Auto-login: Try register first, then login if taken
                             (when (and auto-login-username auto-login-password
                                       (not auto-login-attempted))
-                              (send-net-message socket
-                                               (list :type :register
-                                                     :username auto-login-username
-                                                     :password auto-login-password))
+                              (send-auth-message socket :register
+                                                 auto-login-username auto-login-password)
                               (setf auto-login-attempted t)
                               (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
                             ;; Update login input
@@ -1030,10 +1081,9 @@
                             (when (and (raylib:is-key-pressed +key-enter+)
                                       (ui-username-buffer ui)
                                       (plusp (length (ui-username-buffer ui))))
-                              (send-net-message socket
-                                               (list :type :login
-                                                     :username (ui-username-buffer ui)
-                                                     :password (ui-username-buffer ui)))
+                              (send-auth-message socket :login
+                                                 (ui-username-buffer ui)
+                                                 (ui-username-buffer ui))
                               (setf (ui-auth-error-message ui) nil)
                               (log-verbose "Sending login request for ~a (Enter key)" (ui-username-buffer ui)))
                             ;; Check for login messages from server
@@ -1055,10 +1105,8 @@
                                                auto-login-attempted
                                                (not auto-login-register-failed)
                                                (eq reason :username-taken))
-                                       (send-net-message socket
-                                                        (list :type :login
-                                                              :username auto-login-username
-                                                              :password auto-login-password))
+                                       (send-auth-message socket :login
+                                                          auto-login-username auto-login-password)
                                        (setf auto-login-register-failed t)
                                        (log-verbose "Auto-login: register failed, trying login for ~a"
                                                    auto-login-username))
@@ -1082,17 +1130,11 @@
                                     ;; For MVP: password = username
                                     (case action
                                       (:login
-                                       (send-net-message socket
-                                                        (list :type :login
-                                                              :username username
-                                                              :password username))
+                                       (send-auth-message socket :login username username)
                                        (setf (ui-auth-error-message ui) nil)
                                        (log-verbose "Sending login request for ~a" username))
                                       (:register
-                                       (send-net-message socket
-                                                        (list :type :register
-                                                              :username username
-                                                              :password username))
+                                       (send-auth-message socket :register username username)
                                        (setf (ui-auth-error-message ui) nil)
                                        (log-verbose "Sending register request for ~a" username)))))))
                             (raylib:end-drawing))

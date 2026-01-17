@@ -152,6 +152,13 @@
 (defparameter *net-buffer-size* usocket:+max-datagram-packet-size+)
 ;; Max UDP payload size for snapshot messages.
 
+;;; Auth Encryption - X25519 + ChaCha20-Poly1305
+;;; Why: Client must know server's public key to encrypt credentials.
+;;; Server generates this at startup and should share it with clients.
+;;; For dev/local testing, leave NIL to disable encryption.
+(defparameter *auth-encryption-enabled* nil) ;; Enable auth payload encryption. Requires server public key.
+(defparameter *server-auth-public-key* nil) ;; Server's X25519 public key as hex string. Set by server or config.
+
 ;;; Inventory & Equipment - Array sizes set at player creation
 ;;; Why: Inventory/equipment arrays allocated with fixed size when player
 ;;; struct is created. Changing these won't resize existing players' storage.
