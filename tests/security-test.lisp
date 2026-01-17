@@ -1122,6 +1122,45 @@
     (sb-thread:join-thread server-thread)))
 
 ;;;; ==========================================================================
+;;;; TEST: Pickup Range Validation
+;;;; Player must be standing on same tile to pick up items
+;;;; ==========================================================================
+
+(define-security-test test-pickup-requires-same-tile
+  ;; Create minimal world and player to test pickup-tile-in-range-p
+  (let* ((tile-size 64.0)  ; typical tile-dest-size
+         (world (mmorpg::%make-world))
+         (player (mmorpg::make-player :id 1)))
+    ;; Set world tile size
+    (setf (mmorpg::world-tile-dest-size world) tile-size)
+
+    ;; Place player at center of tile (2, 3) - world coords (160, 224)
+    (setf (mmorpg::player-x player) 160.0
+          (mmorpg::player-y player) 224.0)
+
+    ;; Test 1: Same tile (2, 3) - should succeed
+    (unless (mmorpg::pickup-tile-in-range-p player 2 3 world)
+      (error "Pickup should succeed when player is on same tile (2,3)"))
+
+    ;; Test 2: Adjacent tile (3, 3) - should fail
+    (when (mmorpg::pickup-tile-in-range-p player 3 3 world)
+      (error "Pickup should fail for adjacent tile (3,3)"))
+
+    ;; Test 3: Adjacent tile (2, 4) - should fail
+    (when (mmorpg::pickup-tile-in-range-p player 2 4 world)
+      (error "Pickup should fail for adjacent tile (2,4)"))
+
+    ;; Test 4: Distant tile (10, 10) - should fail
+    (when (mmorpg::pickup-tile-in-range-p player 10 10 world)
+      (error "Pickup should fail for distant tile (10,10)"))
+
+    ;; Test 5: Player at edge of tile - still same tile
+    (setf (mmorpg::player-x player) 128.5  ; just inside tile 2
+          (mmorpg::player-y player) 192.5) ; just inside tile 3
+    (unless (mmorpg::pickup-tile-in-range-p player 2 3 world)
+      (error "Pickup should succeed at tile edge (still tile 2,3)"))))
+
+;;;; ==========================================================================
 ;;;; TEST: Duplicate Pickup Prevention (Duplication)
 ;;;; Rapidly picking up same object should not duplicate items
 ;;;; ==========================================================================
@@ -1261,6 +1300,9 @@
 
   ;; Persistence tests
   (test-corrupted-plist-handling)
+
+  ;; Pickup validation
+  (test-pickup-requires-same-tile)
 
   ;; Duplication tests
   (test-duplicate-pickup-prevented)
