@@ -17,9 +17,9 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 ```bash
 make checkparens        # Verify balanced parentheses in all .lisp files
 make ci                 # Cold compile + UDP handshake test (no GPU needed)
+make smoke              # Full client/server smoke test with window (2s default)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
-make smoke              # Full client/server smoke test with window (2s default)
 ```
 
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.

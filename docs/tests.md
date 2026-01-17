@@ -33,7 +33,7 @@ Should be run as part of the CI pipeline:
 make checkparens && make ci && make test-persistence && make checkdocs && make smoke
 ```
 
-## Test Coverage
+## Test Coverage (25 tests)
 
 ### 1. Persistence Round-Trip Tests
 - **test-player-roundtrip**: Serialize then deserialize = identical durable data
@@ -41,14 +41,38 @@ make checkparens && make ci && make test-persistence && make checkdocs && make s
 - **test-durable-persisted**: Durable fields ARE saved to DB
 - **test-inventory-roundtrip**: Inventory survives serialization
 - **test-equipment-roundtrip**: Equipment survives serialization
+- **test-stats-roundtrip**: Stats (XP, levels) survive serialization
 
-### 2. Invariant Tests
+### 2. XP/Progression Invariant Tests
+- **test-xp-never-decreases-on-award**: XP can only increase from awards
+- **test-level-increases-with-xp**: Level increases when XP threshold reached
+- **test-xp-level-boundary**: Exact XP boundary correctly triggers level-up
+
+### 3. Inventory/Equipment Invariant Tests
 - **test-hp-never-exceeds-max**: HP ≤ max HP always
 - **test-inventory-count-limits**: Inventory slots never exceed max
+- **test-inventory-overflow-returns-leftover**: Adding beyond capacity returns leftover
+- **test-inventory-stack-limits**: Stackable items respect max stack size
+- **test-equipment-modifiers-applied**: Equipping applies stat modifiers
+- **test-equipment-modifiers-removed-on-unequip**: Unequipping removes modifiers
 
-### 3. Storage Backend Tests
+### 4. Storage Backend Tests
 - **test-memory-backend-save-load**: Memory backend save/load works
 - **test-storage-delete**: Storage delete removes data correctly
+- **test-redis-backend-save-load**: Redis backend save/load works
+- **test-redis-backend-delete**: Redis delete removes data correctly
+- **test-redis-memory-equivalence**: Redis and memory backends behave identically
+
+### 5. Zone Transition Tests
+- **test-zone-id-roundtrip**: Zone ID survives serialization
+- **test-zone-id-in-db-save**: Zone ID included in DB saves with session
+
+### 6. Tier-1 Immediate Save Tests
+- **test-death-triggers-immediate-save**: Player death (HP=0) triggers tier-1 save
+- **test-level-up-triggers-immediate-save**: Level-up triggers tier-1 save
+
+### 7. Currency Invariant Tests
+- **test-coins-never-negative**: Coins (gold) count can never go negative
 
 ## Test Structure
 
@@ -108,8 +132,12 @@ When implementing features that touch player data, add tests if ANY of these app
 
 As the codebase grows, consider adding:
 - Schema migration chain tests (v1→v2→v3)
-- Redis backend equivalence tests (once Redis stabilizes)
 - Invariant tests for new game systems (crafting, trading, etc.)
 - Corruption scenario tests (partial saves, crashes mid-write)
+- Trade system duplication exploit tests
 
 Remember: Tests should prevent bugs, not create busywork. Only add tests that catch real data corruption risks.
+
+## Notes
+
+**Bug fix discovered during test development:** The death-triggers-immediate-save test revealed a bug in `combatant-apply-hit` where the tier-1 save condition `(and (= new-hp 0) (> hp 0))` was logically impossible (if new-hp=0, then hp≤0). Fixed by capturing `old-hp` before damage calculation and checking `(> old-hp 0)` instead.

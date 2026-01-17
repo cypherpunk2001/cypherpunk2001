@@ -185,6 +185,7 @@ Client REPL:
   It runs from `src/` so existing `../assets` paths resolve correctly.
   The smoke target is wrapped in a Linux `timeout` to kill hung runs.
   Defaults: 2 seconds runtime, 5 seconds timeout.
+- `make test-persistence` Data integrity unit tests (serialization, migrations, invariants)
 - `make checkdocs` Checks that every `src/foo.lisp` has a matching `docs/foo.md`, errors if any are missing, otherwise prints a friendly reminder when all pass.
 
 Test env overrides:

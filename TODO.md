@@ -1,3 +1,56 @@
+### Building and Testing
+
+REMINDER:
+
+**CRITICAL: Before claiming any task is complete, ALL tests must pass:**
+```bash
+make checkparens        # Verify balanced parentheses in all .lisp files
+make ci                 # Cold compile + UDP handshake test (no GPU needed)
+make smoke              # Full client/server smoke test with window (2s default)
+make test-persistence   # Data integrity tests (serialization, migrations, invariants)
+make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp```
+**Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
+**Write tests for:**
+- ✅ **Data corruption risk**: Serialization, migrations, database writes
+- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
+- ✅ **Backend equivalence**: Storage abstraction must work identically across backends
+- ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
+**Skip tests for:**
+- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
+- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
+- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
+- ❌ **Helper functions**: Utils that don't touch persistent state
+**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
+
+## Documentation
+
+Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to verify.
+
+Key design docs:
+- `docs/db.md` - Persistence architecture, storage abstraction, write tiers
+- `docs/save.md` - Serialization format, durable vs ephemeral classification
+- `docs/net.md` - UDP protocol, message format, snapshot streaming
+- `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
+- `docs/movement.md` - Physics, collision, zone transitions
+
+**REMINDER: If you update a feature, update the doc.**
+
+## Important Reminders
+
+- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make smoke && make test-persistence && make checkdocs`. No exceptions.
+- **Never commit with unbalanced parens**: Run `make checkparens` before committing
+- **CI must pass**: `make ci` runs cold compile + UDP handshake test
+- **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
+- **Docs must be complete**: `make checkdocs` verifies every src file has matching documentation
+- **Smoke test must work**: `make smoke` tests actual client/server with graphics
+- **Storage abstraction is mandatory**: Never call Redis/database directly from game logic
+- **Classify all new state**: Every field must be marked durable or ephemeral
+- **Use correct persistence tier**: Tier-1 for critical, tier-2 for routine, tier-3 for logout
+- **Server is authoritative**: Clients send intents, not state
+- **Test both backends**: Memory for dev, Redis for persistence testing
+
+---
+
 ## Current Tasks / TODO
 
 Tests (Strategic, Data-Integrity Focused)
@@ -10,7 +63,7 @@ Tests (Strategic, Data-Integrity Focused)
 **Run**: `make test-persistence` (added to CI after `make ci`)
 **Effort**: 1-2 hours | **Value**: Catches 80% of corruption bugs
 
-#### Tests Implemented ✅
+#### Tests Implemented ✅ (25 tests total)
 
 1. **Persistence Round-Trip Tests**
    - [x] Serialize then deserialize = identical data (HP, XP, position, inventory)
@@ -18,21 +71,42 @@ Tests (Strategic, Data-Integrity Focused)
    - [x] Durable fields ARE saved (HP, stats, inventory, equipment, position)
    - [x] Inventory survives serialization
    - [x] Equipment survives serialization
+   - [x] Stats (XP, levels) survive serialization
 
-2. **Schema Migration Tests** (Future)
+2. **XP/Progression Invariant Tests**
+   - [x] XP never decreases on award
+   - [x] Level increases when XP threshold reached
+   - [x] XP at exact level boundary triggers level-up
+
+3. **Inventory/Equipment Invariant Tests**
+   - [x] HP never exceeds max HP
+   - [x] Inventory count never exceeds max slots
+   - [x] Inventory overflow returns leftover count
+   - [x] Stackable items respect max stack size
+   - [x] Equipment modifiers applied on equip
+   - [x] Equipment modifiers removed on unequip
+
+4. **Storage Backend Tests**
+   - [x] Memory backend save/load/delete works correctly
+   - [x] Redis backend save/load works correctly
+   - [x] Redis backend delete works correctly
+   - [x] Redis/Memory backends behave identically (equivalence test)
+
+5. **Zone Transition Tests**
+   - [x] Zone ID survives serialization
+   - [x] Zone ID included in database saves with session
+
+6. **Tier-1 Immediate Save Tests**
+   - [x] Death (HP=0) triggers immediate save
+   - [x] Level-up triggers immediate save
+
+7. **Currency Invariant Tests**
+   - [x] Coins (gold) count never goes negative
+
+8. **Schema Migration Tests** (Future)
    - [ ] Old saves (v1) load correctly after migration to v2
    - [ ] Migration applies defaults for new fields
    - [ ] Multiple version jumps work (v1 → v3 skipping v2)
-
-3. **Invariant Tests**
-   - [x] HP never exceeds max HP
-   - [x] Inventory count never exceeds max slots
-   - [ ] Gold never goes negative (future: when gold system added)
-   - [ ] Zone transitions preserve player state (future)
-
-4. **Storage Abstraction Tests**
-   - [x] Memory backend save/load/delete works correctly
-   - [ ] Redis backend equivalence (future: when Redis stabilizes)
 
 ### When to Write Tests (Decision Criteria)
 
@@ -52,7 +126,7 @@ Tests (Strategic, Data-Integrity Focused)
 
 ### Integration
 
-- [x] Create `src/tests/persistence-test.lisp` with ~10 tests (9 tests implemented)
+- [x] Create `src/tests/persistence-test.lisp` with comprehensive tests (25 tests implemented)
 - [x] Add `make test-persistence` target to Makefile
 - [x] Add to CI: `make checkparens && make ci && make test-persistence && make checkdocs && make smoke`
 - [x] **Update CLAUDE.md** with testing requirements:
@@ -60,6 +134,10 @@ Tests (Strategic, Data-Integrity Focused)
   - When to write new tests (decision criteria above)
   - Requirement: All tests must pass before claiming task complete
 - [x] Create `docs/tests.md` documentation
+- [x] Redis backend tests (equivalence with memory backend)
+- [x] Zone transition persistence tests
+- [x] Tier-1 immediate save tests (death, level-up)
+- [x] Currency invariant tests (coins never negative)
 
 
 ## Future Tasks / Roadmap

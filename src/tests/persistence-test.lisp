@@ -30,7 +30,18 @@
                 #'test-equipment-modifiers-removed-on-unequip
                 ;; Storage Backend Tests
                 #'test-memory-backend-save-load
-                #'test-storage-delete)))
+                #'test-storage-delete
+                #'test-redis-backend-save-load
+                #'test-redis-backend-delete
+                #'test-redis-memory-equivalence
+                ;; Zone Transition Tests
+                #'test-zone-id-roundtrip
+                #'test-zone-id-in-db-save
+                ;; Tier-1 Immediate Save Tests
+                #'test-death-triggers-immediate-save
+                #'test-level-up-triggers-immediate-save
+                ;; Currency Invariant Tests
+                #'test-coins-never-negative)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -380,6 +391,220 @@
         ;; Attack modifier should return to initial value
         (assert-equal initial-attack-mod unequipped-attack-mod
                      "Attack modifier not removed on unequip")))
+    t))
+
+;;; Redis Backend Tests
+
+(defun test-redis-backend-save-load ()
+  "Test: Redis backend save and load work correctly."
+  (let ((storage (make-instance 'redis-storage :host "127.0.0.1" :port 6379)))
+    (handler-case
+        (progn
+          (storage-connect storage)
+          ;; Save data
+          (storage-save storage "test:redis:player:1" '(:id 1 :x 100.0 :y 200.0 :hp 50))
+          ;; Load data
+          (let ((loaded (storage-load storage "test:redis:player:1")))
+            (assert-true loaded "Redis load returned nil")
+            (assert-equal 1 (getf loaded :id) "Player ID from Redis")
+            (assert-equal 100.0 (getf loaded :x) "Player X from Redis")
+            (assert-equal 50 (getf loaded :hp) "Player HP from Redis"))
+          ;; Clean up
+          (storage-delete storage "test:redis:player:1")
+          t)
+      (error (e)
+        (error "Redis test failed (is Redis running?): ~a" e)))))
+
+(defun test-redis-backend-delete ()
+  "Test: Redis delete removes data."
+  (let ((storage (make-instance 'redis-storage :host "127.0.0.1" :port 6379)))
+    (handler-case
+        (progn
+          (storage-connect storage)
+          ;; Save then delete
+          (storage-save storage "test:redis:delete:1" '(:data "value"))
+          (assert-true (storage-load storage "test:redis:delete:1") "Redis data exists before delete")
+          (storage-delete storage "test:redis:delete:1")
+          (assert-nil (storage-load storage "test:redis:delete:1") "Redis data still exists after delete")
+          t)
+      (error (e)
+        (error "Redis delete test failed (is Redis running?): ~a" e)))))
+
+(defun test-redis-memory-equivalence ()
+  "Test: Redis and memory backends behave identically."
+  (let ((redis (make-instance 'redis-storage :host "127.0.0.1" :port 6379))
+        (memory (make-instance 'memory-storage))
+        (test-key "test:equivalence:1")
+        (test-data '(:id 42 :name "Test" :values (1 2 3) :nested (:a 1 :b 2))))
+    (handler-case
+        (progn
+          (storage-connect redis)
+          (storage-connect memory)
+          ;; Save same data to both
+          (storage-save redis test-key test-data)
+          (storage-save memory test-key test-data)
+          ;; Load from both
+          (let ((redis-loaded (storage-load redis test-key))
+                (memory-loaded (storage-load memory test-key)))
+            ;; Compare results
+            (assert-equal (getf redis-loaded :id) (getf memory-loaded :id)
+                         "Redis/Memory ID mismatch")
+            (assert-equal (getf redis-loaded :name) (getf memory-loaded :name)
+                         "Redis/Memory name mismatch")
+            (assert-equal (getf redis-loaded :values) (getf memory-loaded :values)
+                         "Redis/Memory values mismatch"))
+          ;; Test exists-p equivalence
+          (assert-equal (storage-exists-p redis test-key)
+                       (storage-exists-p memory test-key)
+                       "Redis/Memory exists-p mismatch")
+          ;; Clean up
+          (storage-delete redis test-key)
+          (storage-delete memory test-key)
+          ;; Test non-existent key
+          (assert-equal (storage-load redis "nonexistent:key")
+                       (storage-load memory "nonexistent:key")
+                       "Redis/Memory nil return mismatch")
+          t)
+      (error (e)
+        (error "Redis equivalence test failed (is Redis running?): ~a" e)))))
+
+;;; Zone Transition Tests
+
+(defun test-zone-id-roundtrip ()
+  "Test: Zone ID survives serialization when provided."
+  (let* ((player (make-test-player :id 99 :x 50.0 :y 75.0))
+         (zone-id :dungeon-1)
+         ;; Serialize with zone-id
+         (plist (serialize-player player :zone-id zone-id)))
+    ;; Zone ID should be in the plist
+    (assert-equal zone-id (getf plist :zone-id) "Zone ID not in serialized data")
+    t))
+
+(defun test-zone-id-in-db-save ()
+  "Test: Zone ID is included when saving to database with session."
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 88))
+         (zone-id :forest-2)
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    ;; Copy existing sessions
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          ;; Set up test storage and session
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          (register-player-session player :zone-id zone-id)
+          ;; Save player through db-save-player
+          (db-save-player player)
+          ;; Load raw data and verify zone-id
+          (let* ((key (player-key (player-id player)))
+                 (loaded (storage-load storage key)))
+            (assert-equal zone-id (getf loaded :zone-id) "Zone ID not saved to DB"))
+          t)
+      ;; Restore global state
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+;;; Tier-1 Immediate Save Tests
+
+(defvar *test-immediate-save-called* nil
+  "Flag set when db-save-player-immediate is called during tests.")
+
+(defun test-death-triggers-immediate-save ()
+  "Test: Player death (HP=0) triggers tier-1 immediate save."
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 77))
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    ;; Copy existing sessions
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          ;; Set up test storage and session
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          (register-player-session player)
+          ;; Set player HP to 1 so next hit kills them
+          (setf (player-hp player) 1)
+          ;; Apply lethal hit - this should trigger immediate save
+          (combatant-apply-hit player 1)
+          ;; Verify HP is 0
+          (assert-equal 0 (player-hp player) "Player should be dead")
+          ;; Verify save was written to storage
+          (let* ((key (player-key (player-id player)))
+                 (loaded (storage-load storage key)))
+            (assert-true loaded "Player not saved after death")
+            (assert-equal 0 (getf loaded :hp) "Saved HP should be 0"))
+          t)
+      ;; Restore global state
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+(defun test-level-up-triggers-immediate-save ()
+  "Test: Level up triggers tier-1 immediate save."
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 66))
+         (stats (player-stats player))
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    ;; Copy existing sessions
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          ;; Set up test storage and session
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          (register-player-session player)
+          ;; Get initial attack level
+          (let ((initial-level (skill-level (stat-block-attack stats))))
+            ;; Award enough XP to level up:
+            ;; - Balanced mode splits XP: 33% to hitpoints, 67% to atk/str/def
+            ;; - 500 XP -> ~165 HP, ~335 remaining -> ~112 per combat stat
+            ;; - 100 XP needed for level 2, so 112 is enough
+            (award-combat-xp player 500)
+            ;; Verify level increased
+            (let ((new-level (skill-level (stat-block-attack stats))))
+              (assert-true (> new-level initial-level) "Attack level should have increased")
+              ;; Verify save was written to storage
+              (let* ((key (player-key (player-id player)))
+                     (loaded (storage-load storage key)))
+                (assert-true loaded "Player not saved after level-up")
+                ;; Verify XP was saved
+                (let* ((saved-stats (getf loaded :stats))
+                       (saved-attack (getf saved-stats :attack))
+                       (saved-xp (getf saved-attack :xp)))
+                  (assert-true (> saved-xp 0) "XP not saved after level-up")))))
+          t)
+      ;; Restore global state
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+;;; Currency Invariant Tests
+
+(defun test-coins-never-negative ()
+  "Test: Coins (gold) count can never go negative."
+  (ensure-test-game-data)
+  (let* ((player (make-test-player))
+         (inventory (player-inventory player)))
+    ;; Clear inventory
+    (loop for slot across (inventory-slots inventory)
+          do (setf (inventory-slot-item-id slot) nil
+                   (inventory-slot-count slot) 0))
+    ;; Add some coins
+    (grant-inventory-item player :coins 100)
+    (assert-equal 100 (count-inventory-item inventory :coins) "Should have 100 coins")
+    ;; Try to remove more coins than we have
+    (inventory-remove inventory :coins 150)
+    ;; Count should be 0, not negative
+    (let ((remaining (count-inventory-item inventory :coins)))
+      (assert->= remaining 0 "Coins went negative"))
     t))
 
 ;;; Export for REPL usage

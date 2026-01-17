@@ -51,6 +51,13 @@ Design note
 - Damage is applied by systems, not by rendering or input.
 - Stats are used for hit chance and max hit, keeping combat data-driven.
 
+Persistence
+- Player HP changes trigger tier-2 dirty marking for batched saves.
+- Player death (HP reaches 0) triggers tier-1 immediate save to prevent
+  logout-to-survive exploits. The save happens before any response to client.
+- `combatant-apply-hit` captures old HP before damage to detect the alive→dead
+  transition correctly.
+
 Client/Server Authority Boundaries (preparation for future networking)
 - Sync functions validate client-requested targets and set authoritative state:
   - `sync-player-attack-target`: validates `requested-attack-target-id`, sets `player-attack-target-id`
