@@ -70,7 +70,8 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-Read Areas for Improvement in CodeQualityReview.md and ensure we have addressed all of these issues in a brief refactor, then REmove the file CodeQualityReview.md
+Read Areas for Improvement in CodeQualityReview.md and ensure we have addressed all of these issues in a brief refactor, then REmove the file CodeQualityReview.md. One hardcode in particular type i do not mind still, leave the sprite image .png file and assets folders hardcodes alone for now. We'll be redoing all assets and improving that system together later. Just add comment with a brief ;; FIXME hehe.
+Other hardcodes can fix tho for sure, and the other issues for improvement too, thanks.
 
 ## Future Tasks / Roadmap
 - [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
