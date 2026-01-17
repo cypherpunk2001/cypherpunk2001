@@ -169,36 +169,56 @@
     player))
 
 (defun apply-player-plist (player plist)
-  ;; Apply plist fields onto an existing PLAYER.
+  ;; Apply plist fields onto an existing PLAYER, preserving client-only state.
   (when (and player plist)
-    (setf (player-id player) (getf plist :id (player-id player))
-          (player-x player) (getf plist :x (player-x player))
-          (player-y player) (getf plist :y (player-y player))
-          (player-dx player) (getf plist :dx 0.0)
-          (player-dy player) (getf plist :dy 0.0)
-          (player-hp player) (getf plist :hp (player-hp player))
-          (player-stats player) (deserialize-stat-block (getf plist :stats))
-          (player-inventory player)
-          (deserialize-inventory (getf plist :inventory) *inventory-size*)
-          (player-equipment player)
-          (deserialize-equipment (getf plist :equipment) (length *equipment-slot-ids*))
-          (player-attack-timer player) (getf plist :attack-timer 0.0)
-          (player-hit-timer player) (getf plist :hit-timer 0.0)
-          (player-run-stamina player) (getf plist :run-stamina 1.0)
-          (player-attack-target-id player) (getf plist :attack-target-id 0)
-          (player-follow-target-id player) (getf plist :follow-target-id 0)
-          (player-anim-state player) (getf plist :anim-state :idle)
-          (player-facing player) (getf plist :facing :down)
-          (player-facing-sign player) (getf plist :facing-sign 1.0)
-          (player-frame-index player) (getf plist :frame-index 0)
-          (player-frame-timer player) (getf plist :frame-timer 0.0)
-          (player-attacking player) (getf plist :attacking nil)
-          (player-attack-hit player) (getf plist :attack-hit nil)
-          (player-hit-active player) (getf plist :hit-active nil)
-          (player-hit-frame player) (getf plist :hit-frame 0)
-          (player-hit-facing player) (getf plist :hit-facing :down)
-          (player-hit-facing-sign player) (getf plist :hit-facing-sign 1.0)
-          (player-running player) (getf plist :running nil)))
+    ;; Save client-only state before applying server snapshot
+    (let ((saved-click-x (player-click-marker-x player))
+          (saved-click-y (player-click-marker-y player))
+          (saved-click-kind (player-click-marker-kind player))
+          (saved-click-timer (player-click-marker-timer player))
+          (saved-mouse-timer (player-mouse-hold-timer player))
+          (saved-auto-right (player-auto-right player))
+          (saved-auto-left (player-auto-left player))
+          (saved-auto-down (player-auto-down player))
+          (saved-auto-up (player-auto-up player)))
+      (setf (player-id player) (getf plist :id (player-id player))
+            (player-x player) (getf plist :x (player-x player))
+            (player-y player) (getf plist :y (player-y player))
+            (player-dx player) (getf plist :dx 0.0)
+            (player-dy player) (getf plist :dy 0.0)
+            (player-hp player) (getf plist :hp (player-hp player))
+            (player-stats player) (deserialize-stat-block (getf plist :stats))
+            (player-inventory player)
+            (deserialize-inventory (getf plist :inventory) *inventory-size*)
+            (player-equipment player)
+            (deserialize-equipment (getf plist :equipment) (length *equipment-slot-ids*))
+            (player-attack-timer player) (getf plist :attack-timer 0.0)
+            (player-hit-timer player) (getf plist :hit-timer 0.0)
+            (player-run-stamina player) (getf plist :run-stamina 1.0)
+            (player-attack-target-id player) (getf plist :attack-target-id 0)
+            (player-follow-target-id player) (getf plist :follow-target-id 0)
+            (player-anim-state player) (getf plist :anim-state :idle)
+            (player-facing player) (getf plist :facing :down)
+            (player-facing-sign player) (getf plist :facing-sign 1.0)
+            (player-frame-index player) (getf plist :frame-index 0)
+            (player-frame-timer player) (getf plist :frame-timer 0.0)
+            (player-attacking player) (getf plist :attacking nil)
+            (player-attack-hit player) (getf plist :attack-hit nil)
+            (player-hit-active player) (getf plist :hit-active nil)
+            (player-hit-frame player) (getf plist :hit-frame 0)
+            (player-hit-facing player) (getf plist :hit-facing :down)
+            (player-hit-facing-sign player) (getf plist :hit-facing-sign 1.0)
+            (player-running player) (getf plist :running nil))
+      ;; Restore client-only state after applying server snapshot
+      (setf (player-click-marker-x player) saved-click-x
+            (player-click-marker-y player) saved-click-y
+            (player-click-marker-kind player) saved-click-kind
+            (player-click-marker-timer player) saved-click-timer
+            (player-mouse-hold-timer player) saved-mouse-timer
+            (player-auto-right player) saved-auto-right
+            (player-auto-left player) saved-auto-left
+            (player-auto-down player) saved-auto-down
+            (player-auto-up player) saved-auto-up)))
   player)
 
 (defun serialize-npc (npc &key (include-visuals nil))
@@ -273,17 +293,30 @@
           (loop :for i :from 0 :below (length players)
                 :for plist :in player-plists
                 :do (apply-player-plist (aref players i) plist))
-          (let ((new-players (make-array (length player-plists))))
+          (let ((new-players (make-array (length player-plists)))
+                (old-local-player (game-player game)))
             (loop :for plist :in player-plists
                   :for index :from 0
                   :for id = (getf plist :id 0)
                   :for existing = (and players (find-player-by-id players id))
                   :do (if existing
                           (apply-player-plist existing plist)
-                          (setf existing
-                                (deserialize-player plist
-                                                    *inventory-size*
-                                                    (length *equipment-slot-ids*))))
+                          (progn
+                            (setf existing
+                                  (deserialize-player plist
+                                                      *inventory-size*
+                                                      (length *equipment-slot-ids*)))
+                            ;; Preserve client-only state from old local player when creating new player
+                            (when old-local-player
+                              (setf (player-click-marker-x existing) (player-click-marker-x old-local-player)
+                                    (player-click-marker-y existing) (player-click-marker-y old-local-player)
+                                    (player-click-marker-kind existing) (player-click-marker-kind old-local-player)
+                                    (player-click-marker-timer existing) (player-click-marker-timer old-local-player)
+                                    (player-mouse-hold-timer existing) (player-mouse-hold-timer old-local-player)
+                                    (player-auto-right existing) (player-auto-right old-local-player)
+                                    (player-auto-left existing) (player-auto-left old-local-player)
+                                    (player-auto-down existing) (player-auto-down old-local-player)
+                                    (player-auto-up existing) (player-auto-up old-local-player)))))
                       (setf (aref new-players index) existing))
             (setf (game-players game) new-players
                   players new-players
