@@ -10,6 +10,7 @@
                (:file "src/types")
                (:file "src/progression")
                (:file "src/save")
+               (:file "src/migrations")
                (:file "src/db")
                (:file "src/zone")
                (:file "src/world-graph")

@@ -132,7 +132,7 @@ Use two separate Emacs sessions (server + client):
 Files load in dependency order:
 1. **package, config, utils** - Foundation
 2. **data, intent, types** - Data structures and protocols
-3. **progression, save, db** - Game systems and persistence
+3. **progression, save, migrations, db** - Game systems, serialization, and persistence
 4. **zone, world-graph, movement** - World and navigation
 5. **input, combat, chat, ai** - Game mechanics
 6. **audio, ui, editor, rendering** - Presentation layer
@@ -222,6 +222,110 @@ Add durable fields to `serialize-player` (base payload), add ephemeral fields on
 
 **Dev Workflow**: Use `:memory` for 95% of feature work. Switch to `:redis` when testing persistence, migrations, or crash recovery.
 
+## Schema Migrations (CRITICAL)
+
+**Location**: `src/migrations.lisp` (core logic), `src/db.lisp` (admin command)
+
+### When You MUST Write a Migration
+
+**Write a migration when adding/changing DURABLE fields:**
+- Adding a new persistent field to player struct (e.g., `lifetime-xp`, `quest-progress`)
+- Changing the type or structure of an existing field
+- Renaming a field (migration copies old → new, preserves data)
+- Splitting or merging fields
+
+**You do NOT need a migration for:**
+- Adding ephemeral fields (attack timers, animation state, targets)
+- Adding new item types to `game-data.lisp` (data-driven, no schema change)
+- Adding new zones (data files, not player schema)
+- Changing game logic that doesn't affect saved data format
+
+### Current Schema
+
+```lisp
+*player-schema-version* = 2
+
+*player-migrations* = '((2 . migrate-player-v1->v2))
+;; v1→v2: Added lifetime-xp field (default 0)
+```
+
+### How Migrations Work
+
+1. **Lazy migration (default)**: When player logs in, `db-load-player` calls `migrate-player-data`
+2. Migration chain runs: v1→v2→v3→... until current version
+3. Migrated data saved on next write (dirty flag or logout)
+
+**Eager migration (admin command)**:
+```lisp
+;; Preview what would migrate (dry run)
+(migrate-all-players :dry-run t :verbose t)
+
+;; Actually migrate all players before deploy
+(migrate-all-players :verbose t)
+```
+
+### Writing a New Migration (Step-by-Step)
+
+```lisp
+;; 1. INCREMENT VERSION in src/migrations.lisp
+(defparameter *player-schema-version* 3)  ; was 2
+
+;; 2. WRITE MIGRATION FUNCTION in src/migrations.lisp
+(defun migrate-player-v2->v3 (data)
+  "v2->v3: Add quest-log field, defaulting to empty list."
+  (unless (getf data :quest-log)
+    (setf (getf data :quest-log) nil))
+  data)
+
+;; 3. REGISTER MIGRATION in src/migrations.lisp
+(defparameter *player-migrations*
+  '((2 . migrate-player-v1->v2)
+    (3 . migrate-player-v2->v3))  ; ← add new entry
+  "Alist of (version . migration-function)")
+
+;; 4. UPDATE STRUCT in src/types.lisp
+(defstruct player ... quest-log ...)
+;; And in make-player: :quest-log nil
+
+;; 5. UPDATE SERIALIZATION in src/save.lisp
+;; serialize-player: add :quest-log (player-quest-log player)
+;; deserialize-player: add (setf (player-quest-log p) (getf plist :quest-log nil))
+;; apply-player-plist: add quest-log handling
+
+;; 6. WRITE TESTS in src/tests/persistence-test.lisp
+(defun test-migration-v2-to-v3 ()
+  (let* ((old-data '(:version 2 :id 1 :x 0.0 :y 0.0 ...))
+         (migrated (migrate-player-data old-data)))
+    (assert (= (getf migrated :version) 3))
+    (assert (null (getf migrated :quest-log)))))
+```
+
+### Migration Rules (NEVER VIOLATE)
+
+| Rule | Why |
+|------|-----|
+| **Never delete old migrations** | Player at v1 must migrate through v2, v3, v4... |
+| **Migrations must be pure** | Take plist, return plist, no side effects |
+| **Always provide defaults** | Missing fields get sensible defaults |
+| **Never modify existing migrations** | Would break players mid-migration |
+| **Test migration chain** | v1→v3 must work (runs v1→v2, v2→v3) |
+| **Append only to registry** | New migrations go at end of `*player-migrations*` |
+
+### Migration Checklist (For Claude)
+
+Before marking a feature complete that adds persistent state:
+
+- [ ] Did I add a new durable field? → Write migration
+- [ ] Incremented `*player-schema-version*`?
+- [ ] Added migration function `migrate-player-vN->vN+1`?
+- [ ] Registered in `*player-migrations*` alist?
+- [ ] Updated `serialize-player` in save.lisp?
+- [ ] Updated `deserialize-player` in save.lisp?
+- [ ] Updated `apply-player-plist` in save.lisp?
+- [ ] Added field to struct in types.lisp?
+- [ ] Wrote migration test in persistence-test.lisp?
+- [ ] Ran `make test-persistence` and all pass?
+
 ## Code Style Rules
 
 ### Modular & Reusable by Default
@@ -284,7 +388,8 @@ All persistent data includes `:version N`. When changing schema:
 | File | Purpose |
 |------|---------|
 | **net.lisp** | UDP client/server, message protocol, snapshot streaming |
-| **db.lisp** | Storage abstraction, Redis/memory backends, dirty flag system, migrations |
+| **db.lisp** | Storage abstraction, Redis/memory backends, dirty flag system, `migrate-all-players` |
+| **migrations.lisp** | Schema versions, migration functions, `migrate-player-data` |
 | **save.lisp** | Game state serialization (durable vs ephemeral classification) |
 | **server.lisp** | Server-only game loop (no rendering), fixed timestep simulation |
 | **main.lisp** | Client entry point with rendering |
@@ -364,6 +469,7 @@ Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to
 
 Key design docs:
 - `docs/db.md` - Persistence architecture, storage abstraction, write tiers
+- `docs/migrations.md` - Schema versioning, migration functions, admin commands
 - `docs/save.md` - Serialization format, durable vs ephemeral classification
 - `docs/net.md` - UDP protocol, message format, snapshot streaming
 - `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
@@ -380,5 +486,6 @@ Key design docs:
 - **Storage abstraction is mandatory**: Never call Redis/database directly from game logic
 - **Classify all new state**: Every field must be marked durable or ephemeral
 - **Use correct persistence tier**: Tier-1 for critical, tier-2 for routine, tier-3 for logout
+- **Write migrations for durable fields**: New persistent fields require schema version bump + migration function
 - **Server is authoritative**: Clients send intents, not state
 - **Test both backends**: Memory for dev, Redis for persistence testing

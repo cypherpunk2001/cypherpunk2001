@@ -38,6 +38,9 @@
 (defgeneric storage-disconnect (storage)
   (:documentation "Close connection to storage backend."))
 
+(defgeneric storage-keys (storage pattern)
+  (:documentation "Return list of keys matching PATTERN (glob-style, e.g. 'player:*')."))
+
 ;;;; Redis Storage Implementation
 
 (defclass redis-storage ()
@@ -118,6 +121,16 @@
       (warn "Redis exists check error for key ~a: ~a" key e)
       nil)))
 
+(defmethod storage-keys ((storage redis-storage) pattern)
+  "Return list of keys matching PATTERN from Redis."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:keys pattern))
+    (error (e)
+      (warn "Redis keys error for pattern ~a: ~a" pattern e)
+      nil)))
+
 (defmethod storage-flush ((storage redis-storage))
   "Trigger Redis BGSAVE for immediate snapshot."
   (handler-case
@@ -164,6 +177,22 @@
 (defmethod storage-exists-p ((storage memory-storage) key)
   "Check if key exists in memory hash table."
   (nth-value 1 (gethash key (memory-storage-data storage))))
+
+(defmethod storage-keys ((storage memory-storage) pattern)
+  "Return list of keys matching PATTERN from memory hash table.
+   Supports simple prefix matching: 'player:*' matches all keys starting with 'player:'."
+  (let* ((star-pos (position #\* pattern))
+         (prefix (if star-pos (subseq pattern 0 star-pos) pattern))
+         (result nil))
+    (maphash (lambda (key value)
+               (declare (ignore value))
+               (when (if star-pos
+                         (and (>= (length key) (length prefix))
+                              (string= prefix key :end2 (length prefix)))
+                         (string= pattern key))
+                 (push key result)))
+             (memory-storage-data storage))
+    result))
 
 (defmethod storage-flush ((storage memory-storage))
   "No-op for memory storage (already durable in RAM)."
@@ -222,40 +251,60 @@
         0)))
 
 ;;;; Migration System
+;;;;
+;;;; Core migration logic is in migrations.lisp (schema version, migration functions).
+;;;; migrate-player-data is called on each player load (lazy migration).
+;;;; migrate-all-players below provides eager migration for admin use.
 
-(defparameter *player-schema-version* 2
-  "Current player schema version. Increment when changing player format.")
+(defun migrate-all-players (&key (dry-run nil) (verbose t))
+  "Migrate all players in storage to current schema version.
+   Use this before major deploys to pre-migrate inactive players.
+   Options:
+     :dry-run t   - Report what would be migrated without saving
+     :verbose t   - Print progress (default)
+   Returns: (values migrated-count skipped-count error-count)"
+  (unless *storage*
+    (warn "No storage backend initialized")
+    (return-from migrate-all-players (values 0 0 0)))
+  (let ((keys (storage-keys *storage* "player:*"))
+        (migrated 0)
+        (skipped 0)
+        (errors 0))
+    (when verbose
+      (format t "~&Found ~a player records to check~%" (length keys)))
+    (dolist (key keys)
+      (handler-case
+          (let ((data (storage-load *storage* key)))
+            (if (null data)
+                (progn
+                  (when verbose
+                    (format t "  ~a: no data (skipped)~%" key))
+                  (incf skipped))
+                (let ((version (getf data :version 0)))
+                  (if (>= version *player-schema-version*)
+                      (progn
+                        (when verbose
+                          (format t "  ~a: v~a (current, skipped)~%" key version))
+                        (incf skipped))
+                      (progn
+                        (when verbose
+                          (format t "  ~a: v~a -> v~a~%" key version *player-schema-version*))
+                        (let ((migrated-data (migrate-player-data data)))
+                          (unless dry-run
+                            (storage-save *storage* key migrated-data)))
+                        (incf migrated))))))
+        (error (e)
+          (when verbose
+            (format t "  ~a: ERROR ~a~%" key e))
+          (incf errors))))
+    (when verbose
+      (format t "~&Migration complete: ~a migrated, ~a skipped, ~a errors~%"
+              migrated skipped errors)
+      (when dry-run
+        (format t "(dry-run mode - no changes saved)~%")))
+    (values migrated skipped errors)))
 
-(defun migrate-player-v1->v2 (data)
-  "v1->v2: Add lifetime-xp field, defaulting to 0."
-  (unless (getf data :lifetime-xp)
-    (setf (getf data :lifetime-xp) 0))
-  data)
-
-(defparameter *player-migrations*
-  '((2 . migrate-player-v1->v2))
-  "Alist of (version . migration-function) for player data.
-   Each migration function takes a plist and returns updated plist.")
-
-(defun migrate-player-data (data)
-  "Migrate player data to current schema version.
-   Runs migration chain from data's version to *player-schema-version*."
-  (let ((version (getf data :version 0)))
-    (when (> version *player-schema-version*)
-      (warn "Player data version ~d is newer than current version ~d"
-            version *player-schema-version*))
-    (loop while (< version *player-schema-version*)
-          do (let ((migrator (cdr (assoc (1+ version) *player-migrations*))))
-               (if migrator
-                   (progn
-                     (setf data (funcall migrator data))
-                     (log-verbose "Migrated player data from v~d to v~d"
-                                  version (1+ version)))
-                   (warn "No migrator found for version ~d to ~d"
-                         version (1+ version)))
-               (incf version)))
-    (setf (getf data :version) *player-schema-version*)
-    data))
+(export 'migrate-all-players)
 
 ;;;; High-Level Convenience Functions
 
