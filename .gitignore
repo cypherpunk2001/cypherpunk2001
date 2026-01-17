@@ -7,7 +7,6 @@
 .cache/
 .asdf/
 .sbcl/
-.tmp
 
 # Local savegame snapshot
 /data/savegame.lisp

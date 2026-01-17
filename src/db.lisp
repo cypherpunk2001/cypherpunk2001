@@ -110,7 +110,10 @@
   (handler-case
       (redis:with-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
-        (= (red:exists key) 1))
+        (let ((result (red:exists key)))
+          (if (numberp result)
+              (plusp result)
+              result)))
     (error (e)
       (warn "Redis exists check error for key ~a: ~a" key e)
       nil)))
@@ -206,6 +209,17 @@
   (when *storage*
     (storage-disconnect *storage*)
     (setf *storage* nil)))
+
+(defun db-save-id-counter (counter-value)
+  "Save the global ID counter to storage."
+  (storage-save *storage* (server-id-counter-key) counter-value))
+
+(defun db-load-id-counter ()
+  "Load the global ID counter from storage. Returns 0 if not found."
+  (let ((data (storage-load *storage* (server-id-counter-key))))
+    (if (and data (integerp data))
+        data
+        0)))
 
 ;;;; Migration System
 

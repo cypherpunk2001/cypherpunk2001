@@ -58,9 +58,11 @@
 
 (defparameter *player-hud-lines* 6) ;; Number of cached HUD lines for player stats.
 
-(defstruct (id-source (:constructor make-id-source (&optional (next-id 1))))
+(defstruct (id-source (:constructor make-id-source (&optional (next-id 1) (persistent nil))))
   ;; Monotonic IDs for entities inside a simulation.
-  next-id)
+  ;; If PERSISTENT is T, the counter is saved to storage on each allocation.
+  next-id
+  persistent)
 
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
@@ -186,8 +188,13 @@
 
 (defun allocate-entity-id (id-source)
   ;; Return the next entity id and advance the counter.
+  ;; Persists counter to storage if id-source is marked as persistent.
   (let ((next (id-source-next-id id-source)))
     (setf (id-source-next-id id-source) (1+ next))
+    (when (and (id-source-persistent id-source)
+               (boundp '*storage*)
+               *storage*)
+      (db-save-id-counter (1+ next)))
     next))
 
 (defun world-spawn-center (world)

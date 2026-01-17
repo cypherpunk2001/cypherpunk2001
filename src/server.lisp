@@ -17,14 +17,23 @@
   ;; If SERVER-MODE is NIL (client/local), creates one initial player.
   (load-game-data)
   (let* ((world (make-world))
-         (id-source (make-id-source))
+         ;; Player ID source: persistent, loads from storage in server mode
+         (id-source (if (and server-mode (boundp '*storage*) *storage*)
+                        ;; Server mode with storage: load counter from DB
+                        (let ((saved-counter (db-load-id-counter)))
+                          (log-verbose "Loaded ID counter from storage: ~d" saved-counter)
+                          (make-id-source saved-counter t))  ; persistent=t
+                        ;; Client mode or no storage: start from 1
+                        (make-id-source)))
+         ;; NPC ID source: local, starts at 1000000 to avoid player ID conflicts
+         (npc-id-source (make-id-source 1000000 nil))  ; persistent=nil
          (player (if server-mode
                      nil
                      (spawn-player-at-world world id-source)))
          (players (if server-mode
                       (make-array 0)
                       (make-array 1 :initial-element player)))
-         (npcs (make-npcs player world :id-source id-source))
+         (npcs (make-npcs player world :id-source npc-id-source))
          (entities (make-entities players npcs))
          (combat-events (make-combat-event-queue)))
     (if server-mode
