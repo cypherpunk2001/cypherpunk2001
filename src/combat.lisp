@@ -348,18 +348,13 @@
             (clear-intent-target intent))))))
 
 (defun pickup-tile-in-range-p (player tx ty world)
-  "Check if tile at TX,TY is within pickup range of PLAYER."
+  "Check if player is standing on tile TX,TY (same tile = can pickup)."
   (let* ((tile-size (world-tile-dest-size world))
          (px (player-x player))
-         (py (player-y player)))
-    (multiple-value-bind (tile-x tile-y)
-        (tile-center-position tile-size tx ty)
-      (let* ((dx (- tile-x px))
-             (dy (- tile-y py))
-             (dist-sq (+ (* dx dx) (* dy dy)))
-             (max-dist (* *max-target-distance-tiles* tile-size))
-             (max-dist-sq (* max-dist max-dist)))
-        (<= dist-sq max-dist-sq)))))
+         (py (player-y player))
+         (player-tx (floor px tile-size))
+         (player-ty (floor py tile-size)))
+    (and (= player-tx tx) (= player-ty ty))))
 
 (defun sync-player-pickup-target (player intent world)
   ;; Validate requested pickup target and set authoritative state (server authority).
