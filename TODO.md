@@ -67,13 +67,11 @@ Key design docs:
 
 ### HIGH (Second Analysis Pass)
 
-- **Zone Transition Not Tier-1** - `movement.lisp:780-864` - Zone changes use Tier-2 batched saves. Crash after transition loses position.
-
-- **Pickup Target No Range Validation** - `combat.lisp:350-373` - Client provides pickup coordinates without distance check.
+(none - all fixed)
 
 ### MEDIUM
 
-- **30s Data Loss Window** - `db.lisp:477-523` - Tier-2 batched writes every 30s. Server crash loses up to 30s of playtime. Acceptable by design but significant. (Design tradeoff - no fix needed)
+(none - 30s data loss window documented in code as intentional tradeoff)
 
 ### LOW (defensive for future multi-threading)
 
@@ -84,6 +82,10 @@ Key design docs:
 - **Nonce Cache Race** - `net.lisp:228-236` - Hash table cleanup not thread-safe. Server is single-threaded so low risk.
 
 ## Recently Completed
+
+- **Zone Transition Tier-1 Save** - Changed zone transitions from Tier-2 (batched) to Tier-1 (immediate) saves with retry logic. Prevents position loss on crash after zone change.
+
+- **Pickup Target Range Validation** - Added `pickup-tile-in-range-p` check to `sync-player-pickup-target`. Rejects pickup requests for tiles beyond `*max-target-distance-tiles*` (15 tiles).
 
 - **ID Counter Persistence Race** - Added retry logic and save-before-increment to prevent ID collisions on restart.
 
