@@ -227,13 +227,23 @@
 
 (defun allocate-entity-id (id-source)
   ;; Return the next entity id and advance the counter.
-  ;; Persists counter to storage if id-source is marked as persistent.
+  ;; Persists counter to storage BEFORE incrementing to prevent ID collisions
+  ;; if save fails and server restarts.
   (let ((next (id-source-next-id id-source)))
-    (setf (id-source-next-id id-source) (1+ next))
+    ;; Save the NEXT value first to ensure persistence before allocation
     (when (and (id-source-persistent id-source)
                (boundp '*storage*)
                *storage*)
-      (db-save-id-counter (1+ next)))
+      ;; Use retry to handle transient failures - ID allocation is critical
+      (with-retry-exponential (saved (lambda () (db-save-id-counter (1+ next)))
+                                :max-retries 5
+                                :initial-delay 50
+                                :max-delay 200
+                                :on-final-fail (lambda (e)
+                                                 (warn "CRITICAL: ID counter save failed: ~a - IDs may collide on restart"
+                                                       e)))
+        saved))
+    (setf (id-source-next-id id-source) (1+ next))
     next))
 
 (defun world-spawn-center (world)

@@ -61,11 +61,49 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-(none)
+### CRITICAL (Second Analysis Pass)
+
+(none - ID counter fixed)
+
+### HIGH (Second Analysis Pass)
+
+- **Zone Transition Not Tier-1** - `movement.lisp:780-864` - Zone changes use Tier-2 batched saves. Crash after transition loses position.
+
+- **Pickup Target No Range Validation** - `combat.lisp:350-373` - Client provides pickup coordinates without distance check.
+
+### MEDIUM
+
+- **30s Data Loss Window** - `db.lisp:477-523` - Tier-2 batched writes every 30s. Server crash loses up to 30s of playtime. Acceptable by design but significant. (Design tradeoff - no fix needed)
+
+### LOW (defensive for future multi-threading)
+
+- **Dirty Flag Race Condition** - `db.lisp:447-452` - `mark-player-dirty` not atomic. Would matter in multi-threaded scenario, but server is single-threaded.
+
+- **Zone Object Respawn Race** - `progression.lisp:566-582` - Zone objects modified in-place. Would matter in multi-threaded scenario, but server is single-threaded.
+
+- **Nonce Cache Race** - `net.lisp:228-236` - Hash table cleanup not thread-safe. Server is single-threaded so low risk.
 
 ## Recently Completed
 
-- **Player Unstuck Feature** - ESC menu "Unstuck" button. Server validates player is truly stuck (can't move in any cardinal direction), then teleports to zone entry spawn point. Prevents exploit as free teleport.
+- **ID Counter Persistence Race** - Added retry logic and save-before-increment to prevent ID collisions on restart.
+
+- **Session Double-Login Race Condition** - Added `session-try-register` with mutex-protected atomic check-and-set. Prevents concurrent logins.
+
+- **Logout Race Condition** - Reordered: clear auth first, then save player, then unregister session. Prevents state changes after logout.
+
+- **Tier-1 Saves More Aggressive** - Increased retries from 5 to 10, max delay from 500ms to 2s for death/level-up saves.
+
+- **Auth Rate Limiting** - Added per-IP rate limiting: 5 failed attempts triggers 5-minute lockout.
+
+- **Auth Encryption Config** - Added `*auth-require-encryption*` server flag to reject plaintext auth in production.
+
+- **Replay Attack Protection** - Added timestamp validation (60s window) and nonce tracking to encrypted auth.
+
+- **Combat Target Range Validation** - Added `*max-target-distance-tiles*` (15 tiles) check to `sync-player-attack-target` and `sync-player-follow-target`.
+
+- **Equipment Swap Tier-1 Save** - Changed equip/unequip from Tier-2 (batched) to Tier-1 (immediate) saves to prevent item loss on crash.
+
+- **Player Unstuck Feature** - ESC menu "Unstuck" button. Server validates player is truly stuck (can't move in any cardinal direction), then teleports to random position in zone. Prevents exploit as free teleport.
 
 ## Future Tasks / Roadmap
 

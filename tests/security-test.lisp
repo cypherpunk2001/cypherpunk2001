@@ -408,6 +408,176 @@
     (sb-thread:join-thread server-thread)))
 
 ;;;; ==========================================================================
+;;;; TEST: Auth Rate Limiting
+;;;; Server should lock out IP after multiple failed login attempts
+;;;; ==========================================================================
+
+(define-security-test test-auth-rate-limiting
+  ;; Note: This test triggers a rate limit lockout. We clear the rate limit state
+  ;; at the end to avoid affecting subsequent tests.
+  (unwind-protect
+      (let* ((host "127.0.0.1")
+             (port (env-int "MMORPG_NET_TEST_PORT" 1349))
+             (buffer (make-net-buffer))
+             (server-thread (sb-thread:make-thread
+                             (lambda ()
+                               (mmorpg:run-server
+                                :host host
+                                :port port
+                                :max-seconds 4.0)))))
+        (sleep 0.2)
+        (let ((socket (usocket:socket-connect host port :protocol :datagram)))
+          (unwind-protect
+               (progn
+                 ;; First register a valid account
+                 (send-net-message socket
+                          (list :type :register :username "rate-limit-test" :password "correct"))
+                 (let* ((deadline (+ (get-internal-real-time)
+                                     (floor (* 2 internal-time-units-per-second))))
+                        (auth-ok nil))
+                   (loop :while (and (not auth-ok) (< (get-internal-real-time) deadline))
+                         :do (multiple-value-bind (message _h _p)
+                                 (receive-net-message socket buffer)
+                               (declare (ignore _h _p))
+                               (when (and message (eq (getf message :type) :auth-ok))
+                                 (setf auth-ok t)))
+                             (sleep 0.01))
+                   (unless auth-ok
+                     (error "Failed to register test account")))
+
+                 ;; Logout so we can test login rate limiting
+                 (send-net-message socket (list :type :logout))
+                 (sleep 0.2)
+
+                 ;; Send 6 failed login attempts (wrong password) - *auth-max-attempts* is 5
+                 (dotimes (i 6)
+                   (send-net-message socket
+                            (list :type :login :username "rate-limit-test" :password "wrong"))
+                   (sleep 0.05))
+
+                 ;; Wait for rate limit to kick in and collect responses
+                 (sleep 0.3)
+
+                 ;; Now try to login with CORRECT password - should be rate-limited
+                 (send-net-message socket
+                          (list :type :login :username "rate-limit-test" :password "correct"))
+
+                 ;; Should receive :rate-limited rejection
+                 (let* ((deadline (+ (get-internal-real-time)
+                                     (floor (* 2 internal-time-units-per-second))))
+                        (got-rate-limited nil)
+                        (got-auth-ok nil))
+                   (loop :while (and (not got-rate-limited) (not got-auth-ok)
+                                     (< (get-internal-real-time) deadline))
+                         :do (multiple-value-bind (message _h _p)
+                                 (receive-net-message socket buffer)
+                               (declare (ignore _h _p))
+                               (when message
+                                 (case (getf message :type)
+                                   (:auth-fail
+                                    (when (eq (getf message :reason) :rate-limited)
+                                      (setf got-rate-limited t)))
+                                   (:auth-ok
+                                    (setf got-auth-ok t)))))
+                             (sleep 0.01))
+                   (when got-auth-ok
+                     (error "Rate limiting failed - login succeeded despite lockout"))
+                   (unless got-rate-limited
+                     (error "No :rate-limited rejection received after 6 failed attempts"))))
+            (usocket:socket-close socket)))
+        (sb-thread:join-thread server-thread))
+    ;; Cleanup: Clear rate limit state so subsequent tests aren't affected
+    (auth-rate-clear-all)))
+
+;;;; ==========================================================================
+;;;; TEST: Double Login Race Condition
+;;;; Two simultaneous login attempts for same account should result in only one success
+;;;; ==========================================================================
+
+(define-security-test test-double-login-race-condition
+  (let* ((host "127.0.0.1")
+         (port (env-int "MMORPG_NET_TEST_PORT" 1350))
+         (buffer1 (make-net-buffer))
+         (buffer2 (make-net-buffer))
+         (server-thread (sb-thread:make-thread
+                         (lambda ()
+                           (mmorpg:run-server
+                            :host host
+                            :port port
+                            :max-seconds 4.0)))))
+    (sleep 0.2)
+    (let ((socket1 (usocket:socket-connect host port :protocol :datagram))
+          (socket2 (usocket:socket-connect host port :protocol :datagram)))
+      (unwind-protect
+           (progn
+             ;; First, register the account
+             (send-net-message socket1
+                      (list :type :register :username "race-test-user" :password "test"))
+             (let* ((deadline (+ (get-internal-real-time)
+                                 (floor (* 2 internal-time-units-per-second))))
+                    (auth-ok nil))
+               (loop :while (and (not auth-ok) (< (get-internal-real-time) deadline))
+                     :do (multiple-value-bind (message _h _p)
+                             (receive-net-message socket1 buffer1)
+                           (declare (ignore _h _p))
+                           (when (and message (eq (getf message :type) :auth-ok))
+                             (setf auth-ok t)))
+                         (sleep 0.01))
+               (unless auth-ok
+                 (error "Failed to register test account")))
+
+             ;; Logout
+             (send-net-message socket1 (list :type :logout))
+             (sleep 0.2)
+
+             ;; NOW simulate race: send two login requests nearly simultaneously
+             ;; from two different sockets
+             (send-net-message socket1
+                      (list :type :login :username "race-test-user" :password "test"))
+             (send-net-message socket2
+                      (list :type :login :username "race-test-user" :password "test"))
+
+             ;; Collect responses - should get exactly ONE :auth-ok and ONE :already-logged-in
+             (let* ((deadline (+ (get-internal-real-time)
+                                 (floor (* 3 internal-time-units-per-second))))
+                    (auth-ok-count 0)
+                    (already-logged-in-count 0))
+               (loop :while (and (< (+ auth-ok-count already-logged-in-count) 2)
+                                 (< (get-internal-real-time) deadline))
+                     :do (multiple-value-bind (msg1 _h1 _p1)
+                             (receive-net-message socket1 buffer1)
+                           (declare (ignore _h1 _p1))
+                           (when msg1
+                             (case (getf msg1 :type)
+                               (:auth-ok (incf auth-ok-count))
+                               (:auth-fail
+                                (when (eq (getf msg1 :reason) :already-logged-in)
+                                  (incf already-logged-in-count))))))
+                         (multiple-value-bind (msg2 _h2 _p2)
+                             (receive-net-message socket2 buffer2)
+                           (declare (ignore _h2 _p2))
+                           (when msg2
+                             (case (getf msg2 :type)
+                               (:auth-ok (incf auth-ok-count))
+                               (:auth-fail
+                                (when (eq (getf msg2 :reason) :already-logged-in)
+                                  (incf already-logged-in-count))))))
+                         (sleep 0.01))
+
+               ;; Critical check: should have exactly ONE success
+               (when (> auth-ok-count 1)
+                 (error "RACE CONDITION: Got ~d auth-ok responses - both logins succeeded!"
+                        auth-ok-count))
+               (when (zerop auth-ok-count)
+                 (error "Neither login attempt succeeded"))
+               (unless (= already-logged-in-count 1)
+                 (error "Expected 1 :already-logged-in rejection, got ~d"
+                        already-logged-in-count))))
+        (usocket:socket-close socket1)
+        (usocket:socket-close socket2)))
+    (sb-thread:join-thread server-thread)))
+
+;;;; ==========================================================================
 ;;;; TEST: Extreme Coordinate Values
 ;;;; Server should handle NaN, Infinity, and huge coordinate values safely
 ;;;; ==========================================================================
@@ -1068,6 +1238,8 @@
   (test-chat-message-length-enforced)
   (test-malformed-intent-ids-handled)
   (test-double-login-prevented)
+  (test-auth-rate-limiting)
+  (test-double-login-race-condition)
   (test-extreme-coordinates-handled)
   (test-empty-message-fields-handled)
 

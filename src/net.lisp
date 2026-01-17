@@ -103,8 +103,167 @@
 (defparameter *active-sessions* (make-hash-table :test 'equal)
   "Map of username (lowercase) -> net-client for logged-in accounts.")
 
+#+sbcl
+(defvar *session-lock* (sb-thread:make-mutex :name "session-lock")
+  "Mutex protecting *active-sessions* for atomic check-and-set operations.")
+
+(defmacro with-session-lock (&body body)
+  "Execute BODY with *session-lock* held for atomic session operations."
+  #+sbcl
+  `(sb-thread:with-mutex (*session-lock*)
+     ,@body)
+  #-sbcl
+  `(progn ,@body))
+
+(defun session-try-register (username client)
+  "Atomically check if USERNAME is available and register CLIENT.
+   Returns T if registered, NIL if already logged in."
+  (with-session-lock
+    (let ((key (string-downcase username)))
+      (if (gethash key *active-sessions*)
+          nil
+          (progn
+            (setf (gethash key *active-sessions*) client)
+            t)))))
+
+(defun session-unregister (username)
+  "Atomically remove USERNAME from active sessions."
+  (with-session-lock
+    (remhash (string-downcase username) *active-sessions*)))
+
+(defun session-get (username)
+  "Get the client for USERNAME if logged in."
+  (with-session-lock
+    (gethash (string-downcase username) *active-sessions*)))
+
 (defparameter *client-timeout-seconds* 30.0
   "Seconds of inactivity before a client is considered disconnected.")
+
+;;;; Auth Rate Limiting
+
+(defparameter *auth-max-attempts* 5
+  "Maximum failed auth attempts before lockout.")
+
+(defparameter *auth-lockout-seconds* 300.0
+  "Lockout duration in seconds after max failed attempts (5 minutes).")
+
+(defparameter *auth-attempt-window* 60.0
+  "Time window in seconds to count failed attempts.")
+
+(defstruct auth-rate-entry
+  "Tracks auth attempts for rate limiting."
+  (attempts 0 :type fixnum)
+  (first-attempt-time 0.0 :type single-float)
+  (lockout-until 0.0 :type single-float))
+
+(defparameter *auth-rate-limits* (make-hash-table :test 'equal)
+  "Map of IP address -> auth-rate-entry for rate limiting.")
+
+(defun auth-rate-check (host current-time)
+  "Check if HOST is rate-limited. Returns T if allowed, NIL if blocked."
+  (let ((entry (gethash host *auth-rate-limits*)))
+    (cond
+      ;; No entry - allowed
+      ((null entry) t)
+      ;; Currently locked out
+      ((> (auth-rate-entry-lockout-until entry) current-time)
+       nil)
+      ;; Lockout expired - reset and allow
+      ((> (auth-rate-entry-lockout-until entry) 0.0)
+       (setf (auth-rate-entry-attempts entry) 0
+             (auth-rate-entry-lockout-until entry) 0.0
+             (auth-rate-entry-first-attempt-time entry) 0.0)
+       t)
+      ;; Window expired - reset attempts and allow
+      ((> (- current-time (auth-rate-entry-first-attempt-time entry))
+          *auth-attempt-window*)
+       (setf (auth-rate-entry-attempts entry) 0
+             (auth-rate-entry-first-attempt-time entry) 0.0)
+       t)
+      ;; Under limit - allowed
+      (t t))))
+
+(defun auth-rate-record-failure (host current-time)
+  "Record a failed auth attempt for HOST. Returns T if now locked out."
+  (let ((entry (gethash host *auth-rate-limits*)))
+    (unless entry
+      (setf entry (make-auth-rate-entry)
+            (gethash host *auth-rate-limits*) entry))
+    ;; Reset if window expired
+    (when (and (> (auth-rate-entry-first-attempt-time entry) 0.0)
+               (> (- current-time (auth-rate-entry-first-attempt-time entry))
+                  *auth-attempt-window*))
+      (setf (auth-rate-entry-attempts entry) 0
+            (auth-rate-entry-first-attempt-time entry) 0.0))
+    ;; Record attempt
+    (when (zerop (auth-rate-entry-first-attempt-time entry))
+      (setf (auth-rate-entry-first-attempt-time entry) current-time))
+    (incf (auth-rate-entry-attempts entry))
+    ;; Check if lockout triggered
+    (when (>= (auth-rate-entry-attempts entry) *auth-max-attempts*)
+      (setf (auth-rate-entry-lockout-until entry)
+            (+ current-time *auth-lockout-seconds*))
+      (warn "Rate limit: ~a locked out for ~ds after ~d failed attempts"
+            host (round *auth-lockout-seconds*) (auth-rate-entry-attempts entry))
+      t)))
+
+(defun auth-rate-record-success (host)
+  "Clear rate limit tracking for HOST after successful auth."
+  (remhash host *auth-rate-limits*))
+
+(defun auth-rate-clear-all ()
+  "Clear all rate limit state. For testing only."
+  (clrhash *auth-rate-limits*))
+
+;;;; Auth Replay Protection
+
+(defparameter *auth-timestamp-window* 60
+  "Maximum age in seconds for auth timestamps. Older messages rejected.")
+
+(defparameter *auth-nonce-cache* (make-hash-table :test 'equal)
+  "Cache of recently seen nonces to prevent replay attacks.")
+
+(defparameter *auth-nonce-cleanup-interval* 120
+  "Seconds between nonce cache cleanup runs.")
+
+(defvar *auth-nonce-last-cleanup* 0
+  "Last time nonce cache was cleaned up.")
+
+(defun auth-nonce-cleanup (current-time)
+  "Remove expired nonces from cache."
+  (when (> (- current-time *auth-nonce-last-cleanup*) *auth-nonce-cleanup-interval*)
+    (let ((cutoff (- current-time *auth-timestamp-window* 10)))
+      (maphash (lambda (nonce timestamp)
+                 (when (< timestamp cutoff)
+                   (remhash nonce *auth-nonce-cache*)))
+               *auth-nonce-cache*))
+    (setf *auth-nonce-last-cleanup* current-time)))
+
+(defun auth-check-replay (encrypted-payload timestamp)
+  "Check if this auth request is a replay. Returns T if valid, NIL if replay.
+   ENCRYPTED-PAYLOAD is used as the nonce (unique per request).
+   TIMESTAMP is the claimed time of the request."
+  (let* ((current-time (get-universal-time))
+         (age (- current-time timestamp)))
+    ;; Cleanup old nonces periodically
+    (auth-nonce-cleanup current-time)
+    (cond
+      ;; Timestamp too old
+      ((> age *auth-timestamp-window*)
+       (warn "Auth replay check: timestamp too old (~d seconds)" age)
+       nil)
+      ;; Timestamp in future (clock skew tolerance of 5 seconds)
+      ((< age -5)
+       (warn "Auth replay check: timestamp in future (~d seconds)" (- age))
+       nil)
+      ;; Already seen this nonce
+      ((gethash encrypted-payload *auth-nonce-cache*)
+       (warn "Auth replay check: duplicate nonce detected")
+       nil)
+      ;; Valid - record nonce
+      (t
+       (setf (gethash encrypted-payload *auth-nonce-cache*) current-time)
+       t))))
 
 (defun make-net-client (host port player)
   ;; Build a client record with an intent seeded to PLAYER position.
@@ -612,10 +771,13 @@
 (defun send-auth-message (socket msg-type username password &key host port)
   "Send an authentication message (login or register).
    If *auth-encryption-enabled* and *server-auth-public-key* are set,
-   encrypts the credentials. Otherwise sends plaintext."
+   encrypts the credentials with timestamp for replay protection.
+   Otherwise sends plaintext."
   (if (and *auth-encryption-enabled* *server-auth-public-key*)
-      ;; Encrypted auth: send encrypted credentials payload
-      (let* ((creds-plist (format nil "(:username ~s :password ~s)" username password))
+      ;; Encrypted auth: send encrypted credentials payload with timestamp
+      (let* ((timestamp (get-universal-time))
+             (creds-plist (format nil "(:username ~s :password ~s :timestamp ~d)"
+                                 username password timestamp))
              (encrypted (encrypt-auth-payload creds-plist *server-auth-public-key*)))
         (send-net-message socket
                           (list :type msg-type
@@ -632,6 +794,8 @@
 (defun extract-auth-credentials (message)
   "Extract username and password from an auth message.
    Supports both encrypted (:encrypted-payload) and plaintext (:username/:password).
+   When *auth-require-encryption* is T, rejects plaintext auth.
+   Encrypted auth includes replay protection via timestamp and nonce tracking.
    Returns (values username password) or (values NIL NIL) on failure."
   (let ((encrypted-payload (getf message :encrypted-payload)))
     (if encrypted-payload
@@ -641,17 +805,28 @@
               (let* ((*read-eval* nil)
                      (creds (ignore-errors (read-from-string decrypted))))
                 (if (listp creds)
-                    (values (getf creds :username)
-                            (getf creds :password))
+                    (let ((username (getf creds :username))
+                          (password (getf creds :password))
+                          (timestamp (getf creds :timestamp)))
+                      ;; Check for replay attack if timestamp present
+                      (if (and timestamp (not (auth-check-replay encrypted-payload timestamp)))
+                          (progn
+                            (log-verbose "Auth rejected: replay attack detected")
+                            (values nil nil))
+                          (values username password)))
                     (progn
                       (warn "Failed to parse decrypted auth credentials")
                       (values nil nil))))
               (progn
                 (log-verbose "Failed to decrypt auth payload")
                 (values nil nil))))
-        ;; Plaintext auth: extract directly
-        (values (getf message :username)
-                (getf message :password)))))
+        ;; Plaintext auth: check if allowed
+        (if *auth-require-encryption*
+            (progn
+              (warn "Rejecting plaintext auth - encryption required")
+              (values nil nil))
+            (values (getf message :username)
+                    (getf message :password))))))
 
 (defun handle-server-load (game)
   ;; Load game state on the server and reset transient flags.
@@ -686,9 +861,18 @@
 
 ;;;; Account Authentication Handlers
 
-(defun handle-register-request (client host port message socket game)
+(defun handle-register-request (client host port message socket game elapsed)
   "Handle account registration request.
    Supports both encrypted and plaintext credentials."
+  ;; Rate limiting check
+  (unless (auth-rate-check host elapsed)
+    (send-net-message-with-retry socket
+                                 (list :type :auth-fail :reason :rate-limited)
+                                 :host host :port port
+                                 :max-retries 3
+                                 :delay 50)
+    (log-verbose "Registration blocked from ~a:~d - rate limited" host port)
+    (return-from handle-register-request nil))
   (multiple-value-bind (username password)
       (extract-auth-credentials message)
     (cond
@@ -698,6 +882,7 @@
                                     :host host :port port
                                     :max-retries 3
                                     :delay 50)
+       (auth-rate-record-failure host elapsed)
        (log-verbose "Registration failed from ~a:~d - missing credentials" host port))
       ((with-retry-exponential (created (lambda () (db-create-account username password))
                                  :max-retries 3
@@ -725,8 +910,10 @@
          (let* ((zone (world-zone world))
                 (zone-id (and zone (zone-id zone))))
            (register-player-session player :zone-id zone-id))
-         ;; Track active session
-         (setf (gethash (string-downcase username) *active-sessions*) client)
+         ;; Track active session (atomic, should always succeed for new account)
+         (session-try-register username client)
+         ;; Clear rate limit on success
+         (auth-rate-record-success host)
          ;; Send success response (with retry - critical auth message)
          (send-net-message-with-retry socket
                                       (list :type :auth-ok :player-id player-id)
@@ -736,7 +923,7 @@
          (log-verbose "Registration successful: ~a (~a:~d) -> player-id=~d"
                      username host port player-id)))
       (t
-       ;; Username already exists
+       ;; Username already exists - don't count as rate limit failure (could be probing)
        (send-net-message-with-retry socket
                                     (list :type :auth-fail :reason :username-taken)
                                     :host host :port port
@@ -749,6 +936,15 @@
   "Handle account login request.
    Supports both encrypted and plaintext credentials."
   (declare (ignore clients))
+  ;; Rate limiting check
+  (unless (auth-rate-check host elapsed)
+    (send-net-message-with-retry socket
+                                 (list :type :auth-fail :reason :rate-limited)
+                                 :host host :port port
+                                 :max-retries 3
+                                 :delay 50)
+    (log-verbose "Login blocked from ~a:~d - rate limited" host port)
+    (return-from handle-login-request nil))
   (multiple-value-bind (username password)
       (extract-auth-credentials message)
     (cond
@@ -758,17 +954,9 @@
                                     :host host :port port
                                     :max-retries 3
                                     :delay 50)
+       (auth-rate-record-failure host elapsed)
        (log-verbose "Login failed from ~a:~d - missing credentials" host port))
-      ;; Check if already logged in
-      ((gethash (string-downcase username) *active-sessions*)
-       (send-net-message-with-retry socket
-                                    (list :type :auth-fail :reason :already-logged-in)
-                                    :host host :port port
-                                    :max-retries 3
-                                    :delay 50)
-       (log-verbose "Login failed from ~a:~d - account ~a already logged in"
-                   host port username))
-      ;; Verify credentials (with retry for transient DB failures)
+      ;; Verify credentials first (with retry for transient DB failures)
       ((not (with-retry-exponential (verified (lambda () (db-verify-credentials username password))
                                       :max-retries 3
                                       :initial-delay 50
@@ -779,7 +967,18 @@
                                     :host host :port port
                                     :max-retries 3
                                     :delay 50)
+       ;; Bad credentials - count toward rate limit
+       (auth-rate-record-failure host elapsed)
        (log-verbose "Login failed from ~a:~d - bad credentials for ~a"
+                   host port username))
+      ;; Atomically try to register session (prevents double-login race)
+      ((not (session-try-register username client))
+       (send-net-message-with-retry socket
+                                    (list :type :auth-fail :reason :already-logged-in)
+                                    :host host :port port
+                                    :max-retries 3
+                                    :delay 50)
+       (log-verbose "Login failed from ~a:~d - account ~a already logged in"
                    host port username))
       (t
        ;; Login successful
@@ -833,8 +1032,9 @@
            (setf (net-client-last-heard client) elapsed)
            ;; Register session for persistence
            (register-player-session player :zone-id zone-id)
-           ;; Track active session
-           (setf (gethash (string-downcase username) *active-sessions*) client)
+           ;; Note: active session already registered atomically via session-try-register
+           ;; Clear rate limit on success
+           (auth-rate-record-success host)
            ;; Send success response (with retry - critical auth message)
            (send-net-message-with-retry socket
                                         (list :type :auth-ok :player-id (player-id player))
@@ -849,18 +1049,19 @@
   (when (and client (net-client-authenticated-p client))
     (let ((username (net-client-account-username client))
           (player (net-client-player client)))
-      (when username
-        ;; Remove from active sessions
-        (remhash username *active-sessions*)
-        (log-verbose "Logout: ~a (~a:~d)" username host port))
+      ;; Clear authentication first to prevent further state changes
+      (setf (net-client-authenticated-p client) nil)
+      (setf (net-client-account-username client) nil)
       (when player
-        ;; Save and unregister session
+        ;; Save and unregister session BEFORE removing from active sessions
+        ;; This ensures all state changes are persisted
         (db-logout-player player)
         ;; Remove player from game world
         (remove-player-from-game game player))
-      ;; Clear authentication
-      (setf (net-client-authenticated-p client) nil)
-      (setf (net-client-account-username client) nil))))
+      (when username
+        ;; Remove from active sessions AFTER save completes
+        (session-unregister username)
+        (log-verbose "Logout: ~a (~a:~d)" username host port)))))
 
 (defun check-client-timeouts (clients elapsed game)
   "Check for timed-out clients and free their sessions. Returns updated client list."
@@ -872,14 +1073,19 @@
             ;; Client timed out - free the session
             (let ((username (net-client-account-username client))
                   (player (net-client-player client)))
-              (when username
-                (remhash username *active-sessions*)
-                (log-verbose "Client timeout: ~a (inactive for ~,1fs)"
-                            username inactive-time))
+              ;; Clear auth first to prevent further state changes
+              (setf (net-client-authenticated-p client) nil)
+              (setf (net-client-account-username client) nil)
               (when player
+                ;; Save BEFORE removing from active sessions
                 (db-logout-player player)
                 ;; Remove player from game world
                 (remove-player-from-game game player))
+              (when username
+                ;; Remove from active sessions AFTER save
+                (session-unregister username)
+                (log-verbose "Client timeout: ~a (inactive for ~,1fs)"
+                            username inactive-time))
               ;; Don't add to updated list - remove this client
               )
             ;; Client still active - keep it
@@ -974,7 +1180,7 @@
                                  (:hello
                                   (log-verbose "Handshake received from ~a:~d" host port))
                                  (:register
-                                  (handle-register-request client host port message socket game))
+                                  (handle-register-request client host port message socket game elapsed))
                                  (:login
                                   (handle-login-request client host port message socket game
                                                        clients elapsed))

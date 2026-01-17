@@ -802,7 +802,7 @@
                                              :max-delay 200
                                              :on-final-fail (lambda (e)
                                                               (warn "Zone transition failed: could not load zone ~a after retries: ~a"
-                                                                    target-zone-id e)))
+                                                                    target-id e)))
                      loaded))
              (spawn-edge (or (getf exit :spawn-edge)
                              (getf exit :to-edge)

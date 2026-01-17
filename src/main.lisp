@@ -328,8 +328,8 @@
     (when allow-player-control
       (loop :for current-player :across players
             :for current-intent = (player-intent current-player)
-            :do (sync-player-follow-target current-player current-intent npcs)
-                (sync-player-attack-target current-player current-intent npcs)
+            :do (sync-player-follow-target current-player current-intent npcs world)
+                (sync-player-attack-target current-player current-intent npcs world)
                 (sync-player-pickup-target current-player current-intent world)
                 (process-player-unstuck current-player current-intent world
                                         (and (world-zone world)

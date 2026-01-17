@@ -218,15 +218,16 @@
       (mark-player-hud-stats-dirty player)
       ;; Tier-1 write: level-ups must be saved immediately to prevent
       ;; XP rollback past level boundary on crash/logout
-      ;; Use retry with exponential backoff (5 retries: 100ms, 200ms, 400ms, 500ms, 500ms)
+      ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
       (when level-ups
         (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                  :max-retries 5
+                                  :max-retries 10
                                   :initial-delay 100
-                                  :max-delay 500
+                                  :max-delay 2000
                                   :on-final-fail (lambda (e)
-                                                   (warn "CRITICAL: Level-up save failed for player ~d after all retries: ~a"
+                                                   (warn "CRITICAL: Level-up save FAILED for player ~d after 10 retries: ~a - using dirty flag fallback"
                                                          (player-id player) e)
+                                                   ;; Fallback to dirty flag - will save within 30s if server survives
                                                    (mark-player-dirty (player-id player))))))
       ;; Tier-2 write: XP gains without level-ups should be marked dirty for batched saves
       (when (and (> xp 0) (null level-ups))
@@ -494,8 +495,16 @@
               (apply-item-modifiers stats item-id 1)
               (clamp-player-hp player)
               (mark-player-hud-stats-dirty player)
-              ;; Tier-2 write: equipment changes should be marked dirty for batched saves
-              (mark-player-dirty (player-id player))
+              ;; Tier-1 write: equipment changes saved immediately (prevents item loss on crash)
+              (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                        :max-retries 10
+                                        :initial-delay 100
+                                        :max-delay 500
+                                        :on-final-fail (lambda (e)
+                                                         (warn "Equip save failed for player ~d: ~a - using dirty flag"
+                                                               (player-id player) e)
+                                                         (mark-player-dirty (player-id player))))
+                saved)
               t)))))))
 
 (defun unequip-item (player slot-id)
@@ -514,8 +523,16 @@
               (apply-item-modifiers stats current -1)
               (clamp-player-hp player)
               (mark-player-hud-stats-dirty player)
-              ;; Tier-2 write: equipment changes should be marked dirty for batched saves
-              (mark-player-dirty (player-id player))
+              ;; Tier-1 write: equipment changes saved immediately (prevents item loss on crash)
+              (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                        :max-retries 10
+                                        :initial-delay 100
+                                        :max-delay 500
+                                        :on-final-fail (lambda (e)
+                                                         (warn "Unequip save failed for player ~d: ~a - using dirty flag"
+                                                               (player-id player) e)
+                                                         (mark-player-dirty (player-id player))))
+                saved)
               t)))))))
 
 (defun player-tile-coords (player world)

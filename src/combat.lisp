@@ -37,15 +37,16 @@
     (setf (player-hp combatant) new-hp)
     ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
     ;; to prevent logout-to-survive exploit
-    ;; Use retry with exponential backoff (5 retries: 100ms, 200ms, 400ms, 500ms, 500ms)
+    ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
     (when (and (= new-hp 0) (> old-hp 0))
       (with-retry-exponential (saved (lambda () (db-save-player-immediate combatant))
-                                :max-retries 5
+                                :max-retries 10
                                 :initial-delay 100
-                                :max-delay 500
+                                :max-delay 2000
                                 :on-final-fail (lambda (e)
-                                                 (warn "CRITICAL: Death save failed for player ~d after all retries: ~a"
+                                                 (warn "CRITICAL: Death save FAILED for player ~d after 10 retries: ~a - using dirty flag fallback"
                                                        (player-id combatant) e)
+                                                 ;; Fallback to dirty flag - will save within 30s if server survives
                                                  (mark-player-dirty (player-id combatant))))))
     ;; Tier-2 write: HP changes should be marked dirty for batched saves
     (when (/= hp new-hp)
@@ -272,8 +273,23 @@
     (when (and npc (combatant-alive-p npc))
       npc)))
 
-(defun sync-player-attack-target (player intent npcs)
+(defun target-in-range-p (player npc world)
+  "Check if NPC is within targeting range of PLAYER."
+  (let* ((px (player-x player))
+         (py (player-y player))
+         (nx (npc-x npc))
+         (ny (npc-y npc))
+         (dx (- nx px))
+         (dy (- ny py))
+         (dist-sq (+ (* dx dx) (* dy dy)))
+         (tile-size (world-tile-dest-size world))
+         (max-dist (* *max-target-distance-tiles* tile-size))
+         (max-dist-sq (* max-dist max-dist)))
+    (<= dist-sq max-dist-sq)))
+
+(defun sync-player-attack-target (player intent npcs world)
   ;; Validate requested attack target and set authoritative state (server authority).
+  ;; Checks range to prevent targeting distant NPCs.
   (let* ((requested-id (intent-requested-attack-target-id intent))
          (current-id (player-attack-target-id player)))
     ;; Process clear request (requested-id = 0 means client wants to cancel)
@@ -283,15 +299,15 @@
     ;; Process new attack target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc))
+        (if (and npc (combatant-alive-p npc) (target-in-range-p player npc world))
             (progn
-              ;; Valid target: set authoritative state and clear conflicting targets
+              ;; Valid target in range: set authoritative state and clear conflicting targets
               (setf (player-attack-target-id player) requested-id
                     (player-follow-target-id player) 0
                     (player-pickup-target-id player) nil
                     (player-pickup-target-active player) nil)
               (clear-player-auto-walk player))
-            ;; Invalid target: reject request
+            ;; Invalid target or out of range: reject request
             (clear-requested-attack-target intent))))
     ;; Sync current authoritative target to intent position
     (let ((target (player-attack-target player npcs)))
@@ -301,8 +317,9 @@
             (setf (player-attack-target-id player) 0)
             (clear-intent-target intent))))))
 
-(defun sync-player-follow-target (player intent npcs)
+(defun sync-player-follow-target (player intent npcs world)
   ;; Validate requested follow target and set authoritative state (server authority).
+  ;; Checks range to prevent targeting distant NPCs.
   (let* ((requested-id (intent-requested-follow-target-id intent))
          (current-id (player-follow-target-id player)))
     ;; Process clear request (requested-id = 0 means client wants to cancel)
@@ -312,9 +329,9 @@
     ;; Process new follow target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc))
+        (if (and npc (combatant-alive-p npc) (target-in-range-p player npc world))
             (progn
-              ;; Valid target: set authoritative state and clear conflicting targets
+              ;; Valid target in range: set authoritative state and clear conflicting targets
               (setf (player-follow-target-id player) requested-id
                     (player-attack-target-id player) 0
                     (player-pickup-target-id player) nil

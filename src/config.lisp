@@ -88,6 +88,9 @@
 (defparameter *minimap-point-size* 4) ;; Size of player/NPC markers on the minimap.
 (defparameter *minimap-preview-edge-tiles* 1.5) ;; Tiles from an exit edge to show adjacent zone spawn previews.
 
+;;; Combat Targeting - Read when validating target requests
+(defparameter *max-target-distance-tiles* 15) ;; Maximum tiles away a player can target an NPC.
+
 ;;; Animation Timing - Read every animation frame
 (defparameter *idle-frame-count* 4) ;; Frames in each idle animation row.
 (defparameter *walk-frame-count* 6) ;; Frames in each walk animation row.
@@ -158,6 +161,7 @@
 ;;; For dev/local testing, leave NIL to disable encryption.
 (defparameter *auth-encryption-enabled* nil) ;; Enable auth payload encryption. Requires server public key.
 (defparameter *server-auth-public-key* nil) ;; Server's X25519 public key as hex string. Set by server or config.
+(defparameter *auth-require-encryption* nil) ;; Server rejects plaintext auth when T. Set for production.
 
 ;;; Inventory & Equipment - Array sizes set at player creation
 ;;; Why: Inventory/equipment arrays allocated with fixed size when player
