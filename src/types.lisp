@@ -92,6 +92,7 @@
   menu-title-size menu-hint-size menu-track-size menu-button-text-size
   menu-nav-text-size menu-volume-text-size
   menu-button-width menu-button-height menu-button-x menu-button-y
+  menu-logout-label menu-logout-x menu-logout-y menu-logout-width menu-logout-height
   menu-save-label menu-load-label
   menu-save-x menu-save-y
   menu-load-x menu-load-y

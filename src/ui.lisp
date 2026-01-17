@@ -43,6 +43,15 @@
                            menu-padding
                            menu-button-height))
          (menu-action-gap 12)
+         (menu-logout-label "Logout")
+         (menu-logout-width 260)
+         (menu-logout-height 56)
+         (menu-logout-x (truncate (/ (- *window-width* menu-logout-width) 2)))
+         (menu-logout-y (- (+ menu-panel-y menu-panel-height)
+                           menu-padding
+                           menu-button-height
+                           menu-action-gap
+                           menu-logout-height))
          (menu-nav-button-width 140)
          (menu-nav-button-height 44)
          (menu-nav-gap 16)
@@ -185,6 +194,11 @@
               :menu-button-height menu-button-height
               :menu-button-x menu-button-x
               :menu-button-y menu-button-y
+              :menu-logout-label menu-logout-label
+              :menu-logout-x menu-logout-x
+              :menu-logout-y menu-logout-y
+              :menu-logout-width menu-logout-width
+              :menu-logout-height menu-logout-height
               :menu-save-x menu-save-x
               :menu-save-y menu-save-y
               :menu-load-x menu-load-x
@@ -331,12 +345,16 @@
   ui)
 
 (defun handle-menu-click (ui audio mouse-x mouse-y)
-  ;; Process menu clicks for quit, music, volume, and toggles.
+  ;; Process menu clicks for quit, logout, music, volume, and toggles.
   (cond
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-button-x ui) (ui-menu-button-y ui)
                       (ui-menu-button-width ui) (ui-menu-button-height ui))
      (setf (ui-exit-requested ui) t))
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-logout-x ui) (ui-menu-logout-y ui)
+                      (ui-menu-logout-width ui) (ui-menu-logout-height ui))
+     :logout)
     ((and (> (audio-soundtrack-count audio) 0)
           (point-in-rect-p mouse-x mouse-y
                            (ui-menu-prev-x ui) (ui-menu-nav-y ui)

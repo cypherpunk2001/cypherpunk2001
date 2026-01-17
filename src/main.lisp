@@ -78,7 +78,12 @@
                                        "Editor disabled in client mode.")
                (progn
                  (toggle-editor-mode editor player)
-                 (setf (ui-menu-open ui) nil)))))))
+                 (setf (ui-menu-open ui) nil))))
+          (:logout
+           (log-verbose "Logout requested")
+           (when (eq net-role :client)
+             (queue-net-request game (list :type :logout))
+             (setf (ui-menu-open ui) nil))))))
     (let ((chat-opened nil))
       (when (and (not (ui-chat-active ui))
                  (not (ui-menu-open ui))

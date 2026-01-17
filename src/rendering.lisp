@@ -1144,6 +1144,11 @@
                                       (ui-menu-button-y ui)
                                       (ui-menu-button-width ui)
                                       (ui-menu-button-height ui)))
+         (hover-logout (point-in-rect-p mouse-x mouse-y
+                                        (ui-menu-logout-x ui)
+                                        (ui-menu-logout-y ui)
+                                        (ui-menu-logout-width ui)
+                                        (ui-menu-logout-height ui)))
          (hover-prev (point-in-rect-p mouse-x mouse-y
                                       (ui-menu-prev-x ui)
                                       (ui-menu-nav-y ui)
@@ -1167,6 +1172,9 @@
          (quit-color (if hover-quit
                          (ui-menu-button-hover-color ui)
                          (ui-menu-button-color ui)))
+         (logout-color (if hover-logout
+                           (ui-menu-button-hover-color ui)
+                           (ui-menu-button-color ui)))
          (prev-color (if hover-prev
                          (ui-menu-button-hover-color ui)
                          (ui-menu-button-color ui)))
@@ -1333,6 +1341,15 @@
                       (+ (ui-menu-fullscreen-x ui) 28)
                       (- (ui-menu-fullscreen-y ui) 2)
                       (ui-menu-volume-text-size ui)
+                      (ui-menu-text-color ui))
+    (raylib:draw-rectangle (ui-menu-logout-x ui) (ui-menu-logout-y ui)
+                           (ui-menu-logout-width ui)
+                           (ui-menu-logout-height ui)
+                           logout-color)
+    (raylib:draw-text (ui-menu-logout-label ui)
+                      (+ (ui-menu-logout-x ui) 24)
+                      (+ (ui-menu-logout-y ui) 16)
+                      (ui-menu-button-text-size ui)
                       (ui-menu-text-color ui))
     (raylib:draw-rectangle (ui-menu-button-x ui) (ui-menu-button-y ui)
                            (ui-menu-button-width ui)

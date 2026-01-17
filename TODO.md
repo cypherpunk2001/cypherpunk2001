@@ -1,6 +1,6 @@
 ## Current Tasks / TODO
 
-- [ ] Add logout button to ESC menu (currently have to wait for timeout)
+- [x] Add logout button to ESC menu (currently have to wait for timeout)
 ----------------------------------
 - [x] Test Redis persistence end-to-end (login, save, logout, reload)
 - [x] Switch from memory-storage to redis-storage backend
