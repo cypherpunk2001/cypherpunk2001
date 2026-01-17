@@ -37,7 +37,9 @@
     ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
     ;; to prevent logout-to-survive exploit
     (when (and (= new-hp 0) (> hp 0))
-      (db-save-player-immediate combatant)
+      (db-save-player-immediate combatant))
+    ;; Tier-2 write: HP changes should be marked dirty for batched saves
+    (when (/= hp new-hp)
       (mark-player-dirty (player-id combatant)))))
 
 (defmethod combatant-apply-hit ((combatant npc) &optional amount)

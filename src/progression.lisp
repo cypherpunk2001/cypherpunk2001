@@ -217,7 +217,10 @@
       ;; Tier-1 write: level-ups must be saved immediately to prevent
       ;; XP rollback past level boundary on crash/logout
       (when level-ups
-        (db-save-player-immediate player)))
+        (db-save-player-immediate player))
+      ;; Tier-2 write: XP gains without level-ups should be marked dirty for batched saves
+      (when (and (> xp 0) (null level-ups))
+        (mark-player-dirty (player-id player))))
     (values attack-xp strength-xp defense-xp hitpoints-xp
             (nreverse level-ups))))
 
@@ -402,7 +405,9 @@
     (if inventory
         (let ((leftover (inventory-add inventory item-id amount)))
           (when (< leftover amount)
-            (mark-player-inventory-dirty player))
+            (mark-player-inventory-dirty player)
+            ;; Tier-2 write: inventory changes should be marked dirty for batched saves
+            (mark-player-dirty (player-id player)))
           leftover)
         amount)))
 
@@ -413,7 +418,9 @@
     (if inventory
         (let ((leftover (inventory-remove inventory item-id amount)))
           (when (< leftover amount)
-            (mark-player-inventory-dirty player))
+            (mark-player-inventory-dirty player)
+            ;; Tier-2 write: inventory changes should be marked dirty for batched saves
+            (mark-player-dirty (player-id player)))
           leftover)
         amount)))
 
@@ -477,6 +484,8 @@
               (apply-item-modifiers stats item-id 1)
               (clamp-player-hp player)
               (mark-player-hud-stats-dirty player)
+              ;; Tier-2 write: equipment changes should be marked dirty for batched saves
+              (mark-player-dirty (player-id player))
               t)))))))
 
 (defun unequip-item (player slot-id)
@@ -495,6 +504,8 @@
               (apply-item-modifiers stats current -1)
               (clamp-player-hp player)
               (mark-player-hud-stats-dirty player)
+              ;; Tier-2 write: equipment changes should be marked dirty for batched saves
+              (mark-player-dirty (player-id player))
               t)))))))
 
 (defun player-tile-coords (player world)

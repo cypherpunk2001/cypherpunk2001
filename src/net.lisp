@@ -159,10 +159,14 @@
                             game
                             (spawn-player-at-world (game-world game)
                                                    (game-id-source game)))))
-               (client (make-net-client host port player)))
+               (client (make-net-client host port player))
+               (world (game-world game))
+               (zone (and world (world-zone world)))
+               (zone-id (and zone (zone-id zone))))
           (log-verbose "New client registered: ~a:~d -> player-id=~d"
                        host port (player-id player))
           (reset-player-for-client player)
+          (register-player-session player :zone-id zone-id)
           (setf (net-client-last-heard client) timestamp)
           (values client (cons client clients) t)))))
 
@@ -272,10 +276,11 @@
                                 :player-id (player-id (net-client-player client)))
                           :host (net-client-host client)
                           :port (net-client-port client)))
-      ;; Parallel: Distribute clients across worker threads
+      ;; Parallel: Distribute clients across worker threads with socket synchronization
       #+sbcl
       (let* ((client-count (length clients))
              (chunk-size (ceiling client-count worker-threads))
+             (socket-lock (sb-thread:make-mutex :name "snapshot-socket-lock"))
              (threads nil))
         (loop :for start :from 0 :below client-count :by chunk-size
               :do (let ((end (min (+ start chunk-size) client-count)))
@@ -284,14 +289,16 @@
                       (lambda ()
                         (loop :for i :from start :below end
                               :for client = (nth i clients)
-                              :do (send-net-message socket
-                                                    (list :type :snapshot
-                                                          :state state
-                                                          :events event-plists
-                                                          :player-id (player-id
-                                                                      (net-client-player client)))
-                                                    :host (net-client-host client)
-                                                    :port (net-client-port client))))
+                              ;; Synchronize socket access across threads
+                              :do (sb-thread:with-mutex (socket-lock)
+                                    (send-net-message socket
+                                                      (list :type :snapshot
+                                                            :state state
+                                                            :events event-plists
+                                                            :player-id (player-id
+                                                                        (net-client-player client)))
+                                                      :host (net-client-host client)
+                                                      :port (net-client-port client)))))
                       :name (format nil "snapshot-sender-~d" start))
                      threads)))
         ;; Wait for all threads to complete
@@ -388,8 +395,27 @@
   ;;   - Recommended: (get-nproc) on multi-core machines
   ;;   - Safe: Only parallelizes network I/O, simulation remains serial
   (with-fatal-error-log ((format nil "Server runtime (~a:~d)" host port))
-    ;; Initialize storage backend (memory-storage for now, redis-storage later)
-    (init-storage :backend :memory)
+    ;; Initialize storage backend from environment variables:
+    ;; MMORPG_DB_BACKEND: "memory" or "redis" (default: memory)
+    ;; MMORPG_REDIS_HOST: Redis host (default: 127.0.0.1)
+    ;; MMORPG_REDIS_PORT: Redis port (default: 6379)
+    (let* ((backend-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_DB_BACKEND")
+                            #-sbcl (uiop:getenv "MMORPG_DB_BACKEND")
+                            "memory"))
+           (backend (cond
+                      ((string-equal backend-str "redis") :redis)
+                      ((string-equal backend-str "memory") :memory)
+                      (t (progn
+                           (warn "Unknown MMORPG_DB_BACKEND=~a, defaulting to memory" backend-str)
+                           :memory))))
+           (redis-host (or #+sbcl (sb-ext:posix-getenv "MMORPG_REDIS_HOST")
+                           #-sbcl (uiop:getenv "MMORPG_REDIS_HOST")
+                           "127.0.0.1"))
+           (redis-port-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_REDIS_PORT")
+                               #-sbcl (uiop:getenv "MMORPG_REDIS_PORT")
+                               "6379"))
+           (redis-port (or (ignore-errors (parse-integer redis-port-str)) 6379)))
+      (init-storage :backend backend :host redis-host :port redis-port))
     (let* ((socket (usocket:socket-connect nil nil
                                           :protocol :datagram
                                           :local-host host

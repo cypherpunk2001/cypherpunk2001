@@ -414,10 +414,15 @@
              dy 0.0)))
     (setf x (clamp x (world-wall-min-x world) (world-wall-max-x world))
           y (clamp y (world-wall-min-y world) (world-wall-max-y world)))
-    (setf (player-x player) x
-          (player-y player) y
-          (player-dx player) dx
-          (player-dy player) dy)))
+    (let ((old-x (player-x player))
+          (old-y (player-y player)))
+      (setf (player-x player) x
+            (player-y player) y
+            (player-dx player) dx
+            (player-dy player) dy)
+      ;; Tier-2 write: position changes should be marked dirty for batched saves
+      (when (or (/= old-x x) (/= old-y y))
+        (mark-player-dirty (player-id player))))))
 
 (defun player-intent-direction (player)
   ;; Return the intended movement direction for edge transitions.
@@ -824,7 +829,9 @@
               (setf (player-x player) spawn-x
                     (player-y player) spawn-y
                     (player-dx player) 0.0
-                    (player-dy player) 0.0)))
+                    (player-dy player) 0.0)
+              ;; Tier-2 write: zone transition position changes should be marked dirty
+              (mark-player-dirty (player-id player))))
           (reset-frame-intent intent)
           (when had-target
             (set-intent-target intent
@@ -842,6 +849,8 @@
                            (make-npcs player world
                                       :id-source (game-id-source game))))
                  (carried (reposition-transition-npcs carry player world)))
+            ;; Update session zone-id for persistence
+            (update-player-session-zone (player-id player) target-zone-id)
             (ensure-npcs-open-spawn npcs world)
             (let ((merged (merge-npc-vectors npcs carried)))
               (setf (game-npcs game) merged

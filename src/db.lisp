@@ -244,12 +244,14 @@
   (when (and *storage* player)
     (let* ((player-id (player-id player))
            (key (player-key player-id))
-           ;; Use serialize-player from save.lisp (no visuals for DB)
-           (data (serialize-player player :include-visuals nil)))
+           (session (gethash player-id *player-sessions*))
+           (zone-id (and session (player-session-zone-id session)))
+           ;; Use serialize-player from save.lisp (no visuals for DB, include zone-id)
+           (data (serialize-player player :include-visuals nil :zone-id zone-id)))
       ;; Add version to serialized data
       (setf (getf data :version) *player-schema-version*)
       (storage-save *storage* key data)
-      (log-verbose "Saved player ~a to storage" player-id)
+      (log-verbose "Saved player ~a to storage (zone: ~a)" player-id zone-id)
       t)))
 
 (defun db-load-player (player-id)
@@ -304,6 +306,7 @@
 (defstruct player-session
   "Tracks persistence state for a connected player."
   (player nil :type (or null player))
+  (zone-id nil :type (or null symbol))
   (dirty-p nil :type boolean)
   (last-flush 0.0 :type float)
   (tier1-pending nil :type list))
@@ -321,15 +324,23 @@
       (setf (player-session-dirty-p session) t)
       (log-verbose "Marked player ~a as dirty" player-id))))
 
-(defun register-player-session (player)
+(defun register-player-session (player &key (zone-id nil))
   "Register a player session when they login."
   (let ((player-id (player-id player)))
     (setf (gethash player-id *player-sessions*)
           (make-player-session :player player
+                               :zone-id zone-id
                                :dirty-p nil
-                               :last-flush (get-internal-real-time)
+                               :last-flush (float (get-internal-real-time) 1.0)
                                :tier1-pending nil))
-    (log-verbose "Registered session for player ~a" player-id)))
+    (log-verbose "Registered session for player ~a in zone ~a" player-id zone-id)))
+
+(defun update-player-session-zone (player-id zone-id)
+  "Update the zone-id for a player session (called on zone transitions)."
+  (let ((session (gethash player-id *player-sessions*)))
+    (when session
+      (setf (player-session-zone-id session) zone-id)
+      (log-verbose "Updated session zone for player ~a to ~a" player-id zone-id))))
 
 (defun unregister-player-session (player-id)
   "Unregister a player session when they logout."
@@ -353,7 +364,7 @@
                            (* *batch-flush-interval* internal-time-units-per-second))))
            (db-save-player player)
            (setf (player-session-dirty-p session) nil)
-           (setf (player-session-last-flush session) current-time)
+           (setf (player-session-last-flush session) (float current-time 1.0))
            (incf flushed-count))))
      *player-sessions*)
     (when (> flushed-count 0)
@@ -371,7 +382,7 @@
   (let ((session (gethash (player-id player) *player-sessions*)))
     (when session
       (setf (player-session-dirty-p session) nil)
-      (setf (player-session-last-flush session) (get-internal-real-time))))
+      (setf (player-session-last-flush session) (float (get-internal-real-time) 1.0))))
   (log-verbose "Tier-1 immediate save for player ~a" (player-id player))
   t)
 

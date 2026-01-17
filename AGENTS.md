@@ -30,38 +30,6 @@ mmorpg/
 
 ## Current Tasks / TODO
 
-Findings
-
-Critical: Tier‑2 persistence is effectively inactive because sessions are never registered on client connect and dirty flags are only set on death, so routine HP/XP/position/inventory changes won’t be flushed. db.lisp (line 317) db.lisp (line 324) net.lisp (line 150) combat.lisp (line 32)
-
-High: Player serialization persists ephemeral fields (attack/hit timers, attack/follow targets, run stamina) while omitting :zone-id, which conflicts with durable/ephemeral policy and risks stale combat state or lost location once multi‑zone login is added. save.lisp (line 103)
-
-Medium: run-server hardcodes memory storage, so Redis is never used unless the source is edited, despite README guidance on switching backends. net.lisp (line 391) README.md (line 98)
-
-Medium: send-snapshots-parallel uses multiple threads to send on a shared UDP socket without synchronization; usocket thread safety isn’t guaranteed and this can fail under load. net.lisp (line 262)
-
-Low: Tier‑1 “immediate” writes assume durability after SET; with AOF everysec there is still a loss window unless you WAIT/fsync. db.lisp (line 365)
-
-Low: Redis persistence isn’t exercised by CI/smoke (memory backend is the default), so regressions in the Redis path can slip. README.md (line 95)
-
-Questions
-
-Do you want session registration + dirty marking wired into the UDP connect/disconnect path now, or is persistence still staged?
-Recommendation: wire it in now. For a professional MMORPG, persistence can’t be “staged” in the runtime path—durable state needs to be tracked from the moment a client connects, and flushed on disconnect/timeout. It’s low‑risk to integrate and prevents silent data loss.
-
-If you want, I can outline a minimal, safe wiring plan (register session on connect; mark dirty on HP/XP/inventory/position changes; flush on disconnect/timeout and on shutdown).
-
-Should attack/follow targets and combat timers be treated as ephemeral‑only and excluded from DB saves?
-Yes. Attack/follow targets and combat timers should be ephemeral‑only and excluded from DB saves.
-
-Should backend selection move to config/env flags instead of editing run-server?
-Yes. Environment variables for backend type/host/port are the right move so you can switch without code edits.
-
-Notes
-
-UDP flow: client sends intents over UDP, server applies intents + fixed‑tick sim, then broadcasts snapshot plists with events; snapshot serialization is shared across clients with optional parallel sends. net.lisp (line 376)
-Redis: db.lisp implements storage abstraction (memory/redis), schema migrations, tiered write scaffolding, and graceful shutdown flush. db.lisp (line 1)
-Review only; no tests run.
 
 ## Future Tasks / Roadmap
 - [ ] Test Redis persistence end-to-end (login, save, logout, reload)

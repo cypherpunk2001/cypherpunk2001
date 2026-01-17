@@ -100,20 +100,20 @@
                 :do (setf (aref items i) item-id))))
     (%make-equipment :items items)))
 
-(defun serialize-player (player &key (include-visuals nil))
+(defun serialize-player (player &key (include-visuals nil) (zone-id nil))
   ;; Convert player state to plist (server-authoritative state only).
+  ;; Ephemeral fields (attack/hit timers, targets, run stamina) are excluded from DB saves.
+  ;; zone-id should be provided for DB persistence to support multi-zone login.
   (let ((payload (list :id (player-id player)
                        :x (player-x player)
                        :y (player-y player)
                        :hp (player-hp player)
                        :stats (serialize-stat-block (player-stats player))
                        :inventory (serialize-inventory (player-inventory player))
-                       :equipment (serialize-equipment (player-equipment player))
-                       :attack-timer (player-attack-timer player)
-                       :hit-timer (player-hit-timer player)
-                       :run-stamina (player-run-stamina player)
-                       :attack-target-id (player-attack-target-id player)
-                       :follow-target-id (player-follow-target-id player))))
+                       :equipment (serialize-equipment (player-equipment player)))))
+    ;; Add zone-id to durable state (for DB saves)
+    (when zone-id
+      (setf payload (append payload (list :zone-id zone-id))))
     (when include-visuals
       (setf payload (append payload
                             (list :dx (player-dx player)
@@ -129,7 +129,13 @@
                                   :hit-frame (player-hit-frame player)
                                   :hit-facing (player-hit-facing player)
                                   :hit-facing-sign (player-hit-facing-sign player)
-                                  :running (player-running player)))))
+                                  :running (player-running player)
+                                  ;; Ephemeral fields (for network snapshots only, not DB)
+                                  :attack-timer (player-attack-timer player)
+                                  :hit-timer (player-hit-timer player)
+                                  :run-stamina (player-run-stamina player)
+                                  :attack-target-id (player-attack-target-id player)
+                                  :follow-target-id (player-follow-target-id player)))))
     payload))
 
 (defun deserialize-player (plist inventory-size equipment-size)
