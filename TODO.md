@@ -64,14 +64,6 @@ Key design docs:
 
 ## Future Tasks / Roadmap
 
-1. Analyze multi threading server support more in-depthly to gain a contextual understanding of our implementation
-
-2. Document the implementation as-it-is somewhere appropriately in the relevant docs/foo.md file.
-
-3. Ensure Multi threaded mode of the server should provide the same quality of experience and single threaded.
-If multi threaded changes behavior significantly of anything impacting gameplay, including any bugs including but not limited to the following, we need to document it and add it as fixme items to this TODO list:
-Data races / unsynchronized shared state causing random “impossible” world states (negative HP, duplicated/lost items, position snapping, corrupted components) • Lost updates / last-writer-wins where one thread silently overwrites another and actions don’t stick (gold spent but item missing, quest completion undone, inventory changes disappearing) • Check-then-act (TOCTOU) races where invariants fail even though you “checked” (gold drops below zero, slot claimed twice, entity exists-then-doesn’t) • Deadlocks where systems observe entities mid-spawn or mid-despawn and act on incomplete registration/unregistration (entities that “exist” but aren’t fully wired up, or are referenced after teardown)
-
 ---
 
 ### Admin Commands - Tier B & C

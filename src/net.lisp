@@ -159,61 +159,82 @@
 (defparameter *auth-rate-limits* (make-hash-table :test 'equal)
   "Map of IP address -> auth-rate-entry for rate limiting.")
 
+;;; Thread-safe auth rate limit access
+#+sbcl
+(defvar *auth-rate-limits-lock* (sb-thread:make-mutex :name "auth-rate-limits-lock")
+  "Mutex protecting *auth-rate-limits* for thread-safe access.")
+
+(defmacro with-auth-rate-limits-lock (&body body)
+  "Execute BODY with *auth-rate-limits-lock* held for thread-safe rate limit operations."
+  #+sbcl
+  `(sb-thread:with-mutex (*auth-rate-limits-lock*)
+     ,@body)
+  #-sbcl
+  `(progn ,@body))
+
 (defun auth-rate-check (host current-time)
-  "Check if HOST is rate-limited. Returns T if allowed, NIL if blocked."
-  (let ((entry (gethash host *auth-rate-limits*)))
-    (cond
-      ;; No entry - allowed
-      ((null entry) t)
-      ;; Currently locked out
-      ((> (auth-rate-entry-lockout-until entry) current-time)
-       nil)
-      ;; Lockout expired - reset and allow
-      ((> (auth-rate-entry-lockout-until entry) 0.0)
-       (setf (auth-rate-entry-attempts entry) 0
-             (auth-rate-entry-lockout-until entry) 0.0
-             (auth-rate-entry-first-attempt-time entry) 0.0)
-       t)
-      ;; Window expired - reset attempts and allow
-      ((> (- current-time (auth-rate-entry-first-attempt-time entry))
-          *auth-attempt-window*)
-       (setf (auth-rate-entry-attempts entry) 0
-             (auth-rate-entry-first-attempt-time entry) 0.0)
-       t)
-      ;; Under limit - allowed
-      (t t))))
+  "Check if HOST is rate-limited. Returns T if allowed, NIL if blocked.
+   Thread-safe: protects rate limit table from concurrent access."
+  (with-auth-rate-limits-lock
+    (let ((entry (gethash host *auth-rate-limits*)))
+      (cond
+        ;; No entry - allowed
+        ((null entry) t)
+        ;; Currently locked out
+        ((> (auth-rate-entry-lockout-until entry) current-time)
+         nil)
+        ;; Lockout expired - reset and allow
+        ((> (auth-rate-entry-lockout-until entry) 0.0)
+         (setf (auth-rate-entry-attempts entry) 0
+               (auth-rate-entry-lockout-until entry) 0.0
+               (auth-rate-entry-first-attempt-time entry) 0.0)
+         t)
+        ;; Window expired - reset attempts and allow
+        ((> (- current-time (auth-rate-entry-first-attempt-time entry))
+            *auth-attempt-window*)
+         (setf (auth-rate-entry-attempts entry) 0
+               (auth-rate-entry-first-attempt-time entry) 0.0)
+         t)
+        ;; Under limit - allowed
+        (t t)))))
 
 (defun auth-rate-record-failure (host current-time)
-  "Record a failed auth attempt for HOST. Returns T if now locked out."
-  (let ((entry (gethash host *auth-rate-limits*)))
-    (unless entry
-      (setf entry (make-auth-rate-entry)
-            (gethash host *auth-rate-limits*) entry))
-    ;; Reset if window expired
-    (when (and (> (auth-rate-entry-first-attempt-time entry) 0.0)
-               (> (- current-time (auth-rate-entry-first-attempt-time entry))
-                  *auth-attempt-window*))
-      (setf (auth-rate-entry-attempts entry) 0
-            (auth-rate-entry-first-attempt-time entry) 0.0))
-    ;; Record attempt
-    (when (zerop (auth-rate-entry-first-attempt-time entry))
-      (setf (auth-rate-entry-first-attempt-time entry) current-time))
-    (incf (auth-rate-entry-attempts entry))
-    ;; Check if lockout triggered
-    (when (>= (auth-rate-entry-attempts entry) *auth-max-attempts*)
-      (setf (auth-rate-entry-lockout-until entry)
-            (+ current-time *auth-lockout-seconds*))
-      (warn "Rate limit: ~a locked out for ~ds after ~d failed attempts"
-            host (round *auth-lockout-seconds*) (auth-rate-entry-attempts entry))
-      t)))
+  "Record a failed auth attempt for HOST. Returns T if now locked out.
+   Thread-safe: protects rate limit table from concurrent access."
+  (with-auth-rate-limits-lock
+    (let ((entry (gethash host *auth-rate-limits*)))
+      (unless entry
+        (setf entry (make-auth-rate-entry)
+              (gethash host *auth-rate-limits*) entry))
+      ;; Reset if window expired
+      (when (and (> (auth-rate-entry-first-attempt-time entry) 0.0)
+                 (> (- current-time (auth-rate-entry-first-attempt-time entry))
+                    *auth-attempt-window*))
+        (setf (auth-rate-entry-attempts entry) 0
+              (auth-rate-entry-first-attempt-time entry) 0.0))
+      ;; Record attempt
+      (when (zerop (auth-rate-entry-first-attempt-time entry))
+        (setf (auth-rate-entry-first-attempt-time entry) current-time))
+      (incf (auth-rate-entry-attempts entry))
+      ;; Check if lockout triggered
+      (when (>= (auth-rate-entry-attempts entry) *auth-max-attempts*)
+        (setf (auth-rate-entry-lockout-until entry)
+              (+ current-time *auth-lockout-seconds*))
+        (warn "Rate limit: ~a locked out for ~ds after ~d failed attempts"
+              host (round *auth-lockout-seconds*) (auth-rate-entry-attempts entry))
+        t))))
 
 (defun auth-rate-record-success (host)
-  "Clear rate limit tracking for HOST after successful auth."
-  (remhash host *auth-rate-limits*))
+  "Clear rate limit tracking for HOST after successful auth.
+   Thread-safe: protects rate limit table from concurrent access."
+  (with-auth-rate-limits-lock
+    (remhash host *auth-rate-limits*)))
 
 (defun auth-rate-clear-all ()
-  "Clear all rate limit state. For testing only."
-  (clrhash *auth-rate-limits*))
+  "Clear all rate limit state. For testing only.
+   Thread-safe: protects rate limit table from concurrent access."
+  (with-auth-rate-limits-lock
+    (clrhash *auth-rate-limits*)))
 
 ;;;; Auth Replay Protection
 
