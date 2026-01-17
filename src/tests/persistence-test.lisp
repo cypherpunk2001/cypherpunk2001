@@ -41,7 +41,12 @@
                 #'test-death-triggers-immediate-save
                 #'test-level-up-triggers-immediate-save
                 ;; Currency Invariant Tests
-                #'test-coins-never-negative)))
+                #'test-coins-never-negative
+                ;; Schema Migration Tests
+                #'test-migration-v1-to-v2
+                #'test-migration-applies-defaults
+                #'test-lifetime-xp-roundtrip
+                #'test-lifetime-xp-incremented)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -605,6 +610,73 @@
     ;; Count should be 0, not negative
     (let ((remaining (count-inventory-item inventory :coins)))
       (assert->= remaining 0 "Coins went negative"))
+    t))
+
+;;; Schema Migration Tests
+
+(defun test-migration-v1-to-v2 ()
+  "Test: v1 player data migrates correctly to v2 (adds lifetime-xp)."
+  ;; Create v1-style data (no lifetime-xp, version 1)
+  (let ((v1-data '(:version 1
+                   :id 42
+                   :x 100.0
+                   :y 200.0
+                   :hp 10
+                   :stats (:attack (:xp 0 :level 1)
+                           :strength (:xp 0 :level 1)
+                           :defense (:xp 0 :level 1)
+                           :hitpoints (:xp 0 :level 1))
+                   :inventory nil
+                   :equipment nil)))
+    ;; Run migration
+    (let ((migrated (migrate-player-data v1-data)))
+      ;; Verify version updated
+      (assert-equal *player-schema-version* (getf migrated :version) "Version not updated")
+      ;; Verify lifetime-xp added with default 0
+      (assert-equal 0 (getf migrated :lifetime-xp) "lifetime-xp not defaulted to 0")
+      ;; Verify other fields preserved
+      (assert-equal 42 (getf migrated :id) "ID not preserved")
+      (assert-equal 100.0 (getf migrated :x) "X not preserved")
+      (assert-equal 10 (getf migrated :hp) "HP not preserved"))
+    t))
+
+(defun test-migration-applies-defaults ()
+  "Test: Migration applies defaults for missing fields."
+  ;; Create minimal v1 data with missing optional fields
+  (let ((v1-data '(:version 1 :id 1 :x 0.0 :y 0.0 :hp 10)))
+    (let ((migrated (migrate-player-data v1-data)))
+      ;; lifetime-xp should be added
+      (assert-true (member :lifetime-xp migrated) "lifetime-xp key missing")
+      (assert-equal 0 (getf migrated :lifetime-xp) "lifetime-xp not 0")))
+  ;; Test that already-present lifetime-xp is preserved
+  (let ((v2-data '(:version 1 :id 1 :x 0.0 :y 0.0 :hp 10 :lifetime-xp 5000)))
+    (let ((migrated (migrate-player-data v2-data)))
+      ;; Existing value should be preserved (not overwritten with 0)
+      (assert-equal 5000 (getf migrated :lifetime-xp) "Existing lifetime-xp was overwritten")))
+  t)
+
+(defun test-lifetime-xp-roundtrip ()
+  "Test: lifetime-xp survives serialization roundtrip."
+  (let* ((player (make-test-player)))
+    ;; Set a known lifetime-xp value
+    (setf (player-lifetime-xp player) 12345)
+    ;; Serialize and deserialize
+    (let* ((plist (serialize-player player))
+           (restored (deserialize-player plist *inventory-size* (length *equipment-slot-ids*))))
+      ;; Verify lifetime-xp preserved
+      (assert-equal 12345 (player-lifetime-xp restored) "lifetime-xp not preserved"))
+    t))
+
+(defun test-lifetime-xp-incremented ()
+  "Test: lifetime-xp increases when XP is awarded."
+  (let* ((player (make-test-player))
+         (initial-lifetime (player-lifetime-xp player)))
+    ;; Award combat XP
+    (award-combat-xp player 100)
+    ;; Verify lifetime-xp increased by the awarded amount
+    (let ((new-lifetime (player-lifetime-xp player)))
+      (assert-equal (+ initial-lifetime 100) new-lifetime
+                   "lifetime-xp didn't increase by award amount"))
     t))
 
 ;;; Export for REPL usage

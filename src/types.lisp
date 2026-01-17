@@ -8,7 +8,7 @@
   pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
   click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
-  facing-sign class hp
+  facing-sign class hp lifetime-xp
   frame-index frame-timer
   attacking attack-timer attack-hit
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
@@ -296,6 +296,7 @@
                   :facing-sign 1.0
                   :class class
                   :hp max-hp
+                  :lifetime-xp 0
                   :frame-index 0
                   :frame-timer 0.0
                   :attacking nil

@@ -437,7 +437,7 @@ On server start, optionally pre-load frequently accessed data:
 Every record has a `:version` field. Current schema version is tracked in code:
 
 ```lisp
-(defparameter *player-schema-version* 1)
+(defparameter *player-schema-version* 2)  ; v2: added lifetime-xp
 ```
 
 ### Migration Chain
@@ -469,20 +469,17 @@ Migrations are **append-only** and **chained**:
 3. **Migrations must handle missing fields.** Use defaults for new fields.
 4. **Test migrations on production data copies** before deploying.
 
-### Example Migration
+### Example Migration (v1->v2: lifetime-xp)
 
 ```lisp
 (defun migrate-player-v1->v2 (data)
-  "V2 adds achievement system."
-  ;; Add achievements field with empty list if missing
-  (unless (getf data :achievements)
-    (setf (getf data :achievements) nil))
-  ;; Add new settings fields with defaults
-  (let ((settings (getf data :settings)))
-    (unless (getf settings :show-achievements)
-      (setf (getf settings :show-achievements) t)))
+  "v1->v2: Add lifetime-xp field, defaulting to 0."
+  (unless (getf data :lifetime-xp)
+    (setf (getf data :lifetime-xp) 0))
   data)
 ```
+
+This migration is tested in `persistence-test.lisp` with `test-migration-v1-to-v2`.
 
 ## Crash Recovery
 

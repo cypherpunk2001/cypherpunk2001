@@ -42,7 +42,7 @@ Save format (plist structure)
 (:version 2
  :zone-id :overworld
  :id-next 42
- :players ((:id 1 :x 100.0 :y 200.0 :hp 10
+ :players ((:id 1 :x 100.0 :y 200.0 :hp 10 :lifetime-xp 5000
             :stats (:attack (:level 5 :xp 123) ...)
             :inventory (:slots ((:item-id :coins :count 50) ...))
             :equipment (:items (:wooden-sword nil nil ...))
@@ -89,6 +89,7 @@ Key db.md concepts that affect this code:
 - **Write Tiers**: serialize-game-state is used for both tier-2 batched writes and tier-3 logout snapshots
 - **Versioned format**: Already implemented here, migrations defined per db.md spec
 - **HP is durable**: Current HP must be serialized (prevents logout-heal exploit)
+- **lifetime-xp is durable**: Total XP ever earned (v2 schema addition, shows progression)
 
 When implementing the storage layer:
 1. Keep serialization in save.lisp (serialize/deserialize functions)

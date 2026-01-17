@@ -191,6 +191,8 @@
          (hitpoints-xp 0)
          (level-ups nil))
     (when (and stats (> xp 0))
+      ;; Track lifetime XP for progression display
+      (incf (player-lifetime-xp player) xp)
       (multiple-value-setq (attack-xp strength-xp defense-xp hitpoints-xp)
         (split-combat-xp player xp))
       (when (> attack-xp 0)

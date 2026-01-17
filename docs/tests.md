@@ -33,7 +33,7 @@ Should be run as part of the CI pipeline:
 make checkparens && make ci && make test-persistence && make checkdocs && make smoke
 ```
 
-## Test Coverage (25 tests)
+## Test Coverage (29 tests)
 
 ### 1. Persistence Round-Trip Tests
 - **test-player-roundtrip**: Serialize then deserialize = identical durable data
@@ -73,6 +73,12 @@ make checkparens && make ci && make test-persistence && make checkdocs && make s
 
 ### 7. Currency Invariant Tests
 - **test-coins-never-negative**: Coins (gold) count can never go negative
+
+### 8. Schema Migration Tests
+- **test-migration-v1-to-v2**: v1 player data migrates correctly to v2 (adds lifetime-xp)
+- **test-migration-applies-defaults**: Migration applies defaults for missing fields
+- **test-lifetime-xp-roundtrip**: lifetime-xp survives serialization roundtrip
+- **test-lifetime-xp-incremented**: lifetime-xp increases when XP is awarded
 
 ## Test Structure
 

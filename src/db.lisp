@@ -223,13 +223,19 @@
 
 ;;;; Migration System
 
-(defparameter *player-schema-version* 1
+(defparameter *player-schema-version* 2
   "Current player schema version. Increment when changing player format.")
 
-(defparameter *player-migrations* nil
+(defun migrate-player-v1->v2 (data)
+  "v1->v2: Add lifetime-xp field, defaulting to 0."
+  (unless (getf data :lifetime-xp)
+    (setf (getf data :lifetime-xp) 0))
+  data)
+
+(defparameter *player-migrations*
+  '((2 . migrate-player-v1->v2))
   "Alist of (version . migration-function) for player data.
-   Each migration function takes a plist and returns updated plist.
-   Example: ((2 . migrate-player-v1->v2) (3 . migrate-player-v2->v3))")
+   Each migration function takes a plist and returns updated plist.")
 
 (defun migrate-player-data (data)
   "Migrate player data to current schema version.

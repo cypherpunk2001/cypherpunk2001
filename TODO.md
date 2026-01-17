@@ -53,60 +53,13 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-Tests (Strategic, Data-Integrity Focused)
 
-**Goal**: Small, focused test suite (~10 tests) for data integrity only. Skip rendering, input, AI - focus on "can't corrupt player progress."
-
-### Test Suite Plan (Option A)
-
-**File**: `src/tests/persistence-test.lisp`
-**Run**: `make test-persistence` (added to CI after `make ci`)
-**Effort**: 1-2 hours | **Value**: Catches 80% of corruption bugs
-
-#### Tests Implemented ✅ (25 tests total)
-
-1. **Persistence Round-Trip Tests**
-   - [x] Serialize then deserialize = identical data (HP, XP, position, inventory)
-   - [x] Ephemeral fields NOT saved to DB (attack-timer, click-marker-timer, hit-timer)
-   - [x] Durable fields ARE saved (HP, stats, inventory, equipment, position)
-   - [x] Inventory survives serialization
-   - [x] Equipment survives serialization
-   - [x] Stats (XP, levels) survive serialization
-
-2. **XP/Progression Invariant Tests**
-   - [x] XP never decreases on award
-   - [x] Level increases when XP threshold reached
-   - [x] XP at exact level boundary triggers level-up
-
-3. **Inventory/Equipment Invariant Tests**
-   - [x] HP never exceeds max HP
-   - [x] Inventory count never exceeds max slots
-   - [x] Inventory overflow returns leftover count
-   - [x] Stackable items respect max stack size
-   - [x] Equipment modifiers applied on equip
-   - [x] Equipment modifiers removed on unequip
-
-4. **Storage Backend Tests**
-   - [x] Memory backend save/load/delete works correctly
-   - [x] Redis backend save/load works correctly
-   - [x] Redis backend delete works correctly
-   - [x] Redis/Memory backends behave identically (equivalence test)
-
-5. **Zone Transition Tests**
-   - [x] Zone ID survives serialization
-   - [x] Zone ID included in database saves with session
-
-6. **Tier-1 Immediate Save Tests**
-   - [x] Death (HP=0) triggers immediate save
-   - [x] Level-up triggers immediate save
-
-7. **Currency Invariant Tests**
-   - [x] Coins (gold) count never goes negative
-
-8. **Schema Migration Tests** (Future)
-   - [ ] Old saves (v1) load correctly after migration to v2
-   - [ ] Migration applies defaults for new fields
-   - [ ] Multiple version jumps work (v1 → v3 skipping v2)
+8. **Schema Migration Tests** ✅
+   - [x] Old saves (v1) load correctly after migration to v2
+   - [x] Migration applies defaults for new fields (lifetime-xp → 0)
+   - [x] lifetime-xp survives serialization roundtrip
+   - [x] lifetime-xp increments on XP award
+   - [ ] Multiple version jumps work (v1 → v3 skipping v2) - future when v3 added
 
 ### When to Write Tests (Decision Criteria)
 
