@@ -71,20 +71,20 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-(No active tasks)
+phase 1 and 2
+CLIENT_PREDICTION_INTERPOLATION.md ?
 
 ## Future Tasks / Roadmap
+
+
+check over the codebase to see if we need to address these concerns anywhere, also unit tests if need be. thanks.
+- Basic rate limiting + sanity checks (intent frequency, movement bounds)
+  The rate limiting and movement bounds sanity checks are separate security/performance concerns not addressed in that design document. These would prevent:
+  - Clients spamming intents faster than tick rate
+  - Clients claiming to move unreasonable distances
 
 
 ### Admin Commands - Tier B & C
 **Tier B** (requires new infrastructure):
 **Tier C** (nice to have):
 See [docs/admin.md](docs/admin.md) for full spec.
-
-### Networking Polish
-Networking polish that unlocks "MMO feel"
-After ownership, the next noticeable improvement is:
-- Interpolation for remote entities (if not already)
-- Basic rate limiting + sanity checks (intent frequency, movement bounds)
-- Optional later: prediction for local player, but only after everything's stable
-is this the same stuff as discussed in CLIENT_PREDICTION_INTERPOLATION.md ?

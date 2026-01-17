@@ -169,10 +169,48 @@
   ;; Queue of combat events for the UI to process.
   (events nil))
 
+(defstruct (interpolation-snapshot (:constructor %make-interpolation-snapshot))
+  ;; Cached entity positions at a specific timestamp for interpolation.
+  (timestamp 0.0)
+  (entity-positions nil))  ; Hash table: entity-id -> (x y)
+
+(defstruct (interpolation-buffer (:constructor %make-interpolation-buffer))
+  ;; Ring buffer of recent snapshots for smooth entity interpolation.
+  (snapshots nil)    ; Simple-vector of interpolation-snapshot
+  (head 0)           ; Write position (circular)
+  (count 0)          ; Number of valid snapshots
+  (capacity 4))      ; Buffer size
+
+(defstruct (prediction-input (:constructor %make-prediction-input))
+  ;; A single input with sequence number for prediction reconciliation.
+  (sequence 0)
+  (timestamp 0.0)
+  (move-dx 0.0)
+  (move-dy 0.0)
+  (target-x 0.0)
+  (target-y 0.0)
+  (target-active nil))
+
+(defstruct (prediction-state (:constructor %make-prediction-state))
+  ;; Client-side prediction state for reconciliation.
+  (inputs nil)              ; Ring buffer of recent inputs
+  (input-head 0)            ; Write position
+  (input-count 0)           ; Number of valid inputs
+  (input-capacity 64)       ; Buffer size
+  (input-sequence 0)        ; Monotonic counter for outgoing inputs
+  (last-acked-sequence 0)   ; Last sequence server acknowledged
+  (predicted-x 0.0)         ; Client's predicted position
+  (predicted-y 0.0)
+  (misprediction-count 0))  ; Debug counter
+
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
   world player players npcs entities id-source npc-id-source audio ui render assets camera editor
-  combat-events client-intent net-role net-requests net-player-id)
+  combat-events client-intent net-role net-requests net-player-id
+  ;; Interpolation state (client-only, for smooth remote entity movement)
+  interpolation-buffer interpolation-delay client-time last-snapshot-time
+  ;; Prediction state (client-only, optional via *client-prediction-enabled*)
+  prediction-state)
 
 (defun queue-net-request (game request)
   ;; Queue a network request for the client to send.

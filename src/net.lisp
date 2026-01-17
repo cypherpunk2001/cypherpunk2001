@@ -390,12 +390,215 @@
       (log-verbose "Snapshot application error: ~a" e)
       nil)))
 
-(defun send-intent-message (socket intent &key host port)
+;;;; Client-Side Interpolation
+
+(defun make-interpolation-buffer ()
+  ;; Create a new interpolation buffer for smoothing remote entity movement.
+  (%make-interpolation-buffer
+   :snapshots (make-array 4 :initial-element nil)
+   :head 0
+   :count 0
+   :capacity 4))
+
+(defun push-interpolation-snapshot (buffer snapshot)
+  ;; Add a snapshot to the ring buffer.
+  (when buffer
+    (let* ((cap (interpolation-buffer-capacity buffer))
+           (head (interpolation-buffer-head buffer)))
+      (setf (aref (interpolation-buffer-snapshots buffer) head) snapshot
+            (interpolation-buffer-head buffer) (mod (1+ head) cap))
+      (when (< (interpolation-buffer-count buffer) cap)
+        (incf (interpolation-buffer-count buffer))))))
+
+(defun get-interpolation-snapshot-at-index (buffer index)
+  ;; Return snapshot at logical index (0 = oldest valid).
+  (when (and buffer (>= index 0) (< index (interpolation-buffer-count buffer)))
+    (let* ((cap (interpolation-buffer-capacity buffer))
+           (count (interpolation-buffer-count buffer))
+           (head (interpolation-buffer-head buffer))
+           (physical-index (mod (+ (- head count) index) cap)))
+      (aref (interpolation-buffer-snapshots buffer) physical-index))))
+
+(defun lerp (a b alpha)
+  ;; Linear interpolation: a + (b - a) * alpha
+  (+ a (* (- b a) alpha)))
+
+(defun clamp (value min-val max-val)
+  ;; Clamp VALUE between MIN-VAL and MAX-VAL.
+  (max min-val (min max-val value)))
+
+(defun capture-entity-positions (game local-player-id)
+  ;; Capture positions of all entities except the local player for interpolation.
+  (let ((positions (make-hash-table :test 'eql))
+        (players (game-players game))
+        (npcs (game-npcs game)))
+    ;; Capture other players
+    (when players
+      (loop :for player :across players
+            :for id = (player-id player)
+            :when (and (> id 0) (/= id local-player-id))
+            :do (setf (gethash id positions)
+                      (list (player-x player) (player-y player)))))
+    ;; Capture NPCs (use negative IDs to distinguish from players)
+    (when npcs
+      (loop :for npc :across npcs
+            :for id = (npc-id npc)
+            :when (> id 0)
+            :do (setf (gethash (- id) positions)
+                      (list (npc-x npc) (npc-y npc)))))
+    positions))
+
+(defun find-interpolation-bounds (buffer render-time)
+  ;; Find two snapshots to interpolate between for RENDER-TIME.
+  ;; Returns: (values snap-before snap-after alpha) or NIL if insufficient data.
+  (when (and buffer (>= (interpolation-buffer-count buffer) 2))
+    (let ((count (interpolation-buffer-count buffer)))
+      ;; Search for snapshots bracketing render-time
+      (loop :for i :from 0 :below (1- count)
+            :for snap-a = (get-interpolation-snapshot-at-index buffer i)
+            :for snap-b = (get-interpolation-snapshot-at-index buffer (1+ i))
+            :when (and snap-a snap-b)
+            :do (let ((time-a (interpolation-snapshot-timestamp snap-a))
+                      (time-b (interpolation-snapshot-timestamp snap-b)))
+                  (when (and (<= time-a render-time) (<= render-time time-b))
+                    (let ((alpha (if (= time-a time-b)
+                                     0.0
+                                     (/ (- render-time time-a) (- time-b time-a)))))
+                      (return-from find-interpolation-bounds
+                        (values snap-a snap-b (clamp alpha 0.0 1.0)))))))
+      ;; If render-time is outside all snapshots, use boundary snapshots
+      (let* ((oldest (get-interpolation-snapshot-at-index buffer 0))
+             (newest (get-interpolation-snapshot-at-index buffer (1- count))))
+        (cond
+          ((and oldest (< render-time (interpolation-snapshot-timestamp oldest)))
+           (values oldest oldest 0.0))
+          ((and newest (> render-time (interpolation-snapshot-timestamp newest)))
+           (values newest newest 1.0))
+          (t nil))))))
+
+(defun interpolate-remote-entities (game)
+  ;; Interpolate positions for all remote entities (not local player).
+  (let ((buffer (game-interpolation-buffer game))
+        (delay (or (game-interpolation-delay game) *interpolation-delay-seconds*))
+        (current-time (or (game-client-time game) 0.0))
+        (local-id (or (game-net-player-id game) 0)))
+    (when (and buffer (> (interpolation-buffer-count buffer) 1))
+      (let ((render-time (- current-time delay)))
+        (multiple-value-bind (snap-a snap-b alpha)
+            (find-interpolation-bounds buffer render-time)
+          (when (and snap-a snap-b)
+            (let ((pos-a (interpolation-snapshot-entity-positions snap-a))
+                  (pos-b (interpolation-snapshot-entity-positions snap-b)))
+              ;; Interpolate other players
+              (let ((players (game-players game)))
+                (when players
+                  (loop :for player :across players
+                        :for id = (player-id player)
+                        :when (and (> id 0) (/= id local-id))
+                        :do (let ((pa (gethash id pos-a))
+                                  (pb (gethash id pos-b)))
+                              (when (and pa pb)
+                                (setf (player-x player) (lerp (first pa) (first pb) alpha)
+                                      (player-y player) (lerp (second pa) (second pb) alpha)))))))
+              ;; Interpolate NPCs (stored with negative IDs)
+              (let ((npcs (game-npcs game)))
+                (when npcs
+                  (loop :for npc :across npcs
+                        :for id = (npc-id npc)
+                        :when (> id 0)
+                        :do (let ((pa (gethash (- id) pos-a))
+                                  (pb (gethash (- id) pos-b)))
+                              (when (and pa pb)
+                                (setf (npc-x npc) (lerp (first pa) (first pb) alpha)
+                                      (npc-y npc) (lerp (second pa) (second pb) alpha))))))))))))))
+
+;;;; Client-Side Prediction
+
+(defun make-prediction-state (player)
+  ;; Create prediction state initialized to player's current position.
+  (when player
+    (%make-prediction-state
+     :inputs (make-array 64 :initial-element nil)
+     :input-head 0
+     :input-count 0
+     :input-capacity 64
+     :input-sequence 0
+     :last-acked-sequence 0
+     :predicted-x (player-x player)
+     :predicted-y (player-y player)
+     :misprediction-count 0)))
+
+(defun store-prediction-input (pred-state intent timestamp)
+  ;; Store input for potential replay during reconciliation.
+  ;; Returns the sequence number assigned to this input.
+  (when (and pred-state intent)
+    (let* ((seq (prediction-state-input-sequence pred-state))
+           (cap (prediction-state-input-capacity pred-state))
+           (head (prediction-state-input-head pred-state))
+           (input (%make-prediction-input
+                   :sequence seq
+                   :timestamp timestamp
+                   :move-dx (intent-move-dx intent)
+                   :move-dy (intent-move-dy intent)
+                   :target-x (intent-target-x intent)
+                   :target-y (intent-target-y intent)
+                   :target-active (intent-target-active intent))))
+      (setf (aref (prediction-state-inputs pred-state) head) input
+            (prediction-state-input-head pred-state) (mod (1+ head) cap))
+      (when (< (prediction-state-input-count pred-state) cap)
+        (incf (prediction-state-input-count pred-state)))
+      (incf (prediction-state-input-sequence pred-state))
+      seq)))
+
+(defun apply-local-prediction (game intent dt)
+  ;; Apply movement locally for instant feedback (prediction).
+  (when *client-prediction-enabled*
+    (let* ((pred (game-prediction-state game))
+           (player (game-player game))
+           (world (game-world game)))
+      (when (and pred player world intent)
+        ;; Apply movement using same logic as server
+        (let* ((input-dx (intent-move-dx intent))
+               (input-dy (intent-move-dy intent))
+               (speed-mult (if (player-running player) *run-speed-mult* 1.0)))
+          (update-player-position player intent world speed-mult dt)
+          ;; Track predicted position
+          (setf (prediction-state-predicted-x pred) (player-x player)
+                (prediction-state-predicted-y pred) (player-y player)))))))
+
+(defun reconcile-prediction (game server-x server-y server-sequence)
+  ;; Compare server state to prediction and correct if needed.
+  (when *client-prediction-enabled*
+    (let* ((pred (game-prediction-state game))
+           (player (game-player game)))
+      (when (and pred player (> server-sequence (prediction-state-last-acked-sequence pred)))
+        (setf (prediction-state-last-acked-sequence pred) server-sequence)
+        ;; Check prediction error
+        (let ((error-x (abs (- server-x (prediction-state-predicted-x pred))))
+              (error-y (abs (- server-y (prediction-state-predicted-y pred)))))
+          (when (or (> error-x *prediction-error-threshold*)
+                    (> error-y *prediction-error-threshold*))
+            ;; Misprediction detected - snap to server position
+            (incf (prediction-state-misprediction-count pred))
+            (log-verbose "Prediction misprediction #~d: error=~,1f,~,1f"
+                         (prediction-state-misprediction-count pred)
+                         error-x error-y)
+            ;; Reset to server position
+            (setf (player-x player) server-x
+                  (player-y player) server-y
+                  (prediction-state-predicted-x pred) server-x
+                  (prediction-state-predicted-y pred) server-y)))))))
+
+(defun send-intent-message (socket intent &key host port sequence)
   ;; Send the current INTENT as a UDP message.
-  (send-net-message socket
-                    (list :type :intent :payload (intent->plist intent))
-                    :host host
-                    :port port))
+  ;; If SEQUENCE is provided, includes it for server-side tracking.
+  (let ((payload (intent->plist intent)))
+    (when sequence
+      (setf payload (append payload (list :sequence sequence))))
+    (send-net-message socket
+                      (list :type :intent :payload payload)
+                      :host host
+                      :port port)))
 
 (defun handle-server-load (game)
   ;; Load game state on the server and reset transient flags.
@@ -890,14 +1093,31 @@
 
                            ;; Gameplay phase (after authentication)
                            (t
+                            ;; Update client time for interpolation
+                            (when (game-interpolation-buffer game)
+                              (incf (game-client-time game) dt))
+
                             (update-client-input game dt)
                             (dolist (request (drain-net-requests game))
                               (send-net-message socket request))
-                            (send-intent-message socket (game-client-intent game))
+
+                            ;; Handle intent sending (with optional prediction)
+                            (let ((intent (game-client-intent game))
+                                  (pred (game-prediction-state game)))
+                              (if (and *client-prediction-enabled* pred)
+                                  ;; Prediction enabled: store input, apply locally, send with sequence
+                                  (let ((seq (store-prediction-input pred intent (game-client-time game))))
+                                    (apply-local-prediction game intent dt)
+                                    (send-intent-message socket intent :sequence seq))
+                                  ;; No prediction: just send intent normally
+                                  (send-intent-message socket intent)))
                             (clear-requested-chat-message (game-client-intent game))
+
+                            ;; Receive and apply snapshots
                             (let ((latest-state nil)
                                   (latest-events nil)
-                                  (latest-player-id nil))
+                                  (latest-player-id nil)
+                                  (latest-sequence 0))
                               (loop
                                 (multiple-value-bind (message _host _port)
                                     (receive-net-message socket recv-buffer)
@@ -908,7 +1128,8 @@
                                     (:snapshot
                                      (setf latest-state (getf message :state)
                                            latest-player-id (or (getf message :player-id)
-                                                                latest-player-id))
+                                                                latest-player-id)
+                                           latest-sequence (or (getf message :last-sequence) 0))
                                      (dolist (event (getf message :events))
                                        (push event latest-events)))
                                     (t
@@ -916,7 +1137,30 @@
                                                   (getf message :type)))))
                               (when latest-state
                                 (apply-snapshot game latest-state (nreverse latest-events)
-                                                :player-id latest-player-id)))
+                                                :player-id latest-player-id)
+                                ;; Buffer snapshot for interpolation
+                                (when (game-interpolation-buffer game)
+                                  (let* ((buffer (game-interpolation-buffer game))
+                                         (local-id (or (game-net-player-id game) 0))
+                                         (positions (capture-entity-positions game local-id))
+                                         (snapshot (%make-interpolation-snapshot
+                                                    :timestamp (game-client-time game)
+                                                    :entity-positions positions)))
+                                    (push-interpolation-snapshot buffer snapshot)
+                                    (setf (game-last-snapshot-time game) (game-client-time game))))
+                                ;; Reconcile prediction if enabled
+                                (when (and *client-prediction-enabled*
+                                           (game-prediction-state game)
+                                           (> latest-sequence 0))
+                                  (let ((player (game-player game)))
+                                    (when player
+                                      (reconcile-prediction game
+                                                           (player-x player)
+                                                           (player-y player)
+                                                           latest-sequence))))))
+
+                            ;; Interpolate remote entities before drawing
+                            (interpolate-remote-entities game)
                             (process-combat-events game)
                             (draw-game game))))))
           (shutdown-game game)

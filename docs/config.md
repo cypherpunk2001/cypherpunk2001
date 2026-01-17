@@ -12,6 +12,7 @@ Why we do it this way
 What lives here
 - Window, camera, input, and debug flags (collision overlay + NPC AI logs).
 - Fixed simulation timing (tick length and max catch-up steps).
+- Interpolation and prediction settings (delay, toggle, error threshold).
 - UDP defaults for the initial client/server split (host, port, buffer size).
 - Player stat defaults, XP tuning (including hitpoints share), inventory sizing, grid layout, and equipment slot order.
 - Click marker sizing, duration, thickness, and base colors for left/right click feedback.

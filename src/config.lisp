@@ -18,6 +18,11 @@
 (defparameter *auto-walk-enabled* t) ;; When true, WASD toggles auto-walk direction.
 (defparameter *editor-start-enabled* nil) ;; When true, editor mode starts enabled.
 
+;;; Interpolation & Prediction - Read during client loop
+(defparameter *interpolation-delay-seconds* 0.1) ;; Render delay for interpolation. Higher = smoother, more perceived lag.
+(defparameter *client-prediction-enabled* nil) ;; Enable client-side prediction for local player. Toggle via SLIME for testing.
+(defparameter *prediction-error-threshold* 5.0) ;; Max prediction error in pixels before correction.
+
 ;;; Simulation Timing - Affects game loop behavior
 (defparameter *sim-tick-seconds* (/ 1.0 60.0)) ;; Fixed simulation tick length in seconds.
 (defparameter *sim-max-steps-per-frame* 5) ;; Max sim ticks per frame to avoid spiral of death.

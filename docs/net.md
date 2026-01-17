@@ -41,6 +41,34 @@ Security: Input Validation
 - Malformed packet handling: Invalid plists or types are dropped gracefully without crashing.
 - See `scripts/test-security.lisp` for the security test suite (7 tests).
 
+Client-Side Interpolation
+- Remote entities (other players, NPCs) are rendered slightly in the past for smooth movement.
+- Interpolation is automatic and always-on (no toggle needed).
+- Configuration:
+  - `*interpolation-delay-seconds*` - Render delay (default 0.1 = 100ms). Higher = smoother, more perceived lag.
+- Key functions:
+  - `make-interpolation-buffer` - Create ring buffer for snapshot history
+  - `capture-entity-positions` - Capture entity positions after snapshot applied
+  - `find-interpolation-bounds` - Find two snapshots bracketing render time
+  - `interpolate-remote-entities` - Apply lerped positions before drawing
+- Zone transitions clear the interpolation buffer (stale positions are invalid).
+
+Client-Side Prediction (Optional)
+- Local player movement can be predicted client-side for instant feedback.
+- Controlled by `*client-prediction-enabled*` flag (default nil = disabled).
+- Toggle via SLIME: `(setf *client-prediction-enabled* t)` takes effect immediately.
+- When enabled:
+  - Client applies local movement immediately using same physics as server
+  - Intent messages include `:sequence` number for tracking
+  - Server snapshots include `:last-sequence` for reconciliation
+  - Mispredictions beyond `*prediction-error-threshold*` (default 5.0 pixels) snap to server position
+- Key functions:
+  - `make-prediction-state` - Create prediction state for local player
+  - `store-prediction-input` - Buffer input with sequence number
+  - `apply-local-prediction` - Apply movement locally for instant feedback
+  - `reconcile-prediction` - Compare server state to prediction, correct if needed
+- Mispredictions are logged when `*verbose*` is enabled.
+
 Performance & Scaling
 - Current server runs ONE zone (tested smooth with hundreds of entities on client).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).

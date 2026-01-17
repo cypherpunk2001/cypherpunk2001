@@ -32,7 +32,15 @@
                               :client-intent client-intent
                               :net-role :local
                               :net-requests nil
-                              :net-player-id (player-id player))))
+                              :net-player-id (player-id player)
+                              ;; Interpolation state (for smooth remote entity movement)
+                              :interpolation-buffer (make-interpolation-buffer)
+                              :interpolation-delay *interpolation-delay-seconds*
+                              :client-time 0.0
+                              :last-snapshot-time 0.0
+                              ;; Prediction state (optional, controlled by *client-prediction-enabled*)
+                              :prediction-state (when *client-prediction-enabled*
+                                                  (make-prediction-state player)))))
         (log-verbose "Client game initialized: player-id=~d npcs=~d zone=~a"
                      (player-id player)
                      (length npcs)
@@ -288,9 +296,14 @@
   ;; Sync client-facing state after a zone change.
   (let ((ui (game-ui game))
         (editor (game-editor game))
-        (world (game-world game)))
+        (world (game-world game))
+        (buffer (game-interpolation-buffer game)))
     (ui-trigger-loading ui)
-    (editor-sync-zone editor world)))
+    (editor-sync-zone editor world)
+    ;; Clear interpolation buffer - stale positions are invalid after zone change
+    (when buffer
+      (setf (interpolation-buffer-count buffer) 0
+            (interpolation-buffer-head buffer) 0))))
 
 (defun update-sim (game dt &optional (allow-player-control t))
   ;; Run one fixed-tick simulation step. Returns true on zone transition.
