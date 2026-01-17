@@ -1,0 +1,14 @@
+[Unit]
+Description=MMORPG Redis Backup Timer
+Requires=mmorpg-backup.service
+
+[Timer]
+# Run hourly, 5 minutes past the hour (avoid :00 congestion)
+OnCalendar=*:05
+Persistent=true
+
+# Randomize by up to 5 minutes to avoid thundering herd if multiple servers
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

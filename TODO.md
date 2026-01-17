@@ -74,12 +74,12 @@ Key design docs:
 - [x] Replace direct Redis SET with temp key + atomic RENAME
 - **Impact**: Crash during save won't corrupt existing data
 
-#### Phase 2: Backup Snapshots (Recovery) - MEDIUM PRIORITY
-- [ ] Add periodic backup function (every 5 minutes)
-- [ ] Copy player blobs to timestamped keys: `backup:<timestamp>:<id>`
+#### Phase 2: Backup Snapshots (Recovery) - COMPLETE ✓
+- [x] Systemd timer for hourly Redis backups (deploy/mmorpg-backup.*)
+- [x] Timestamped backups in /var/mmorpg/db/backups/
+- [x] Automatic rotation (keeps 7 days of hourly backups by default)
+- [x] DevOps instructions in README.md
 - **Impact**: Can restore from backup if player data corrupted
-
-**NOTE** Should this just be a db dump from redis? If so, I can just have devops automate this. Or is should be a save file plist from the save.lisp type of thing I am confused? Let me know before doing.
 
 #### Phase 3: Admin Commands (Testing) - LOW PRIORITY
 - [ ] Add REPL helpers: `admin-wipe-character`, `admin-grant-item`, `admin-print-save`
@@ -98,3 +98,7 @@ Optional later: prediction for local player, but only after everything’s stabl
 
 ----------------------------------
 - [ ] Test unauthenticated connection intent handling (acceptance criteria #5: verify server ignores intents from unauthenticated clients)
+
+------------------------------
+
+- I'm wondering about player connectivity, and general use of things like "retry" in the codebase. Sometimes in my life as a webdev certain ops were more professional if they used a simple retry mechanism. I know we use UDP already which is pretty forgiving, but if there is any sections of the codebase that might benefit from a simple retry once in a while, let's add that because it seems like it is a cheap way to make the game more professional.

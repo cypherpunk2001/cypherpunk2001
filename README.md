@@ -170,3 +170,79 @@ Client REPL:
 Test env overrides:
 - `MMORPG_NET_TEST_PORT` override UDP port (default 1337).
 - `MMORPG_NET_TEST_SECONDS` override UDP server duration in CI.
+
+## DevOps: Automated Backups
+
+Redis backups are handled via systemd timer. Backups are stored in `/var/mmorpg/db/backups/` with timestamps and automatic rotation.
+
+### Install Backup System
+
+```bash
+# Copy script and make executable
+sudo cp deploy/mmorpg-backup.sh /usr/local/bin/
+sudo chmod +x /usr/local/bin/mmorpg-backup.sh
+
+# Create backup directory
+sudo mkdir -p /var/mmorpg/db/backups
+
+# Install systemd units
+sudo cp deploy/mmorpg-backup.service /etc/systemd/system/
+sudo cp deploy/mmorpg-backup.timer /etc/systemd/system/
+
+# Enable and start the timer
+sudo systemctl daemon-reload
+sudo systemctl enable mmorpg-backup.timer
+sudo systemctl start mmorpg-backup.timer
+
+# Verify timer is active
+systemctl list-timers | grep mmorpg
+```
+
+### Backup Configuration
+
+Environment variables (set in `/etc/systemd/system/mmorpg-backup.service`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MMORPG_BACKUP_DIR` | `/var/mmorpg/db/backups` | Where backups are stored |
+| `MMORPG_REDIS_HOST` | `127.0.0.1` | Redis host |
+| `MMORPG_REDIS_PORT` | `6379` | Redis port |
+| `MMORPG_REDIS_DATA_DIR` | `/var/lib/valkey` | Where Redis stores dump.rdb |
+| `MMORPG_KEEP_BACKUPS` | `168` | Number of backups to keep (168 = 7 days hourly) |
+
+### Manual Backup
+
+```bash
+# Run backup immediately
+sudo systemctl start mmorpg-backup.service
+
+# Check backup status
+sudo journalctl -u mmorpg-backup.service -n 20
+
+# List backups
+ls -lh /var/mmorpg/db/backups/
+```
+
+### Restore from Backup
+
+```bash
+# Stop game server first!
+sudo systemctl stop mmorpg-server  # or however you run it
+
+# Stop Redis
+sudo systemctl stop valkey
+
+# Replace dump.rdb with backup
+sudo cp /var/mmorpg/db/backups/dump-YYYYMMDD-HHMMSS.rdb /var/lib/valkey/dump.rdb
+sudo chown valkey:valkey /var/lib/valkey/dump.rdb
+
+# Start Redis (will load the backup)
+sudo systemctl start valkey
+
+# Start game server
+sudo systemctl start mmorpg-server
+```
+
+### Performance Note
+
+Redis `BGSAVE` runs in a forked child process - the main Redis continues serving requests without interruption. For our game scale, backup overhead is negligible.

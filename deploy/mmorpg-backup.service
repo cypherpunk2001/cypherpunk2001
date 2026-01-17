@@ -1,0 +1,18 @@
+[Unit]
+Description=MMORPG Redis Backup
+After=valkey.service redis.service
+Wants=valkey.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mmorpg-backup.sh
+
+# Environment overrides (uncomment and modify as needed)
+# Environment=MMORPG_BACKUP_DIR=/var/mmorpg/db/backups
+# Environment=MMORPG_REDIS_HOST=127.0.0.1
+# Environment=MMORPG_REDIS_PORT=6379
+# Environment=MMORPG_REDIS_DATA_DIR=/var/lib/valkey
+# Environment=MMORPG_KEEP_BACKUPS=168
+
+[Install]
+WantedBy=multi-user.target
