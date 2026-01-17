@@ -134,8 +134,31 @@
     (:walk-frame-time . *walk-frame-time*)
     (:attack-frame-time . *attack-frame-time*)))
 
+(defun validate-item-archetype-plist (id plist)
+  ;; Validate item archetype plist has required fields with correct types.
+  ;; SIDE EFFECT: Raises error if validation fails.
+  (let ((name (getf plist :name)))
+    (when (and name (not (stringp name)))
+      (error "Item ~a :name must be string, got ~a" id (type-of name))))
+  (let ((desc (getf plist :description)))
+    (when (and desc (not (stringp desc)))
+      (error "Item ~a :description must be string, got ~a" id (type-of desc))))
+  (let ((stack-size (getf plist :stack-size)))
+    (when (and stack-size (not (integerp stack-size)))
+      (error "Item ~a :stack-size must be integer, got ~a" id (type-of stack-size)))
+    (when (and stack-size (< stack-size 1))
+      (error "Item ~a :stack-size must be >= 1, got ~a" id stack-size)))
+  (let ((value (getf plist :value)))
+    (when (and value (not (numberp value)))
+      (error "Item ~a :value must be number, got ~a" id (type-of value))))
+  (let ((equip-slot (getf plist :equip-slot)))
+    (when (and equip-slot (not (keywordp equip-slot)))
+      (error "Item ~a :equip-slot must be keyword, got ~a" id (type-of equip-slot))))
+  t)
+
 (defun item-archetype-from-plist (id plist)
   ;; Build an item-archetype from plist values.
+  (validate-item-archetype-plist id plist)
   (let ((name (or (getf plist :name)
                   (string-capitalize (string id))))
         (description (getf plist :description nil))
@@ -159,8 +182,26 @@
                           :defense defense
                           :hitpoints hitpoints)))
 
+(defun validate-object-archetype-plist (id plist)
+  ;; Validate object archetype plist has required fields with correct types.
+  ;; SIDE EFFECT: Raises error if validation fails.
+  (let ((name (getf plist :name)))
+    (when (and name (not (stringp name)))
+      (error "Object ~a :name must be string, got ~a" id (type-of name))))
+  (let ((item-id (getf plist :item-id)))
+    (when (and item-id (not (keywordp item-id)))
+      (error "Object ~a :item-id must be keyword, got ~a" id (type-of item-id))))
+  (let ((count (getf plist :count)))
+    (when (and count (not (numberp count)))
+      (error "Object ~a :count must be number, got ~a" id (type-of count))))
+  (let ((respawn (getf plist :respawn-seconds)))
+    (when (and respawn (not (numberp respawn)))
+      (error "Object ~a :respawn-seconds must be number, got ~a" id (type-of respawn))))
+  t)
+
 (defun object-archetype-from-plist (id plist)
   ;; Build an object-archetype from plist values.
+  (validate-object-archetype-plist id plist)
   (let* ((name (or (getf plist :name)
                    (string-capitalize (string id))))
          (description (getf plist :description nil))
@@ -246,8 +287,24 @@
                       :min-count (max 0 min-count)
                       :max-count (max min-count max-count))))
 
+(defun validate-loot-table-plist (id plist)
+  ;; Validate loot table plist has required fields with correct types.
+  ;; SIDE EFFECT: Raises error if validation fails.
+  (let ((rolls (getf plist :rolls)))
+    (when (and rolls (not (integerp rolls)))
+      (error "Loot table ~a :rolls must be integer, got ~a" id (type-of rolls)))
+    (when (and rolls (< rolls 0))
+      (error "Loot table ~a :rolls must be >= 0, got ~a" id rolls)))
+  (let ((entries (getf plist :entries)))
+    (unless entries
+      (error "Loot table ~a missing :entries" id))
+    (unless (listp entries)
+      (error "Loot table ~a :entries must be list, got ~a" id (type-of entries))))
+  t)
+
 (defun loot-table-from-plist (id plist)
   ;; Build a loot-table from plist values.
+  (validate-loot-table-plist id plist)
   (let* ((rolls (getf plist :rolls 1))
          (entries (getf plist :entries))
          (parsed (loop :for entry :in entries

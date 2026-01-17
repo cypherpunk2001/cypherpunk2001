@@ -168,6 +168,7 @@
 ;;; Asset Paths - Textures/audio loaded once at startup
 ;;; Why: Assets are loaded into GPU/audio memory once. Changing paths doesn't
 ;;; reload already-loaded resources. Requires restart to load different files.
+;; FIXME: Asset paths are currently hardcoded. Future: move to data-driven asset manifest system.
 (defparameter *player-sprite-dir* "../assets/1 Characters/3") ;; Directory that holds player sprite sheets.
 (defparameter *npc-sprite-dir* "../assets/3 Dungeon Enemies/1") ;; Directory that holds NPC sprite sheets.
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other") ;; Directory that holds blood effect sprites.
