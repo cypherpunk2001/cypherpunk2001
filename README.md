@@ -78,12 +78,12 @@ MMORPG_DB_BACKEND=memory make server
 
 ## Tests
 ```shell
-make checkparens        # Balanced parentheses in .lisp files
-make ci                 # Cold compile + UDP handshake (no GPU)
-make test-persistence   # Data integrity tests
-make test-security      # Security tests (input validation, exploits)
+make checkparens        # Syntax error testing
+make ci                 # Compile-time error testing, UDP handshake testing
+make test-persistence   # Data integrity unit testing
+make test-security      # Security related unit testing
 make checkdocs          # Verify docs exist for each src file
-make smoke              # Full client/server with window (2s)
+make smoke              # Runtime error testing
 ```
 
 Test env overrides:
