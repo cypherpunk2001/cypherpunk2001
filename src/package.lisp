@@ -5,6 +5,10 @@
            #:run-server
            #:run-client
            #:run-local
+           ;; Config vars (for scripts)
+           #:*verbose*
+           #:*verbose-coordinates*
+           #:*delta-compression-enabled*
            ;; Admin commands
            #:admin-print-save
            #:admin-list-players

@@ -461,10 +461,55 @@ After broadcasting snapshot to all clients:
 #### 2.6 Full Resync Triggers
 
 Send full snapshot (not delta) when:
-- Client connects or reconnects
-- Client changes zones
-- Client's `last-acked-seq` is too old (> 60 snapshots behind)
-- Server detects desync (via checksum or explicit request)
+- Client connects or reconnects (`needs-full-resync = t` on new clients)
+- Client's `last-acked-seq` is null (never sent ack)
+- Client's `last-acked-seq` is too old (> `*max-delta-age*` snapshots behind)
+
+**Implementation:** `client-needs-full-resync-p` in `net.lisp` checks these conditions.
+
+#### 2.6.1 Client Partitioning (Implementation Detail)
+
+To maintain the "encode once, send to many" optimization, the server partitions
+clients into two groups each frame:
+
+```lisp
+(defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
+  ;; Partition clients
+  (let ((resync-clients nil)   ; Need full snapshot
+        (delta-clients nil))   ; Can receive delta
+    ;; ... partition by needs-full-resync-p ...
+
+    ;; Send full snapshot to resync group (encode once)
+    (when resync-clients
+      (send-snapshots-parallel socket resync-clients full-state event-plists 1)
+      (dolist (c resync-clients)
+        (setf (net-client-needs-full-resync c) nil)))
+
+    ;; Send delta to synced group (encode once)
+    (when delta-clients
+      (send-snapshots-parallel socket delta-clients delta-state event-plists 1))
+
+    ;; Clear dirty flags after ALL sends
+    (clear-snapshot-dirty-flags game)))
+```
+
+**Optimization:** Most frames, all clients are synced → only delta encoding needed.
+New clients trigger one additional full encoding until they ack.
+
+#### 2.6.2 Client-Side New Player Handling
+
+When a delta snapshot contains a player ID the client doesn't have yet
+(e.g., a new player joined), the client ADDS them to its player array:
+
+```lisp
+;; In deserialize-game-state-delta:
+(if existing
+    (apply-player-plist existing plist)  ; Update existing
+    (push (deserialize-player plist ...) new-players))  ; Create new
+;; Then expand game-players array with new-players
+```
+
+This ensures new players appear on synced clients even via delta updates.
 
 #### 2.7 Estimated Savings
 

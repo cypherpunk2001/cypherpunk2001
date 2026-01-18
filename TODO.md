@@ -68,21 +68,21 @@ See `docs/net.md` for full spec.
 | Prong | Status | Notes |
 |-------|--------|-------|
 | **Prong 1: Compact Serialization** | ✅ DONE | Vectors instead of plists, ~64 bytes/player |
-| **Prong 2: Delta Compression** | ❌ REVERTED | Bug: players disappear when idle, new clients get empty arrays. Needs `needs-full-resync` logic. |
+| **Prong 2: Delta Compression** | ✅ FIXED | Client partitioning: full to new, delta to synced. New players added via delta. |
 | **Prong 3: UDP Fragmentation** | ✅ DONE | Split large snapshots into numbered chunks |
 | **Prong 4: zlib Compression** | ⏸️ DEFERRED | Not needed yet |
 
 **Stress Test Results (2026-01-17):**
 - Prong 1 + Prong 3 only (no delta): **419 clients stable**, players visible and moving
-- Previous test with Prong 2 delta: players disappeared at ~50 clients
+- Previous Prong 2 bug: players disappeared at ~50 clients (fixed)
 
-**Next:** Fix Prong 2 properly - send full snapshot on first connect (`needs-full-resync=t`), then deltas.
+**Next:** Stress test Prong 2 fix to verify stability at high client counts.
 
 ## Future Tasks / Roadmap
 
 **Potential optimizations to investigate:**
 
-- Delta compression for snapshots - FIX PRONG 2 (send full snapshot first, then deltas)
+- Entity removal tracking in delta (`:removed-ids` for logged-out players)
 
 - Entity culling in snapshots (skip distant players)
 - Batch intent processing

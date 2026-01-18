@@ -986,6 +986,56 @@
             (values (getf parsed :state)
                     (getf parsed :events))))))))
 
+(defun client-needs-full-resync-p (client current-seq)
+  "Return T if CLIENT needs a full snapshot instead of delta.
+   Checks: needs-full-resync flag, missing ack, or ack too old."
+  (or (net-client-needs-full-resync client)
+      (null (net-client-last-acked-seq client))
+      (> (- current-seq (net-client-last-acked-seq client)) *max-delta-age*)))
+
+(defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
+  "Send snapshots to clients with delta compression (Prong 2).
+
+   Clients needing resync get full compact snapshot.
+   Synced clients get delta snapshot (only dirty entities).
+
+   This maintains the 'encode once, send to many' optimization by
+   partitioning clients into two groups and encoding once per group."
+  (let ((resync-clients nil)
+        (delta-clients nil))
+    ;; Partition authenticated clients
+    (dolist (c clients)
+      (when (and (net-client-authenticated-p c)
+                 (net-client-player c))
+        (if (client-needs-full-resync-p c current-seq)
+            (push c resync-clients)
+            (push c delta-clients))))
+
+    ;; Send full snapshot to clients needing resync
+    (when resync-clients
+      (let ((full-state (serialize-game-state-compact game)))
+        ;; Add sequence number for client to ack
+        (setf (getf full-state :seq) current-seq)
+        (log-verbose "Sending full resync to ~d clients (seq ~d)"
+                     (length resync-clients) current-seq)
+        (send-snapshots-parallel socket resync-clients full-state event-plists 1)
+        ;; Mark these clients as no longer needing resync
+        (dolist (c resync-clients)
+          (setf (net-client-needs-full-resync c) nil))))
+
+    ;; Send delta snapshot to synced clients
+    (when delta-clients
+      (let ((delta-state (serialize-game-state-delta game current-seq nil)))
+        (log-verbose "Sending delta to ~d clients (seq ~d, ~d players, ~d npcs)"
+                     (length delta-clients) current-seq
+                     (length (getf delta-state :changed-players))
+                     (length (getf delta-state :changed-npcs)))
+        (send-snapshots-parallel socket delta-clients delta-state event-plists 1)))
+
+    ;; Clear dirty flags after ALL sends complete
+    (when (or resync-clients delta-clients)
+      (clear-snapshot-dirty-flags game))))
+
 (defun send-snapshots-parallel (socket clients state event-plists worker-threads)
   ;; Send snapshots to clients.
   ;; Only sends to authenticated clients with a player.
@@ -1031,12 +1081,13 @@
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
-  ;; Returns zone-id on success, NIL on failure (non-fatal).
+  ;; Returns (values zone-id delta-positions) where delta-positions is
+  ;; non-nil for delta snapshots (used for interpolation buffer fix).
   (handler-case
       (progn
         (when player-id
           (setf (game-net-player-id game) player-id))
-        (multiple-value-bind (zone-id zone-changed)
+        (multiple-value-bind (zone-id zone-changed delta-positions)
             (apply-game-state game state :apply-zone t)
           (when zone-changed
             (log-verbose "Client zone transitioned to ~a" zone-id)
@@ -1050,11 +1101,11 @@
             (when player
               (mark-player-hud-stats-dirty player)
               (mark-player-inventory-dirty player)))
-          zone-id))
+          (values zone-id delta-positions)))
     (error (e)
       (warn "Failed to apply snapshot: ~a" e)
       (log-verbose "Snapshot application error: ~a" e)
-      nil)))
+      (values nil nil))))
 
 ;;;; Client-Side Interpolation
 
@@ -1093,8 +1144,12 @@
   ;; Clamp VALUE between MIN-VAL and MAX-VAL.
   (max min-val (min max-val value)))
 
-(defun capture-entity-positions (game local-player-id)
-  ;; Capture positions of all entities except the local player for interpolation.
+(defun capture-entity-positions (game local-player-id
+                                  &key delta-positions previous-positions)
+  ;; Capture positions of all entities except local player for interpolation.
+  ;; For delta snapshots, pass DELTA-POSITIONS (hash table from deserialize)
+  ;; and PREVIOUS-POSITIONS (from last interpolation snapshot) to avoid
+  ;; capturing stale interpolated positions for entities not in the delta.
   (let ((positions (make-hash-table :test 'eql))
         (players (game-players game))
         (npcs (game-npcs game)))
@@ -1103,15 +1158,38 @@
       (loop :for player :across players
             :for id = (player-id player)
             :when (and (> id 0) (/= id local-player-id))
-            :do (setf (gethash id positions)
-                      (list (player-x player) (player-y player)))))
+            :do (cond
+                  ;; Delta mode: entity was in delta, use its snapshot position
+                  ((and delta-positions (gethash id delta-positions))
+                   (setf (gethash id positions) (gethash id delta-positions)))
+                  ;; Delta mode: entity NOT in delta, copy from previous snapshot
+                  ((and delta-positions previous-positions
+                        (gethash id previous-positions))
+                   (setf (gethash id positions) (gethash id previous-positions)))
+                  ;; Full snapshot mode: capture current position
+                  ((not delta-positions)
+                   (setf (gethash id positions)
+                         (list (player-x player) (player-y player)))))))
     ;; Capture NPCs (use negative IDs to distinguish from players)
     (when npcs
       (loop :for npc :across npcs
             :for id = (npc-id npc)
+            :for neg-id = (- id)
             :when (> id 0)
-            :do (setf (gethash (- id) positions)
-                      (list (npc-x npc) (npc-y npc)))))
+            :do (cond
+                  ;; Delta mode: NPC was in delta
+                  ((and delta-positions (gethash neg-id delta-positions))
+                   (setf (gethash neg-id positions)
+                         (gethash neg-id delta-positions)))
+                  ;; Delta mode: NPC NOT in delta, copy from previous
+                  ((and delta-positions previous-positions
+                        (gethash neg-id previous-positions))
+                   (setf (gethash neg-id positions)
+                         (gethash neg-id previous-positions)))
+                  ;; Full snapshot mode: capture current
+                  ((not delta-positions)
+                   (setf (gethash neg-id positions)
+                         (list (npc-x npc) (npc-y npc)))))))
     positions))
 
 (defun find-interpolation-bounds (buffer render-time)
@@ -1769,22 +1847,22 @@
                            (setf last-flush-time elapsed))
                          ;; 3c. Check for timed-out clients (free sessions after 30s inactivity)
                          (setf clients (check-client-timeouts clients elapsed game))
-                         ;; 4. Send snapshots to all clients (serialize once, send N times)
-                         ;; OPTIMIZATION: Serialization happens once and is shared across clients.
-                         ;; For 500 clients this is much better than 500 serializations.
-                         ;; DELTA COMPRESSION: Only send dirty entities after initial sync.
-                         ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
+                         ;; 4. Send snapshots to all clients
+                         ;; Toggle between Prong 1 (full) and Prong 2 (delta) via *delta-compression-enabled*
                          ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
                          (when clients
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
-                                      ;; Use compact serialization (Prong 1) - full snapshots
-                                      ;; TODO: Implement proper delta (Prong 2) with needs-full-resync
-                                      ;; See docs/net.md "4-Prong Approach"
-                                      (state (serialize-game-state-compact game)))
-                                 (send-snapshots-parallel socket clients state event-plists
-                                                          worker-threads))
+                                      (current-seq (incf snapshot-seq)))
+                                 (if *delta-compression-enabled*
+                                     ;; Prong 2: Delta compression - dirty entities only
+                                     (broadcast-snapshots-with-delta socket clients game
+                                                                     current-seq event-plists)
+                                     ;; Prong 1: Full snapshots - all entities every frame
+                                     (let ((state (serialize-game-state-compact game)))
+                                       (send-snapshots-parallel socket clients state event-plists
+                                                                worker-threads))))
                              (error (e)
                                (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
                                (log-verbose "Snapshot error, skipping frame: ~a" e))))
@@ -1993,28 +2071,44 @@
                               (when latest-snapshot-seq
                                 (setf last-snapshot-seq latest-snapshot-seq))
                               (when latest-state
-                                (apply-snapshot game latest-state (nreverse latest-events)
-                                                :player-id latest-player-id)
-                                ;; Buffer snapshot for interpolation
-                                (when (game-interpolation-buffer game)
-                                  (let* ((buffer (game-interpolation-buffer game))
-                                         (local-id (or (game-net-player-id game) 0))
-                                         (positions (capture-entity-positions game local-id))
-                                         (snapshot (%make-interpolation-snapshot
-                                                    :timestamp (game-client-time game)
-                                                    :entity-positions positions)))
-                                    (push-interpolation-snapshot buffer snapshot)
-                                    (setf (game-last-snapshot-time game) (game-client-time game))))
-                                ;; Reconcile prediction if enabled
-                                (when (and *client-prediction-enabled*
-                                           (game-prediction-state game)
-                                           (> latest-sequence 0))
-                                  (let ((player (game-player game)))
-                                    (when player
-                                      (reconcile-prediction game
-                                                           (player-x player)
-                                                           (player-y player)
-                                                           latest-sequence))))))
+                                (multiple-value-bind (zone-id delta-positions)
+                                    (apply-snapshot game latest-state (nreverse latest-events)
+                                                    :player-id latest-player-id)
+                                  (declare (ignore zone-id))
+                                  ;; Buffer snapshot for interpolation
+                                  (when (game-interpolation-buffer game)
+                                    (let* ((buffer (game-interpolation-buffer game))
+                                           (local-id (or (game-net-player-id game) 0))
+                                           ;; For deltas, get previous positions to avoid
+                                           ;; capturing stale interpolated values
+                                           (prev-snap
+                                            (when (> (interpolation-buffer-count buffer) 0)
+                                              (get-interpolation-snapshot-at-index
+                                               buffer
+                                               (1- (interpolation-buffer-count buffer)))))
+                                           (prev-pos
+                                            (when prev-snap
+                                              (interpolation-snapshot-entity-positions prev-snap)))
+                                           (positions
+                                            (capture-entity-positions game local-id
+                                                                      :delta-positions delta-positions
+                                                                      :previous-positions prev-pos))
+                                           (snapshot (%make-interpolation-snapshot
+                                                      :timestamp (game-client-time game)
+                                                      :entity-positions positions)))
+                                      (push-interpolation-snapshot buffer snapshot)
+                                      (setf (game-last-snapshot-time game)
+                                            (game-client-time game))))
+                                  ;; Reconcile prediction if enabled
+                                  (when (and *client-prediction-enabled*
+                                             (game-prediction-state game)
+                                             (> latest-sequence 0))
+                                    (let ((player (game-player game)))
+                                      (when player
+                                        (reconcile-prediction game
+                                                             (player-x player)
+                                                             (player-y player)
+                                                             latest-sequence)))))))
 
                             ;; Interpolate remote entities before drawing
                             (interpolate-remote-entities game)

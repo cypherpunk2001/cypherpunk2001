@@ -673,29 +673,70 @@
             :do (setf (npc-snapshot-dirty npc) nil)))))
 
 (defun deserialize-game-state-delta (delta game)
-  "Apply delta snapshot to GAME, updating only changed entities.
+  "Apply delta snapshot to GAME, updating changed entities and adding new ones.
    Preserves existing entities not included in the delta.
-   CRITICAL: Only updates entities by ID - does NOT replace the arrays."
+   For players: updates existing by ID, adds new players not seen before.
+   For NPCs: updates existing by index (NPCs use fixed array positions).
+   Returns hash table of updated entity positions for interpolation buffer."
   (let ((changed-players (getf delta :changed-players))
         (changed-npcs (getf delta :changed-npcs))
-        (players (game-players game)))
-    ;; Apply changed players - update existing by ID, preserve others
+        (players (game-players game))
+        (updated-positions (make-hash-table :test 'eql)))  ; Track what we updated
+    ;; Apply changed players - update existing OR add new
     (when (and changed-players (> (length changed-players) 0))
-      (loop :for vec :across changed-players
-            :for plist = (deserialize-player-compact vec)
-            :for id = (getf plist :id)
-            :for existing = (and players (find-player-by-id players id))
-            :do (when existing
-                  ;; Update existing player in place
-                  (apply-player-plist existing plist))))
-    ;; Apply changed NPCs - update existing by ID
+      (let ((new-players nil))  ; Collect players we need to add
+        ;; First pass: update existing, collect new
+        (loop :for vec :across changed-players
+              :for plist = (deserialize-player-compact vec)
+              :for id = (getf plist :id)
+              :for x = (getf plist :x)
+              :for y = (getf plist :y)
+              :for existing = (and players (find-player-by-id players id))
+              :do (progn
+                    ;; Track position from snapshot (not interpolated)
+                    (setf (gethash id updated-positions) (list x y))
+                    (if existing
+                        ;; Update existing player in place
+                        (apply-player-plist existing plist)
+                        ;; New player - need to add to game
+                        (push (deserialize-player plist
+                                                  *inventory-size*
+                                                  (length *equipment-slot-ids*))
+                              new-players))))
+        ;; Second pass: if we have new players, expand the array
+        (when new-players
+          (let* ((old-count (if players (length players) 0))
+                 (new-count (+ old-count (length new-players)))
+                 (expanded (make-array new-count)))
+            ;; Copy existing players
+            (when players
+              (loop :for i :from 0 :below old-count
+                    :do (setf (aref expanded i) (aref players i))))
+            ;; Add new players
+            (loop :for player :in new-players
+                  :for i :from old-count
+                  :do (setf (aref expanded i) player))
+            ;; Update both players and entities arrays
+            (setf (game-players game) expanded
+                  (game-entities game)
+                  (make-entities expanded (game-npcs game)))))))
+    ;; Apply changed NPCs - find by ID and update
+    ;; NOTE: NPC IDs are entity IDs, not array indices. Must search for matching NPC.
     (when changed-npcs
       (let ((npcs (game-npcs game)))
-        (loop :for vec :across changed-npcs
-              :for plist = (deserialize-npc-compact vec)
-              :for id = (getf plist :id)
-              :do (when (and npcs (< id (length npcs)))
-                    (deserialize-npc plist npcs id)))))))
+        (when npcs
+          (loop :for vec :across changed-npcs
+                :for plist = (deserialize-npc-compact vec)
+                :for id = (getf plist :id)
+                :for x = (getf plist :x)
+                :for y = (getf plist :y)
+                :for index = (position id npcs :key #'npc-id)
+                :do (when index
+                      ;; Track NPC position (use negative ID like capture-entity-positions)
+                      (setf (gethash (- id) updated-positions) (list x y))
+                      (deserialize-npc plist npcs index))))))
+    ;; Return updated positions for interpolation buffer
+    updated-positions))
 
 ;;;; ========================================================================
 ;;;; ZONE OBJECT SERIALIZATION
@@ -758,16 +799,18 @@
 (defun deserialize-game-state (plist game)
   ;; Restore authoritative game state from plist into existing GAME.
   ;; Supports legacy plist, compact-v1, and delta-v1 formats.
+  ;; Returns: (values zone-id delta-positions-or-nil)
+  ;; delta-positions is non-nil only for delta-v1 format, for interpolation fix.
   (let ((format (getf plist :format)))
     (cond
       ;; Delta format (incremental updates, see docs/net.md Prong 2)
       ((eq format :delta-v1)
-       (deserialize-game-state-delta plist game)
-       (getf plist :zone-id))
+       (let ((delta-positions (deserialize-game-state-delta plist game)))
+         (values (getf plist :zone-id) delta-positions)))
       ;; Compact format (network-optimized, see docs/net.md 4-Prong)
       ((eq format :compact-v1)
        (deserialize-game-state-compact plist game)
-       (getf plist :zone-id))
+       (values (getf plist :zone-id) nil))
       ;; Legacy plist format (DB saves, compatibility)
       (t
        (let* ((version (getf plist :version 0))
@@ -800,10 +843,11 @@
            (setf (zone-objects zone)
                  (mapcar #'deserialize-object object-plists)))
          ;; Return zone ID for zone switching if needed
-         zone-id)))))
+         (values zone-id nil))))))
 
 (defun apply-game-state (game state &key (apply-zone t))
   ;; Apply serialized STATE into GAME, loading zones when needed.
+  ;; Returns: (values zone-id zone-loaded delta-positions-or-nil)
   (when (and game state)
     (let* ((zone-id (getf state :zone-id))
            (world (game-world game))
@@ -827,7 +871,9 @@
           (ensure-npcs-open-spawn npcs world)
           (setf (game-npcs game) npcs
                 (game-entities game) (make-entities players npcs))))
-      (values (deserialize-game-state state game) zone-loaded))))
+      (multiple-value-bind (result-zone-id delta-positions)
+          (deserialize-game-state state game)
+        (values result-zone-id zone-loaded delta-positions)))))
 
 (defun save-game (game filepath)
   ;; Save game state to FILEPATH. Returns T on success, NIL on failure (non-fatal).
