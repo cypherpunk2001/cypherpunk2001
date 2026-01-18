@@ -535,6 +535,9 @@
                   (object-id (getf object :id))
                   (count (getf object :count nil))
                   (respawn (getf object :respawn nil)))
+              ;; DEBUG: Log respawn state occasionally
+              (when (and respawn (> respawn 0.0) (< (random 100) 1))
+                (log-verbose "RENDER-OBJ: id=~a respawn=~a (should be hidden)" object-id respawn))
               (when (and (numberp tx) (numberp ty)
                          (or (null count) (> count 0))
                          (or (null respawn) (<= respawn 0.0)))

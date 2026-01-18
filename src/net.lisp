@@ -791,14 +791,18 @@
 
 (defun apply-client-intents (clients)
   ;; Copy each client intent into its assigned player intent.
+  ;; After copying, clear one-shot intent fields so they don't repeat.
   (dolist (client clients)
     (let* ((player (net-client-player client))
            (server-intent (and player (player-intent player)))
            (client-intent (net-client-intent client)))
       (apply-client-intent server-intent client-intent)
-      (when (and client-intent
-                 (intent-requested-chat-message client-intent))
-        (clear-requested-chat-message client-intent)))))
+      (when client-intent
+        ;; Clear one-shot requests after processing
+        (when (intent-requested-chat-message client-intent)
+          (clear-requested-chat-message client-intent))
+        (when (intent-requested-pickup-target-id client-intent)
+          (clear-requested-pickup-target client-intent))))))
 
 (defun reconcile-net-clients (game clients)
   ;; Rebind clients to players that exist in the current game state.
@@ -872,6 +876,12 @@
 (defun apply-intent-plist (intent plist)
   ;; Apply PLIST values to INTENT in place.
   ;; Security: All values are validated/sanitized to prevent type confusion attacks.
+  (let ((pickup-id (getf plist :requested-pickup-target-id)))
+    (when pickup-id
+      (log-verbose "RECV-INTENT: pickup id=~a tx=~a ty=~a"
+                   pickup-id
+                   (getf plist :requested-pickup-tx)
+                   (getf plist :requested-pickup-ty))))
   (when (and intent plist)
     (setf (intent-move-dx intent) (%clamp-direction (getf plist :move-dx))
           (intent-move-dy intent) (%clamp-direction (getf plist :move-dy))
@@ -1339,6 +1349,12 @@
   ;; Send the current INTENT as a UDP message.
   ;; If SEQUENCE is provided, includes it for server-side tracking.
   ;; If ACK is provided, acknowledges last received snapshot (delta compression).
+  (let ((pickup-id (intent-requested-pickup-target-id intent)))
+    (when pickup-id
+      (log-verbose "SEND-INTENT: pickup id=~a tx=~a ty=~a"
+                   pickup-id
+                   (intent-requested-pickup-tx intent)
+                   (intent-requested-pickup-ty intent))))
   (let ((payload (intent->plist intent))
         (message (list :type :intent)))
     (when sequence
@@ -2027,7 +2043,9 @@
                                     (send-intent-message socket intent :sequence seq :ack last-snapshot-seq))
                                   ;; No prediction: just send intent normally (with ack for delta)
                                   (send-intent-message socket intent :ack last-snapshot-seq)))
+                            ;; Clear one-shot intent fields after sending
                             (clear-requested-chat-message (game-client-intent game))
+                            (clear-requested-pickup-target (game-client-intent game))
 
                             ;; Receive and apply snapshots
                             (let ((latest-state nil)

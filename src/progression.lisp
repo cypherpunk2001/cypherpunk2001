@@ -611,7 +611,9 @@
                          (archetype (and object-id (find-object-archetype object-id))))
                     (when archetype
                       (setf (getf object :count) (object-archetype-count archetype)
-                            (getf object :respawn) 0.0))))))))))))
+                            (getf object :respawn) 0.0
+                            ;; Mark dirty so delta snapshot includes respawn
+                            (getf object :snapshot-dirty) t))))))))))))
 
 (defun pickup-object-at-tile (player world tx ty object-id)
   ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
@@ -619,6 +621,8 @@
   (with-zone-objects-lock
     (let* ((zone (world-zone world))
            (objects (and zone (zone-objects zone))))
+      (log-verbose "PICKUP-TILE: zone=~a objects=~a tx=~d ty=~d id=~a"
+                   (and zone (zone-id zone)) (length objects) tx ty object-id)
       (when (and player zone objects)
         (let ((remaining nil)
               (picked nil))
@@ -626,6 +630,7 @@
             (let ((ox (getf object :x))
                   (oy (getf object :y))
                   (id (getf object :id)))
+              (log-verbose "PICKUP-TILE: checking obj ox=~a oy=~a id=~a" ox oy id)
               (if (and (eql ox tx)
                        (eql oy ty)
                        (or (null object-id) (eq id object-id)))
@@ -633,15 +638,21 @@
                          (item-id (and archetype (object-archetype-item-id archetype)))
                          (count (object-entry-count object archetype))
                          (respawn (object-entry-respawn-seconds object archetype)))
+                    (log-verbose "PICKUP-TILE: MATCH! archetype=~a item-id=~a count=~d respawn=~a respawning=~a"
+                                 archetype item-id count respawn (object-respawning-p object))
                     (if (and item-id (> count 0) (not (object-respawning-p object)))
                         (let ((leftover (grant-inventory-item player item-id count)))
+                          (log-verbose "PICKUP-TILE: granted! leftover=~d respawn=~a" leftover respawn)
                           (setf picked t)
+                          ;; Mark player snapshot-dirty so inventory syncs via delta
+                          (setf (player-snapshot-dirty player) t)
                           (cond
                             ((zerop leftover)
                              (if (> respawn 0.0)
                                  (progn
                                    (setf (getf object :count) 0
                                          (getf object :respawn) respawn)
+                                   (log-verbose "PICKUP-TILE: set respawn timer to ~a on object ~a" respawn (getf object :id))
                                    (push object remaining))
                                  nil))
                             (t
@@ -650,7 +661,10 @@
                         (push object remaining)))
                   (push object remaining))))
           (when picked
-            (setf (zone-objects zone) (nreverse remaining)))
+            (setf (zone-objects zone) (nreverse remaining))
+            (log-verbose "PICKUP-TILE: zone now has ~a objects, first respawn=~a"
+                         (length (zone-objects zone))
+                         (and (zone-objects zone) (getf (first (zone-objects zone)) :respawn))))
           picked)))))
 
 (defun update-player-pickup-target (player world)
@@ -661,7 +675,10 @@
       (let ((target-x (player-pickup-target-tx player))
             (target-y (player-pickup-target-ty player))
             (target-id (player-pickup-target-id player)))
+        (log-verbose "UPDATE-PICKUP: player at (~d,~d) target at (~d,~d) id=~a"
+                     tx ty target-x target-y target-id)
         (when (and (eql tx target-x) (eql ty target-y))
+          (log-verbose "UPDATE-PICKUP: Executing pickup!")
           (pickup-object-at-tile player world target-x target-y target-id)
           (setf (player-pickup-target-active player) nil
                 (player-pickup-target-id player) nil))))))

@@ -148,7 +148,12 @@
 
 (defun set-player-pickup-target (player intent world object-id tx ty &optional (mark-p t))
   ;; Request a pickup target via intent (server validates and sets authoritative target).
+  (log-verbose "CLIENT-PICKUP: setting target id=~a tx=~d ty=~d" object-id tx ty)
   (request-pickup-target intent object-id tx ty)
+  (log-verbose "CLIENT-PICKUP: intent fields now id=~a tx=~a ty=~a"
+               (intent-requested-pickup-target-id intent)
+               (intent-requested-pickup-tx intent)
+               (intent-requested-pickup-ty intent))
   (clear-requested-attack-target intent)
   (clear-requested-follow-target intent)
   (multiple-value-bind (world-x world-y)

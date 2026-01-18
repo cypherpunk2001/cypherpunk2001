@@ -172,15 +172,19 @@
                        (when npc
                          (set-player-follow-target player client-intent npc t))))
                     ((eq action :pickup)
+                     (log-verbose "CONTEXT-PICKUP: action=~a obj-id=~a world-x=~a world-y=~a"
+                                  action context-object-id context-x context-y)
                      (let* ((tile-size (world-tile-dest-size world))
                             (tx (floor context-x tile-size))
                             (ty (floor context-y tile-size)))
-                       (when context-object-id
-                         (set-player-pickup-target player client-intent world
-                                                   context-object-id
-                                                   tx
-                                                   ty
-                                                   t))))
+                       (log-verbose "CONTEXT-PICKUP: tile=~d,~d tile-size=~a" tx ty tile-size)
+                       (if context-object-id
+                           (set-player-pickup-target player client-intent world
+                                                     context-object-id
+                                                     tx
+                                                     ty
+                                                     t)
+                           (log-verbose "CONTEXT-PICKUP: SKIPPED - context-object-id is nil!"))))
                     ((eq action :examine)
                      (cond
                        ((eq context-type :npc)
@@ -270,6 +274,10 @@
                         (mouse-npc
                          (set-player-attack-target player client-intent mouse-npc t))
                         (mouse-object
+                         (log-verbose "LEFT-CLICK-PICKUP: obj-id=~a tx=~d ty=~d"
+                                      (getf mouse-object :id)
+                                      (getf mouse-object :x)
+                                      (getf mouse-object :y))
                          (set-player-pickup-target player client-intent world
                                                    (getf mouse-object :id)
                                                    (getf mouse-object :x)

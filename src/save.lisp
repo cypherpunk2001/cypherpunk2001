@@ -468,12 +468,16 @@
 ;;; [8] facing-sign  [9] frame-idx   [10] frame-timer*100
 ;;; [11] flags       [12] attack-timer*100  [13] hit-timer*100
 ;;; [14] hit-frame   [15] hit-facing-code   [16] hit-facing-sign
-;;; [17] attack-target-id  [18] follow-target-id
+;;; [17] attack-target-id  [18] follow-target-id  [19] inventory (plist)
 
 (defun serialize-player-compact (player)
   "Serialize player to compact vector for network transmission.
-   Produces ~64 bytes vs ~232 bytes for plist format."
-  (vector (player-id player)
+   Includes inventory for synchronization."
+  (let ((inv (serialize-inventory (player-inventory player))))
+    (log-verbose "SERIALIZE-COMPACT: player=~a inv-slots=~a"
+                 (player-id player)
+                 (length (getf inv :slots)))
+    (vector (player-id player)
           (quantize-coord (player-x player))
           (quantize-coord (player-y player))
           (or (player-hp player) 0)
@@ -491,7 +495,8 @@
           (encode-facing (player-hit-facing player))
           (round (or (player-hit-facing-sign player) 1.0))
           (or (player-attack-target-id player) 0)
-          (or (player-follow-target-id player) 0)))
+          (or (player-follow-target-id player) 0)
+          inv)))
 
 (defun deserialize-player-compact (vec)
   "Deserialize compact vector to player plist for apply-player-plist.
@@ -499,28 +504,37 @@
   (when (and vec (>= (length vec) 19))
     (multiple-value-bind (attacking attack-hit hit-active running)
         (unpack-player-flags (aref vec 11))
-      (list :id (aref vec 0)
-            :x (dequantize-coord (aref vec 1))
-            :y (dequantize-coord (aref vec 2))
-            :hp (aref vec 3)
-            :dx (dequantize-coord (aref vec 4))
-            :dy (dequantize-coord (aref vec 5))
-            :anim-state (decode-anim-state (aref vec 6))
-            :facing (decode-facing (aref vec 7))
-            :facing-sign (float (aref vec 8))
-            :frame-index (aref vec 9)
-            :frame-timer (dequantize-timer (aref vec 10))
-            :attacking attacking
-            :attack-hit attack-hit
-            :hit-active hit-active
-            :running running
-            :attack-timer (dequantize-timer (aref vec 12))
-            :hit-timer (dequantize-timer (aref vec 13))
-            :hit-frame (aref vec 14)
-            :hit-facing (decode-facing (aref vec 15))
-            :hit-facing-sign (float (aref vec 16))
-            :attack-target-id (aref vec 17)
-            :follow-target-id (aref vec 18)))))
+      (let ((plist (list :id (aref vec 0)
+                         :x (dequantize-coord (aref vec 1))
+                         :y (dequantize-coord (aref vec 2))
+                         :hp (aref vec 3)
+                         :dx (dequantize-coord (aref vec 4))
+                         :dy (dequantize-coord (aref vec 5))
+                         :anim-state (decode-anim-state (aref vec 6))
+                         :facing (decode-facing (aref vec 7))
+                         :facing-sign (float (aref vec 8))
+                         :frame-index (aref vec 9)
+                         :frame-timer (dequantize-timer (aref vec 10))
+                         :attacking attacking
+                         :attack-hit attack-hit
+                         :hit-active hit-active
+                         :running running
+                         :attack-timer (dequantize-timer (aref vec 12))
+                         :hit-timer (dequantize-timer (aref vec 13))
+                         :hit-frame (aref vec 14)
+                         :hit-facing (decode-facing (aref vec 15))
+                         :hit-facing-sign (float (aref vec 16))
+                         :attack-target-id (aref vec 17)
+                         :follow-target-id (aref vec 18))))
+        ;; Add inventory if present (element 19)
+        (when (>= (length vec) 20)
+          (let ((inv (aref vec 19)))
+            (log-verbose "DESERIALIZE-COMPACT: player=~a inv=~a slots=~a"
+                         (getf plist :id) (not (null inv))
+                         (and inv (length (getf inv :slots))))
+            (when inv
+              (setf plist (append plist (list :inventory inv))))))
+        plist))))
 
 ;;; Compact NPC Serialization
 ;;; Vector format (14 elements):
@@ -590,8 +604,10 @@
          (npcs (game-npcs game))
          (world (game-world game))
          (zone (world-zone world))
+         (objects (and zone (zone-objects zone)))
          (player-vectors nil)
-         (npc-vectors nil))
+         (npc-vectors nil)
+         (object-list nil))
     ;; Serialize players to compact vectors
     (when players
       (loop :for player :across players
@@ -602,16 +618,31 @@
       (loop :for npc :across npcs
             :when npc
             :do (push (serialize-npc-compact npc) npc-vectors)))
+    ;; Serialize zone objects (only respawning ones to minimize size)
+    ;; DEBUG: Log object count and respawn states
+    (when (and objects (> (length objects) 0))
+      (let ((first-obj (first objects)))
+        (when (and first-obj (> (or (getf first-obj :respawn) 0.0) 0.0))
+          (log-verbose "SERIALIZE-OBJECTS: count=~a first-id=~a first-respawn=~a"
+                       (length objects) (getf first-obj :id) (getf first-obj :respawn)))))
+    (when objects
+      (dolist (object objects)
+        (let ((respawn (or (getf object :respawn) 0.0)))
+          (when (> respawn 0.0)
+            (log-verbose "SERIALIZE-OBJECT: id=~a respawn=~a" (getf object :id) respawn)
+            (push (serialize-object object) object-list)))))
     ;; Build compact snapshot
     (list :format :compact-v1
           :zone-id (and zone (zone-id zone))
           :players (coerce (nreverse player-vectors) 'vector)
-          :npcs (coerce (nreverse npc-vectors) 'vector))))
+          :npcs (coerce (nreverse npc-vectors) 'vector)
+          :objects (nreverse object-list))))
 
 (defun deserialize-game-state-compact (state game)
   "Apply compact game state to GAME, converting vectors back to entity updates."
   (let ((player-vectors (getf state :players))
-        (npc-vectors (getf state :npcs)))
+        (npc-vectors (getf state :npcs))
+        (object-plists (getf state :objects)))
     ;; Convert compact player vectors to plists and apply
     (when player-vectors
       (let ((player-plists (loop :for vec :across player-vectors
@@ -623,7 +654,30 @@
         (loop :for vec :across npc-vectors
               :for index :from 0
               :for plist = (deserialize-npc-compact vec)
-              :do (deserialize-npc plist npcs index))))))
+              :do (deserialize-npc plist npcs index))))
+    ;; Apply object states (respawning objects from server)
+    (when object-plists
+      (log-verbose "DESERIALIZE-OBJECTS: received ~a objects" (length object-plists))
+      (let* ((world (game-world game))
+             (zone (and world (world-zone world)))
+             (objects (and zone (zone-objects zone))))
+        (when objects
+          ;; Update matching objects with server state
+          (dolist (server-obj object-plists)
+            (let ((server-id (getf server-obj :id))
+                  (server-x (getf server-obj :x))
+                  (server-y (getf server-obj :y))
+                  (server-respawn (getf server-obj :respawn 0.0)))
+              (log-verbose "DESERIALIZE-OBJECTS: looking for id=~a x=~a y=~a respawn=~a"
+                           server-id server-x server-y server-respawn)
+              (dolist (local-obj objects)
+                (when (and (eq (getf local-obj :id) server-id)
+                           (eql (getf local-obj :x) server-x)
+                           (eql (getf local-obj :y) server-y))
+                  (log-verbose "DESERIALIZE-OBJECTS: MATCHED! setting respawn=~a" server-respawn)
+                  ;; Update respawn state from server
+                  (setf (getf local-obj :count) (getf server-obj :count 0)
+                        (getf local-obj :respawn) server-respawn))))))))))
 
 ;;;; ========================================================================
 ;;;; DELTA COMPRESSION - See docs/net.md Prong 2
@@ -638,8 +692,10 @@
          (npcs (game-npcs game))
          (world (game-world game))
          (zone (world-zone world))
+         (objects (and zone (zone-objects zone)))
          (changed-players nil)
-         (changed-npcs nil))
+         (changed-npcs nil)
+         (object-list nil))
     ;; Collect dirty players
     (when players
       (loop :for player :across players
@@ -650,19 +706,34 @@
       (loop :for npc :across npcs
             :when (and npc (npc-snapshot-dirty npc))
             :do (push (serialize-npc-compact npc) changed-npcs)))
+    ;; Collect respawning objects (these need to sync to client)
+    ;; Include objects with respawn > 0 (respawning) OR snapshot-dirty (just respawned)
+    ;; This ensures client sees both "hide" and "show" transitions
+    (when objects
+      (dolist (object objects)
+        (let ((respawn (or (getf object :respawn) 0.0))
+              (dirty (getf object :snapshot-dirty)))
+          ;; Send if respawning OR marked dirty (respawn just finished)
+          (when (or (> respawn 0.0) dirty)
+            (log-verbose "DELTA-OBJECT: id=~a respawn=~a dirty=~a" (getf object :id) respawn dirty)
+            (push (serialize-object object) object-list)))))
     ;; Build delta snapshot
     (list :format :delta-v1
           :seq seq
           :baseline-seq baseline-seq
           :zone-id (and zone (zone-id zone))
           :changed-players (coerce (nreverse changed-players) 'vector)
-          :changed-npcs (coerce (nreverse changed-npcs) 'vector))))
+          :changed-npcs (coerce (nreverse changed-npcs) 'vector)
+          :objects (nreverse object-list))))
 
 (defun clear-snapshot-dirty-flags (game)
   "Reset dirty flags on all entities after snapshot broadcast.
    Called once per frame after sending to all clients."
-  (let ((players (game-players game))
-        (npcs (game-npcs game)))
+  (let* ((players (game-players game))
+         (npcs (game-npcs game))
+         (world (game-world game))
+         (zone (and world (world-zone world)))
+         (objects (and zone (zone-objects zone))))
     (when players
       (loop :for player :across players
             :when player
@@ -670,7 +741,11 @@
     (when npcs
       (loop :for npc :across npcs
             :when npc
-            :do (setf (npc-snapshot-dirty npc) nil)))))
+            :do (setf (npc-snapshot-dirty npc) nil)))
+    ;; Clear object dirty flags
+    (when objects
+      (dolist (object objects)
+        (setf (getf object :snapshot-dirty) nil)))))
 
 (defun deserialize-game-state-delta (delta game)
   "Apply delta snapshot to GAME, updating changed entities and adding new ones.
@@ -735,6 +810,30 @@
                       ;; Track NPC position (use negative ID like capture-entity-positions)
                       (setf (gethash (- id) updated-positions) (list x y))
                       (deserialize-npc plist npcs index))))))
+    ;; Apply object states (respawning objects from server)
+    (let ((object-plists (getf delta :objects)))
+      (when object-plists
+        (log-verbose "DELTA-DESER: received ~a objects" (length object-plists))
+        (let* ((world (game-world game))
+               (zone (and world (world-zone world)))
+               (objects (and zone (zone-objects zone))))
+          (log-verbose "DELTA-DESER: world=~a zone=~a local-objects=~a"
+                       (not (null world)) (not (null zone)) (and objects (length objects)))
+          (when objects
+            ;; Update matching objects with server state
+            (dolist (server-obj object-plists)
+              (let ((server-id (getf server-obj :id))
+                    (server-x (getf server-obj :x))
+                    (server-y (getf server-obj :y))
+                    (server-respawn (getf server-obj :respawn 0.0)))
+                (dolist (local-obj objects)
+                  (when (and (eq (getf local-obj :id) server-id)
+                             (eql (getf local-obj :x) server-x)
+                             (eql (getf local-obj :y) server-y))
+                    (log-verbose "DELTA-DESER: MATCHED id=~a setting respawn=~a" server-id server-respawn)
+                    ;; Update respawn state from server
+                    (setf (getf local-obj :count) (getf server-obj :count 0)
+                          (getf local-obj :respawn) server-respawn)))))))))
     ;; Return updated positions for interpolation buffer
     updated-positions))
 

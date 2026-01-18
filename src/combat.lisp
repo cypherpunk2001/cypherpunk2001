@@ -362,34 +362,33 @@
 
 (defun sync-player-pickup-target (player intent world)
   ;; Validate requested pickup target and set authoritative state (server authority).
-  ;; Checks range to prevent targeting distant pickup objects.
+  ;; Accepts target regardless of range - player will walk to it.
+  ;; Actual pickup happens in update-player-pickup-target when player reaches the tile.
+  (declare (ignore world))
   (let* ((requested-id (intent-requested-pickup-target-id intent))
          (requested-tx (intent-requested-pickup-tx intent))
          (requested-ty (intent-requested-pickup-ty intent))
          (current-id (player-pickup-target-id player)))
+    ;; Debug: log what we received
+    (when requested-id
+      (log-verbose "SYNC-PICKUP: req-id=~a req-tx=~a req-ty=~a cur-id=~a"
+                   requested-id requested-tx requested-ty current-id))
     ;; Process clear request (requested-id = nil means client wants to cancel)
     (when (and (not requested-id) current-id)
       (setf (player-pickup-target-id player) nil
             (player-pickup-target-active player) nil))
-    ;; Process new pickup target request
+    ;; Process new pickup target request - accept and let player walk there
     (when (and requested-id requested-tx requested-ty
                (not (and (eql requested-id current-id)
                          (eql requested-tx (player-pickup-target-tx player))
                          (eql requested-ty (player-pickup-target-ty player)))))
-      ;; Validate range before accepting pickup target
-      (if (pickup-tile-in-range-p player requested-tx requested-ty world)
-          ;; Valid target in range: set authoritative state
-          (progn
-            (setf (player-pickup-target-id player) requested-id
-                  (player-pickup-target-tx player) requested-tx
-                  (player-pickup-target-ty player) requested-ty
-                  (player-pickup-target-active player) t
-                  (player-attack-target-id player) 0
-                  (player-follow-target-id player) 0)
-            (clear-player-auto-walk player))
-          ;; Out of range: reject request (log for debugging)
-          (log-verbose "Pickup target rejected: tile (~d,~d) out of range for player ~a"
-                       requested-tx requested-ty (player-id player))))))
+      (log-verbose "SYNC-PICKUP: Setting target for player ~a" (player-id player))
+      (setf (player-pickup-target-id player) requested-id
+            (player-pickup-target-tx player) requested-tx
+            (player-pickup-target-ty player) requested-ty
+            (player-pickup-target-active player) t
+            (player-attack-target-id player) 0
+            (player-follow-target-id player) 0))))
 
 (defun player-attack-target-in-range-p (player target world)
   ;; Return true when TARGET is inside the player's melee hitbox.

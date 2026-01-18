@@ -450,7 +450,17 @@
                  (layers (mapcar (lambda (spec)
                                    (zone-layer-from-spec spec chunk-size))
                                  layer-specs))
-                 (objects (getf plist :objects nil))
+                 (raw-objects (getf plist :objects nil))
+                 ;; Initialize objects with all keys so setf getf works properly
+                 (objects (mapcar (lambda (obj)
+                                    (list :id (getf obj :id)
+                                          :x (getf obj :x)
+                                          :y (getf obj :y)
+                                          :count (getf obj :count nil)
+                                          :respawn 0.0
+                                          :respawnable (getf obj :respawnable t)
+                                          :snapshot-dirty nil))
+                                  raw-objects))
                  (spawns (getf plist :spawns nil))
                  (collision-tiles (build-zone-collision-tiles layers chunk-size)))
             (unless (and (numberp width) (numberp height))

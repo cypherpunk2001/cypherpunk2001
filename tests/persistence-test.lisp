@@ -827,7 +827,9 @@
     (setf (player-hp player) 100
           (player-attacking player) t
           (player-anim-state player) :walking
-          (player-facing player) :right)
+          (player-facing player) :right
+          ;; Clear inventory for fair comparison (compact includes inv, network-only excludes)
+          (player-inventory player) nil)
     ;; Compare sizes
     (let* ((compact-vec (serialize-player-compact player))
            (compact-str (prin1-to-string compact-vec))
