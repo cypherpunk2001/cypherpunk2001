@@ -753,7 +753,7 @@
           (player-dx player) 1.0
           (player-dy player) -0.5
           (player-anim-state player) :walking
-          (player-facing player) :right
+          (player-facing player) :side
           (player-facing-sign player) 1.0
           (player-frame-index player) 3
           (player-frame-timer player) 0.25
@@ -764,7 +764,7 @@
           (player-attack-timer player) 1.5
           (player-hit-timer player) 0.3
           (player-hit-frame player) 2
-          (player-hit-facing player) :left
+          (player-hit-facing player) :side
           (player-hit-facing-sign player) -1.0
           (player-attack-target-id player) 99
           (player-follow-target-id player) 101)
@@ -777,7 +777,7 @@
       (assert (< (abs (- 789.0 (getf plist :y))) 0.2) nil "y not preserved within tolerance")
       (assert-equal 85 (getf plist :hp) "hp not preserved")
       (assert-equal :walking (getf plist :anim-state) "anim-state not preserved")
-      (assert-equal :right (getf plist :facing) "facing not preserved")
+      (assert-equal :side (getf plist :facing) "facing not preserved")
       (assert (getf plist :attacking) nil "attacking flag not preserved")
       (assert (getf plist :hit-active) nil "hit-active flag not preserved")
       (assert (getf plist :running) nil "running flag not preserved")
@@ -827,7 +827,7 @@
     (setf (player-hp player) 100
           (player-attacking player) t
           (player-anim-state player) :walking
-          (player-facing player) :right
+          (player-facing player) :side
           ;; Clear inventory for fair comparison (compact includes inv, network-only excludes)
           (player-inventory player) nil)
     ;; Compare sizes
@@ -854,8 +854,8 @@
     (let ((code (encode-anim-state state)))
       (assert-equal state (decode-anim-state code)
                     (format nil "anim-state ~a roundtrip failed" state))))
-  ;; Test facing directions
-  (dolist (facing '(:up :down :left :right))
+  ;; Test facing directions (game uses :side with facing-sign for left/right)
+  (dolist (facing '(:up :down :side))
     (let ((code (encode-facing facing)))
       (assert-equal facing (decode-facing code)
                     (format nil "facing ~a roundtrip failed" facing))))

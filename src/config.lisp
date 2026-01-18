@@ -217,12 +217,13 @@
   "Integer code to animation state keyword mapping for deserialization.")
 
 ;;; Facing Direction Codes - Map keywords to small integers
+;;; NOTE: Game uses :side (not :left/:right) with facing-sign for left/right flip
 (defparameter *facing-to-code*
-  '((:up . 0) (:down . 1) (:left . 2) (:right . 3))
+  '((:up . 0) (:down . 1) (:side . 2))
   "Facing direction keyword to integer code mapping for compact serialization.")
 
 (defparameter *code-to-facing*
-  '((0 . :up) (1 . :down) (2 . :left) (3 . :right))
+  '((0 . :up) (1 . :down) (2 . :side))
   "Integer code to facing direction keyword mapping for deserialization.")
 
 ;;; Quantization Parameters
