@@ -4,6 +4,8 @@
   :serial t
   :components ((:file "src/package")
                (:file "src/config")
+               (:file "src/config-server")
+               (:file "src/config-client")
                (:file "src/utils")
                (:file "src/data")
                (:file "src/intent")
