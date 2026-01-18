@@ -61,8 +61,44 @@ Key design docs:
 
 ## Current Tasks / TODO
 
+- make stress results in noticible world-freeze hitch/glitch on already logged in player until all 10 are logged in and walking around.
+
+- make stress executed 4 times results in the game noticeibly "slow" feeling, everything just slows down, walking around feels like slow motion with the other make stress players.
+
+## Completed Tasks
+
+FIXED. make stress results in random teleports
+
+### Stress Testing ✓
+Implemented headless client stress testing tool:
+- `make stress` runs configurable number of headless clients
+- Each client registers, authenticates, and walks randomly
+- Clients send movement intents every 100ms
+- Useful for finding server bottlenecks and testing concurrent load
+- See CLAUDE.md for usage examples
 
 ## Future Tasks / Roadmap
+
+---
+
+
+
+
+---
+
+player logged in but cannot walk when running in server multi threaded mode,
+                                                   when binding #:STEP3
+WARNING:
+   Failed to serialize/send snapshot (frame 3849): The value
+                                                     0
+                                                   is not of type
+                                                     (OR (FLOAT (0.0))
+                                                         (RATIONAL (0)))
+
+                                                   when binding #:STEP3
+^CSERVER: shutdown requested (interrupt).
+SERVER: ok
+
 
 ---
 

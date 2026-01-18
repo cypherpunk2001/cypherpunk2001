@@ -872,19 +872,24 @@
           t)))))
 
 (defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for all players.
+  ;; Handle edge-based world graph transitions for the first player only.
   ;; NOTE: Returns nil if no players.
+  ;; LIMITATION: Only the first player (lowest index, typically first connected) can
+  ;; transition zones. Other players are locked to current zone to prevent the shared
+  ;; world zone from teleporting all clients together. For true multi-zone support,
+  ;; run separate server processes per zone.
   (let* ((world (game-world game))
          (players (game-players game))
          (transitioned nil))
     (when (and players (> (length players) 0))
-      (loop :for player :across players
-            :do (let* ((edge (and world (world-exit-edge world player)))
-                       (exit (and edge (world-edge-exit world edge))))
-                  (when exit
-                    (transition-zone game player exit edge)
-                    (setf transitioned t)
-                    (return)))))  ; Only transition first player that hits edge
+      ;; Only check zone transition for first player (index 0)
+      ;; This player "owns" zone transitions; others stay in current zone
+      (let* ((player (aref players 0))
+             (edge (and world (world-exit-edge world player)))
+             (exit (and edge (world-edge-exit world edge))))
+        (when exit
+          (transition-zone game player exit edge)
+          (setf transitioned t))))
     transitioned))
 
 (defun log-player-position (player world)

@@ -1,6 +1,8 @@
-.PHONY: ci smoke server client local checkparens checkdocs test-persistence test-security
+.PHONY: ci smoke server client local checkparens checkdocs test-persistence test-security stress
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
+STRESS_CLIENTS ?= 10
+STRESS_DURATION ?= 60
 
 ci:
 	MMORPG_DB_BACKEND=memory sbcl --script scripts/ci.lisp
@@ -28,3 +30,6 @@ checkparens:
 
 checkdocs:
 	./scripts/checkdocs.sh
+
+stress:
+	sbcl --script scripts/stress-test.lisp $(STRESS_CLIENTS) $(STRESS_DURATION)

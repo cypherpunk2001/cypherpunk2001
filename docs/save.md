@@ -33,6 +33,9 @@ Key functions
 - `apply-player-plists` - Apply multiple player plists to game, preserving local player state.
 - `players-match-order-p` - Return true when players and plists share same ID ordering.
 
+**CRITICAL - Multi-Client Player ID Lookup:**
+When applying snapshots with multiple connected clients, `apply-player-plists` uses `game-net-player-id` to find the local player by ID. **Never falls back to the first player** if lookup fails - this prevents teleporting to other clients' positions. Logs a warning if player not found and keeps current player to maintain correct view.
+
 **NPC Serialization:**
 - `serialize-npc` - Convert NPC state to plist (optionally `:include-visuals`).
 - `deserialize-npc` - Restore NPC from plist into existing NPC array.

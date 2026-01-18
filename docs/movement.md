@@ -37,6 +37,13 @@ Key functions
 - `edge-opposite` - Return opposite world edge.
 - `edge-spawn-position` - Return spawn coordinates for target edge.
 
+**LIMITATION - Multi-Player Zone Transitions:**
+Only the first connected player (index 0) can trigger zone transitions on a single server process. Other players are locked to the current zone. When player 0 transitions, all clients receive the new zone (they follow together). This prevents random players from teleporting everyone unexpectedly, while still allowing exploration.
+
+For production multi-player with true per-player zones, run separate server processes per zone. The current single-server model is designed for development/testing.
+
+**Stress Testing Tip:** Connect your client BEFORE running `make stress` so you're player 0 and can control zone transitions.
+
 **NPC Transition:**
 - `collect-transition-npcs` - Collect NPCs that should carry across zones.
 - `npc-transition-candidate-p` - Return true when NPC should follow across edge.

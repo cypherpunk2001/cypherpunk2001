@@ -333,11 +333,20 @@
       (let* ((local-id (or (game-net-player-id game)
                            (and (game-player game)
                                 (player-id (game-player game)))))
-             (local-player (and local-id (find-player-by-id players local-id))))
-        (when (and local-player (not (eq (game-player game) local-player)))
-          (setf (game-player game) local-player))
-        (when (and (null local-player) (> (length players) 0))
-          (setf (game-player game) (aref players 0))))
+             (local-player (and local-id (plusp local-id) (find-player-by-id players local-id))))
+        (cond
+          ;; Found local player - update game-player if changed
+          ((and local-player (not (eq (game-player game) local-player)))
+           (setf (game-player game) local-player))
+          ;; CRITICAL: Valid player ID but not found in snapshot
+          ;; DO NOT fall back to first player - it could be another client!
+          ;; Log warning and keep current player to avoid teleporting
+          ((and (null local-player) local-id (plusp local-id) (> (length players) 0))
+           (warn "Client player ID ~d not found in snapshot (~d players). Keeping current player to avoid teleport."
+                 local-id (length players)))
+          ;; No valid local ID set yet and players exist - use first player on initial connection
+          ((and (or (null local-id) (zerop local-id)) (> (length players) 0))
+           (setf (game-player game) (aref players 0)))))
       (when players-changed
         (setf (game-entities game)
               (make-entities (game-players game) (game-npcs game)))))))
