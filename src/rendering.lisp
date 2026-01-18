@@ -887,6 +887,13 @@
     (raylib:draw-rectangle 122 6 zone-width 24 (ui-hud-bg-color ui))
     (raylib:draw-text "Zone" 128 hud-y 20 raylib:+white+)
     (raylib:draw-text zone-label 176 hud-y 20 raylib:+white+)
+    ;; FPS display (top-right corner)
+    (let* ((fps (raylib:get-fps))
+           (fps-text (format nil "~d FPS" fps))
+           (fps-width (+ 20 (* 10 (length fps-text))))
+           (fps-x (- *window-width* fps-width 6)))
+      (raylib:draw-rectangle fps-x 6 fps-width 24 (ui-hud-bg-color ui))
+      (raylib:draw-text fps-text (+ fps-x 10) hud-y 20 raylib:+white+))
     (let ((hover-name (ui-hover-npc-name ui)))
       (when hover-name
         (let* ((text-size 20)

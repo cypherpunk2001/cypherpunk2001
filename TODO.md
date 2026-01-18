@@ -99,6 +99,10 @@ WARNING:
 ^CSERVER: shutdown requested (interrupt).
 SERVER: ok
 
+---
+
+if server is killed unexpectedly, client crashes instead of returning to the login screen
+CLIENT FAILED: Condition USOCKET:CONNECTION-REFUSED-ERROR was signalled.
 
 ---
 
