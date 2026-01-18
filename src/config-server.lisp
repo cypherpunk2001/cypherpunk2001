@@ -15,6 +15,11 @@
 (defparameter *net-buffer-size* usocket:+max-datagram-packet-size+
   "Max UDP payload size for snapshot messages.")
 
+;;; Delta Compression - See docs/net.md Prong 2
+(defparameter *max-delta-age* 60
+  "Max snapshots a client can be behind before forcing full resync.
+   At 20 Hz, 60 = 3 seconds of missed packets.")
+
 ;;; Auth Encryption - X25519 + ChaCha20-Poly1305
 (defparameter *auth-encryption-enabled* nil
   "Enable auth payload encryption. Requires server public key.")

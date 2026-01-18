@@ -16,7 +16,9 @@
   auto-right auto-left auto-down auto-up
   mouse-hold-timer
   inventory-lines inventory-count inventory-dirty
-  hud-stats-lines hud-stats-count hud-stats-dirty)
+  hud-stats-lines hud-stats-count hud-stats-dirty
+  ;; Network delta compression (see docs/net.md 4-Prong Approach)
+  snapshot-dirty)
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
@@ -28,7 +30,9 @@
   attack-timer
   frame-index frame-timer
   hits-left alive respawn-timer
-  hit-active hit-timer hit-frame hit-facing hit-facing-sign)
+  hit-active hit-timer hit-frame hit-facing hit-facing-sign
+  ;; Network delta compression (see docs/net.md 4-Prong Approach)
+  snapshot-dirty)
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
   ;; Skill state tracking level and xp.
@@ -369,7 +373,8 @@
                   :inventory-dirty t
                   :hud-stats-lines hud-lines
                   :hud-stats-count 0
-                  :hud-stats-dirty t)))
+                  :hud-stats-dirty t
+                  :snapshot-dirty t)))
 
 (defun make-npc (start-x start-y &key archetype id)
   ;; Construct an NPC state struct at the given start position.
@@ -404,7 +409,8 @@
                :hit-timer 0.0
                :hit-frame 0
                :hit-facing :down
-               :hit-facing-sign 1.0))))
+               :hit-facing-sign 1.0
+               :snapshot-dirty t))))
 
 (defun make-npcs (player world &key id-source)
   ;; Construct NPCs from zone spawn data (or none if no spawns are defined).

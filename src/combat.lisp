@@ -35,6 +35,8 @@
          (hp (- old-hp damage))
          (new-hp (max 0 hp)))
     (setf (player-hp combatant) new-hp)
+    ;; Mark snapshot-dirty for delta compression (see docs/net.md Prong 2)
+    (setf (player-snapshot-dirty combatant) t)
     ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
     ;; to prevent logout-to-survive exploit
     ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
@@ -60,6 +62,8 @@
       (setf (npc-hits-left combatant) max-hits))
     (decf (npc-hits-left combatant) damage)
     (setf (npc-provoked combatant) t)
+    ;; Mark snapshot-dirty for delta compression (see docs/net.md Prong 2)
+    (setf (npc-snapshot-dirty combatant) t)
     (let ((killed nil))
       (when (<= (npc-hits-left combatant) 0)
         (setf (npc-hits-left combatant) 0

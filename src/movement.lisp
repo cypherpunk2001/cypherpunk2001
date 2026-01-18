@@ -421,7 +421,9 @@
             (player-dx player) dx
             (player-dy player) dy)
       ;; Tier-2 write: position changes should be marked dirty for batched saves
+      ;; Also mark snapshot-dirty for delta compression (see docs/net.md Prong 2)
       (when (or (/= old-x x) (/= old-y y))
+        (setf (player-snapshot-dirty player) t)
         (mark-player-dirty (player-id player))))))
 
 (defun player-intent-direction (player)
@@ -835,7 +837,8 @@
               (setf (player-x player) spawn-x
                     (player-y player) spawn-y
                     (player-dx player) 0.0
-                    (player-dy player) 0.0)
+                    (player-dy player) 0.0
+                    (player-snapshot-dirty player) t)
               ;; Tier-1 write: zone transition saves immediately (prevents position loss on crash)
               (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
                                         :max-retries 5
@@ -951,7 +954,8 @@
             (setf (player-x player) final-x
                   (player-y player) final-y
                   (player-dx player) 0.0
-                  (player-dy player) 0.0)
+                  (player-dy player) 0.0
+                  (player-snapshot-dirty player) t)
             (mark-player-dirty (player-id player))
             (log-verbose "Player ~a unstuck, teleported to (~,1f, ~,1f)"
                          (player-id player) final-x final-y)

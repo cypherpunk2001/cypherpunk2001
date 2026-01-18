@@ -98,7 +98,10 @@
   ;; Server-side view of a connected client.
   host port player intent last-heard
   authenticated-p       ; T after successful login, NIL before
-  account-username)     ; Username of logged-in account
+  account-username      ; Username of logged-in account
+  ;; Delta compression (see docs/net.md Prong 2)
+  last-acked-seq        ; Sequence number client confirmed receiving
+  needs-full-resync)    ; T after zone change or reconnect
 
 (defparameter *active-sessions* (make-hash-table :test 'equal)
   "Map of username (lowercase) -> net-client for logged-in accounts.")
@@ -701,7 +704,9 @@
                                 (make-intent :target-x 0 :target-y 0))
                     :last-heard 0.0
                     :authenticated-p nil
-                    :account-username nil))
+                    :account-username nil
+                    :last-acked-seq nil
+                    :needs-full-resync t))
 
 (defun find-net-client (clients host port)
   ;; Return the matching CLIENT for HOST/PORT, if any.
@@ -1166,16 +1171,19 @@
                   (prediction-state-predicted-x pred) server-x
                   (prediction-state-predicted-y pred) server-y)))))))
 
-(defun send-intent-message (socket intent &key host port sequence)
+(defun send-intent-message (socket intent &key host port sequence ack)
   ;; Send the current INTENT as a UDP message.
   ;; If SEQUENCE is provided, includes it for server-side tracking.
-  (let ((payload (intent->plist intent)))
+  ;; If ACK is provided, acknowledges last received snapshot (delta compression).
+  (let ((payload (intent->plist intent))
+        (message (list :type :intent)))
     (when sequence
       (setf payload (append payload (list :sequence sequence))))
-    (send-net-message socket
-                      (list :type :intent :payload payload)
-                      :host host
-                      :port port)))
+    (setf message (append message (list :payload payload)))
+    ;; Add ack at message level (not in payload) for delta compression
+    (when ack
+      (setf message (append message (list :ack ack))))
+    (send-net-message socket message :host host :port port)))
 
 (defun send-auth-message (socket msg-type username password &key host port)
   "Send an authentication message (login or register).
@@ -1573,6 +1581,7 @@
                (loop :with elapsed = 0.0
                      :with frames = 0
                      :with accumulator = 0.0
+                     :with snapshot-seq = 0  ; Delta compression sequence counter
                      :with tick-units = (floor (* *sim-tick-seconds*
                                                   internal-time-units-per-second))
                      :until (or stop-flag
@@ -1645,6 +1654,11 @@
                                   (handle-logout-request client host port game))
                                  (:intent
                                   (when (and client (net-client-authenticated-p client))
+                                    ;; Parse ack for delta compression
+                                    (let ((ack (getf message :ack)))
+                                      (when ack
+                                        (setf (net-client-last-acked-seq client) ack)
+                                        (setf (net-client-needs-full-resync client) nil)))
                                     (apply-intent-plist
                                      (net-client-intent client)
                                      (getf message :payload))))
@@ -1674,18 +1688,23 @@
                          ;; 4. Send snapshots to all clients (serialize once, send N times)
                          ;; OPTIMIZATION: Serialization happens once and is shared across clients.
                          ;; For 500 clients this is much better than 500 serializations.
+                         ;; DELTA COMPRESSION: Only send dirty entities after initial sync.
                          ;; OPTIONAL: Use worker-threads > 1 to parallelize network sends.
                          ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
                          (when clients
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
-                                      ;; Use compact serialization for network efficiency
-                                      ;; Reduces ~232 bytes/player to ~64 bytes/player
-                                      ;; See docs/net.md "4-Prong Approach"
-                                      (state (serialize-game-state-compact game)))
+                                      ;; Increment sequence for this snapshot
+                                      (current-seq (incf snapshot-seq))
+                                      ;; Delta compression: only dirty entities
+                                      ;; Full snapshot still sent to new/desynced clients
+                                      ;; See docs/net.md "4-Prong Approach" Prong 2
+                                      (state (serialize-game-state-delta game current-seq nil)))
                                  (send-snapshots-parallel socket clients state event-plists
-                                                          worker-threads))
+                                                          worker-threads)
+                                 ;; Clear dirty flags after broadcast
+                                 (clear-snapshot-dirty-flags game))
                              (error (e)
                                (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
                                (log-verbose "Snapshot error, skipping frame: ~a" e))))
@@ -1732,6 +1751,7 @@
                    :with frames = 0
                    :with auto-login-attempted = nil
                    :with auto-login-register-failed = nil
+                   :with last-snapshot-seq = nil  ; Delta compression: last received seq
                    :until (or (raylib:window-should-close)
                               (ui-exit-requested ui)
                               (and (> max-seconds 0.0)
@@ -1836,22 +1856,24 @@
                               (send-net-message socket request))
 
                             ;; Handle intent sending (with optional prediction)
+                            ;; Includes ack for delta compression if we received a snapshot
                             (let ((intent (game-client-intent game))
                                   (pred (game-prediction-state game)))
                               (if (and *client-prediction-enabled* pred)
                                   ;; Prediction enabled: store input, apply locally, send with sequence
                                   (let ((seq (store-prediction-input pred intent (game-client-time game))))
                                     (apply-local-prediction game intent dt)
-                                    (send-intent-message socket intent :sequence seq))
-                                  ;; No prediction: just send intent normally
-                                  (send-intent-message socket intent)))
+                                    (send-intent-message socket intent :sequence seq :ack last-snapshot-seq))
+                                  ;; No prediction: just send intent normally (with ack for delta)
+                                  (send-intent-message socket intent :ack last-snapshot-seq)))
                             (clear-requested-chat-message (game-client-intent game))
 
                             ;; Receive and apply snapshots
                             (let ((latest-state nil)
                                   (latest-events nil)
                                   (latest-player-id nil)
-                                  (latest-sequence 0))
+                                  (latest-sequence 0)
+                                  (latest-snapshot-seq nil))  ; Delta compression seq
                               (loop
                                 (multiple-value-bind (message _host _port)
                                     (receive-net-message socket recv-buffer)
@@ -1864,11 +1886,18 @@
                                            latest-player-id (or (getf message :player-id)
                                                                 latest-player-id)
                                            latest-sequence (or (getf message :last-sequence) 0))
+                                     ;; Extract delta compression sequence from state
+                                     (let ((state-seq (getf latest-state :seq)))
+                                       (when state-seq
+                                         (setf latest-snapshot-seq state-seq)))
                                      (dolist (event (getf message :events))
                                        (push event latest-events)))
                                     (t
                                      (log-verbose "Unknown message type from server: ~s"
                                                   (getf message :type)))))
+                              ;; Update last-snapshot-seq for next frame's ack
+                              (when latest-snapshot-seq
+                                (setf last-snapshot-seq latest-snapshot-seq))
                               (when latest-state
                                 (apply-snapshot game latest-state (nreverse latest-events)
                                                 :player-id latest-player-id)

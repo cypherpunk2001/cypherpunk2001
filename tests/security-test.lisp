@@ -49,14 +49,16 @@
 
 (defun extract-first-player-from-snapshot (state)
   "Extract first player's position from snapshot state.
-   Handles both compact (vector) and legacy (plist) formats.
+   Handles compact-v1, delta-v1, and legacy (plist) formats.
    Returns (values x y) or (values nil nil) if not found."
   (let* ((format (getf state :format))
-         (players (getf state :players)))
+         ;; Delta format uses :changed-players, compact/legacy use :players
+         (players (or (getf state :changed-players)
+                      (getf state :players))))
     (when players
       (cond
-        ;; Compact format: players is a vector of vectors
-        ((eq format :compact-v1)
+        ;; Compact or delta format: players is a vector of vectors
+        ((or (eq format :compact-v1) (eq format :delta-v1))
          (when (and (vectorp players) (> (length players) 0))
            (let ((vec (aref players 0)))
              (when (and (vectorp vec) (>= (length vec) 3))
@@ -73,13 +75,15 @@
 
 (defun extract-players-as-plists (state)
   "Extract all players from snapshot state as a list of plists.
-   Handles both compact (vector) and legacy (plist) formats."
+   Handles compact-v1, delta-v1, and legacy (plist) formats."
   (let* ((format (getf state :format))
-         (players (getf state :players)))
+         ;; Delta format uses :changed-players, compact/legacy use :players
+         (players (or (getf state :changed-players)
+                      (getf state :players))))
     (when players
       (cond
-        ;; Compact format: convert vectors to plists
-        ((eq format :compact-v1)
+        ;; Compact or delta format: convert vectors to plists
+        ((or (eq format :compact-v1) (eq format :delta-v1))
          (when (vectorp players)
            (loop :for vec :across players
                  :collect (deserialize-player-compact vec))))
@@ -845,11 +849,14 @@
                ;; Wait and check positions
                (sleep 0.5)
 
+               ;; With delta compression, only changed entities appear in snapshots.
+               ;; p2-stationary starts true; if player 2 appears and moved, we set it nil.
                (let ((p1-moved nil)
-                     (p2-stationary nil)
+                     (p2-stationary t)
+                     (p2-last-x p2-initial-x)
                      (check-deadline (+ (get-internal-real-time)
                                         (floor (* 2 internal-time-units-per-second)))))
-                 (loop :while (and (not (and p1-moved p2-stationary))
+                 (loop :while (and (not p1-moved)
                                    (< (get-internal-real-time) check-deadline))
                        :do (multiple-value-bind (msg _h _p)
                                (receive-net-message socket1 buffer1)
@@ -862,9 +869,11 @@
                                       (when (> (getf p :x) p1-initial-x)
                                         (setf p1-moved t)))
                                      ((eql (getf p :id) p2-id)
-                                      ;; Player 2 should not have moved much
-                                      (when (< (abs (- (getf p :x) p2-initial-x)) 10.0)
-                                        (setf p2-stationary t))))))))
+                                      ;; Player 2 appeared - check if they moved significantly
+                                      (let ((new-x (getf p :x)))
+                                        (when (> (abs (- new-x p2-last-x)) 10.0)
+                                          (setf p2-stationary nil))
+                                        (setf p2-last-x new-x))))))))
                            (sleep 0.01))
 
                  (unless p1-moved

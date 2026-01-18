@@ -626,6 +626,72 @@
               :do (deserialize-npc plist npcs index))))))
 
 ;;;; ========================================================================
+;;;; DELTA COMPRESSION - See docs/net.md Prong 2
+;;;; ========================================================================
+
+(defun serialize-game-state-delta (game seq baseline-seq)
+  "Serialize only dirty entities as delta snapshot.
+   SEQ is current snapshot sequence number.
+   BASELINE-SEQ is client's last acknowledged sequence.
+   Returns compact delta snapshot with only changed entities."
+  (let* ((players (game-players game))
+         (npcs (game-npcs game))
+         (world (game-world game))
+         (zone (world-zone world))
+         (changed-players nil)
+         (changed-npcs nil))
+    ;; Collect dirty players
+    (when players
+      (loop :for player :across players
+            :when (and player (player-snapshot-dirty player))
+            :do (push (serialize-player-compact player) changed-players)))
+    ;; Collect dirty NPCs
+    (when npcs
+      (loop :for npc :across npcs
+            :when (and npc (npc-snapshot-dirty npc))
+            :do (push (serialize-npc-compact npc) changed-npcs)))
+    ;; Build delta snapshot
+    (list :format :delta-v1
+          :seq seq
+          :baseline-seq baseline-seq
+          :zone-id (and zone (zone-id zone))
+          :changed-players (coerce (nreverse changed-players) 'vector)
+          :changed-npcs (coerce (nreverse changed-npcs) 'vector))))
+
+(defun clear-snapshot-dirty-flags (game)
+  "Reset dirty flags on all entities after snapshot broadcast.
+   Called once per frame after sending to all clients."
+  (let ((players (game-players game))
+        (npcs (game-npcs game)))
+    (when players
+      (loop :for player :across players
+            :when player
+            :do (setf (player-snapshot-dirty player) nil)))
+    (when npcs
+      (loop :for npc :across npcs
+            :when npc
+            :do (setf (npc-snapshot-dirty npc) nil)))))
+
+(defun deserialize-game-state-delta (delta game)
+  "Apply delta snapshot to GAME, updating only changed entities.
+   Preserves existing entities not included in the delta."
+  (let ((changed-players (getf delta :changed-players))
+        (changed-npcs (getf delta :changed-npcs)))
+    ;; Apply changed players (update existing or add new)
+    (when changed-players
+      (let ((player-plists (loop :for vec :across changed-players
+                                 :collect (deserialize-player-compact vec))))
+        (apply-player-plists game player-plists)))
+    ;; Apply changed NPCs
+    (when changed-npcs
+      (let ((npcs (game-npcs game)))
+        (loop :for vec :across changed-npcs
+              :for plist = (deserialize-npc-compact vec)
+              :for id = (getf plist :id)
+              :do (when (and npcs (< id (length npcs)))
+                    (deserialize-npc plist npcs id)))))))
+
+;;;; ========================================================================
 ;;;; ZONE OBJECT SERIALIZATION
 ;;;; ========================================================================
 
@@ -685,9 +751,13 @@
 
 (defun deserialize-game-state (plist game)
   ;; Restore authoritative game state from plist into existing GAME.
-  ;; Supports both legacy plist format and compact vector format.
+  ;; Supports legacy plist, compact-v1, and delta-v1 formats.
   (let ((format (getf plist :format)))
     (cond
+      ;; Delta format (incremental updates, see docs/net.md Prong 2)
+      ((eq format :delta-v1)
+       (deserialize-game-state-delta plist game)
+       (getf plist :zone-id))
       ;; Compact format (network-optimized, see docs/net.md 4-Prong)
       ((eq format :compact-v1)
        (deserialize-game-state-compact plist game)
