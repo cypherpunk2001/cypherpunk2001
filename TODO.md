@@ -6,8 +6,26 @@
 3. **Logging?** Critical fails → `warn` | State changes → `log-verbose` | Hot loops → no logs
 4. **Scope?** Config/server state → globals | Computation → locals | Game state → structs (never `*global-players*`)
 5. **Data-driven?** Behavior in data files, not hard-coded | Generic (works for NPCs too), not player-only
+6. **Plist mutation?** ALL mutable keys initialized at creation | Use structs for complex state | See rule below
 
 **If you skip any of these, explain why in commit message.**
+
+### Plist `setf getf` Pitfall (CRITICAL - Common Source of Silent Bugs)
+
+`setf getf` **silently fails** if the key doesn't exist - NO error, NO warning, value unchanged.
+
+```lisp
+;; SILENT FAILURE - key missing
+(setf (getf object :respawn) 5.0)  ;; Does nothing if :respawn not in plist!
+```
+
+**Prevention Rules:**
+1. **Initialize ALL mutable keys** when creating plists: `(list :id id :count nil :respawn 0.0 :dirty nil)`
+2. **Use structs** for complex mutable state (structs always work with setf)
+3. **Add assertions** during debugging: `(assert (member :key plist))`
+4. **Document required keys** for plist-based features
+
+**Full doc:** `docs/PLIST_SETF_GETF_PITFALL.md`
 
 ### Building and Testing
 REMINDER:

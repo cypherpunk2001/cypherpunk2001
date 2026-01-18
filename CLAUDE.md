@@ -445,6 +445,45 @@ We are building reusable game systems, not one-off demo code.
 
 If unsure, refactor toward reuse.
 
+### Plist Mutation: The `setf getf` Pitfall (CRITICAL)
+
+In Common Lisp, `setf getf` **only modifies existing keys** - it does NOT add new keys to a plist. The modification is silently ignored with no error.
+
+```lisp
+;; THIS SILENTLY FAILS - key doesn't exist
+(let ((plist '(:name "arrow")))
+  (setf (getf plist :respawn) 5.0)
+  plist)
+;; => (:name "arrow")  ;; :respawn was NOT added!
+```
+
+**Prevention Rules:**
+
+1. **Always initialize mutable plist keys** when creating plists:
+   ```lisp
+   ;; BAD - missing keys that will be setf'd later
+   (list :id id :x x :y y)
+
+   ;; GOOD - all mutable keys present
+   (list :id id :x x :y y :count nil :respawn 0.0 :dirty nil)
+   ```
+
+2. **Use structs for complex mutable state** - structs don't have this problem:
+   ```lisp
+   (defstruct zone-object id x y count respawn dirty)
+   (setf (zone-object-respawn obj) 5.0)  ;; Always works
+   ```
+
+3. **Add assertions during debugging** to catch missing keys:
+   ```lisp
+   (assert (member :respawn object) ()
+           "Object missing :respawn key - was it initialized?")
+   ```
+
+4. **Document required keys** for plist-based features (which are mutable).
+
+**See `docs/PLIST_SETF_GETF_PITFALL.md` for the full debugging story.**
+
 ### Security: Untrusted Client Principle
 ```lisp
 ;; WRONG - trusting client claims
