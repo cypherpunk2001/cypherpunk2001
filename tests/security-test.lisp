@@ -1263,6 +1263,189 @@
                (intent-move-dy intent))))))
 
 ;;;; ==========================================================================
+;;;; THREAD-SAFETY REGRESSION TESTS (Multi-threaded Server Mode)
+;;;; These tests verify mutex-protected operations work correctly under
+;;;; concurrent access, preventing regressions when MMORPG_WORKER_THREADS > 1
+;;;; ==========================================================================
+
+#+sbcl
+(define-security-test test-concurrent-dirty-flag-marking
+  ;; Test that concurrent mark-player-dirty calls don't lose updates
+  ;; This verifies *player-sessions-lock* protection
+  (let* ((test-player-ids '(1001 1002 1003 1004 1005))
+         (iterations-per-thread 100)
+         (errors nil)
+         (errors-lock (sb-thread:make-mutex :name "errors-lock"))
+         (threads nil))
+    ;; Register test sessions
+    (dolist (id test-player-ids)
+      (let ((player (make-player 0.0 0.0 :id id)))
+        (register-player-session player :zone-id :test-zone)))
+
+    (unwind-protect
+        (progn
+          ;; Spawn threads that concurrently mark players dirty
+          (dotimes (t-idx 5)
+            (let ((my-iterations iterations-per-thread)
+                  (my-ids test-player-ids)
+                  (my-errors-lock errors-lock))
+              (push (sb-thread:make-thread
+                     (lambda ()
+                       (handler-case
+                           (dotimes (i my-iterations)
+                             (dolist (id my-ids)
+                               (mark-player-dirty id)))
+                         (error (e)
+                           (sb-thread:with-mutex (my-errors-lock)
+                             (push (format nil "Thread error: ~a" e) errors))))))
+                    threads)))
+          ;; Wait for all threads
+          (dolist (thread threads)
+            (sb-thread:join-thread thread))
+          ;; Check for errors
+          (when errors
+            (error "Concurrent dirty marking failed: ~{~a~^, ~}" errors))
+          ;; Verify all sessions still exist and are marked dirty
+          (dolist (id test-player-ids)
+            (with-player-sessions-lock
+              (let ((session (gethash id *player-sessions*)))
+                (unless session
+                  (error "Session ~d disappeared during concurrent access" id))
+                (unless (player-session-dirty-p session)
+                  (error "Session ~d lost dirty flag during concurrent access" id))))))
+      ;; Cleanup
+      (dolist (id test-player-ids)
+        (unregister-player-session id)))))
+
+#+sbcl
+(define-security-test test-concurrent-rate-limit-recording
+  ;; Test that concurrent auth failure recording counts correctly
+  ;; This verifies *auth-rate-limits-lock* protection
+  (let* ((test-host "192.168.99.99")  ; Use fake IP to not affect other tests
+         (threads-count 10)
+         (failures-per-thread 10)
+         (expected-total (* threads-count failures-per-thread))
+         (current-time (float (get-universal-time) 1.0)))
+    (unwind-protect
+        (let ((threads nil))
+          ;; Spawn threads that concurrently record failures
+          (dotimes (t-idx threads-count)
+            (let ((host test-host)
+                  (time current-time)
+                  (count failures-per-thread))
+              (push (sb-thread:make-thread
+                     (lambda ()
+                       (dotimes (i count)
+                         (auth-rate-record-failure host time))))
+                    threads)))
+          ;; Wait for all threads
+          (dolist (thread threads)
+            (sb-thread:join-thread thread))
+          ;; Verify total count
+          (with-auth-rate-limits-lock
+            (let ((entry (gethash test-host *auth-rate-limits*)))
+              (unless entry
+                (error "Rate limit entry disappeared"))
+              (let ((actual-count (auth-rate-entry-attempts entry)))
+                ;; Should have exactly expected-total attempts recorded
+                ;; (or at least *auth-max-attempts* if lockout triggered)
+                (when (< actual-count (min expected-total *auth-max-attempts*))
+                  (error "Lost rate limit counts: expected >= ~d, got ~d"
+                         (min expected-total *auth-max-attempts*)
+                         actual-count))))))
+      ;; Cleanup
+      (with-auth-rate-limits-lock
+        (remhash test-host *auth-rate-limits*)))))
+
+#+sbcl
+(define-security-test test-concurrent-nonce-cache-access
+  ;; Test that concurrent replay checks don't corrupt the nonce cache
+  ;; This verifies *auth-nonce-lock* protection
+  (let* ((nonce-count 100)
+         (threads-count 5)
+         (accepted-count 0)
+         (rejected-count 0)
+         (count-lock (sb-thread:make-mutex :name "test-count-lock"))
+         (base-time (get-universal-time))
+         (threads nil))
+    ;; Each thread tries to check the same set of nonces
+    ;; First thread to check each nonce should succeed, others should fail
+    (dotimes (t-idx threads-count)
+      (let ((my-nonce-count nonce-count)
+            (my-base-time base-time)
+            (my-count-lock count-lock))
+        (push (sb-thread:make-thread
+               (lambda ()
+                 (dotimes (i my-nonce-count)
+                   (let* ((nonce (format nil "test-nonce-~d" i))
+                          (result (auth-check-replay nonce my-base-time)))
+                     (sb-thread:with-mutex (my-count-lock)
+                       (if result
+                           (incf accepted-count)
+                           (incf rejected-count)))))))
+              threads)))
+    ;; Wait for all threads
+    (dolist (thread threads)
+      (sb-thread:join-thread thread))
+    ;; Verify exactly nonce-count acceptances (one per unique nonce)
+    (unless (= accepted-count nonce-count)
+      (error "Nonce cache race: expected ~d acceptances, got ~d (duplicates accepted!)"
+             nonce-count accepted-count))
+    ;; Verify the rest were rejected as replays
+    (let ((expected-rejections (* (1- threads-count) nonce-count)))
+      (unless (= rejected-count expected-rejections)
+        (error "Nonce cache race: expected ~d rejections, got ~d"
+               expected-rejections rejected-count)))))
+
+#+sbcl
+(define-security-test test-concurrent-zone-object-modification
+  ;; Test that concurrent zone object access doesn't corrupt state
+  ;; This verifies *zone-objects-lock* protection
+  (let* ((world (%make-world))
+         (zone (%make-zone))
+         (initial-objects (list (list :id :chest :x 5 :y 5 :count 10 :respawn 0.0)
+                                (list :id :chest :x 6 :y 6 :count 10 :respawn 0.0)
+                                (list :id :chest :x 7 :y 7 :count 10 :respawn 0.0)))
+         (iterations 50)
+         (threads nil))
+    ;; Setup world with zone objects
+    (setf (zone-objects zone) (copy-list initial-objects))
+    (setf (world-zone world) zone)
+    (setf (world-tile-dest-size world) 64.0)
+
+    ;; Spawn threads: some do respawn updates, some attempt pickups
+    (dotimes (t-idx 4)
+      (let ((my-world world)
+            (my-iterations iterations)
+            (my-t-idx t-idx))
+        (push (sb-thread:make-thread
+               (lambda ()
+                 (dotimes (i my-iterations)
+                   ;; Alternate between respawn update and pickup attempt
+                   (if (evenp i)
+                       (update-object-respawns my-world 0.1)
+                       ;; Attempt pickup at various tiles
+                       (let ((player (make-player :id (+ 2000 my-t-idx))))
+                         (setf (player-x player) (* 64.0 (+ 5 (mod i 3)))
+                               (player-y player) (* 64.0 (+ 5 (mod i 3))))
+                         (pickup-object-at-tile player my-world
+                                                (+ 5 (mod i 3))
+                                                (+ 5 (mod i 3))
+                                                nil))))))
+              threads)))
+    ;; Wait for all threads
+    (dolist (thread threads)
+      (sb-thread:join-thread thread))
+    ;; Verify zone-objects is still a valid list (not corrupted)
+    (let ((objects (zone-objects zone)))
+      (unless (listp objects)
+        (error "Zone objects corrupted - not a list"))
+      ;; Each object should still have valid structure
+      (dolist (obj objects)
+        (unless (and (listp obj) (getf obj :id))
+          (error "Zone object corrupted: ~a" obj))))))
+
+;;;; ==========================================================================
 ;;;; Main Test Runner
 ;;;; ==========================================================================
 
@@ -1309,6 +1492,15 @@
 
   ;; Input validation tests
   (test-movement-direction-clamped)
+
+  ;; Thread-safety regression tests (SBCL only)
+  ;; These prevent multi-threaded mode from regressing
+  #+sbcl
+  (progn
+    (test-concurrent-dirty-flag-marking)
+    (test-concurrent-rate-limit-recording)
+    (test-concurrent-nonce-cache-access)
+    (test-concurrent-zone-object-modification))
 
   (format t "~&~%Results: ~d passed, ~d failed~%" *tests-passed* *tests-failed*)
   (zerop *tests-failed*))
