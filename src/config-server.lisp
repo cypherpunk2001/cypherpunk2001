@@ -16,7 +16,7 @@
   "Max UDP payload size for snapshot messages.")
 
 ;;; Delta Compression - See docs/net.md Prong 2
-(defparameter *delta-compression-enabled* nil
+(defparameter *delta-compression-enabled* t
   "Enable delta compression (Prong 2). When T, server sends only dirty entities
    to synced clients. When NIL, always sends full snapshots (Prong 1 only).
    Toggle via MMORPG_DELTA_COMPRESSION=1 environment variable.")
