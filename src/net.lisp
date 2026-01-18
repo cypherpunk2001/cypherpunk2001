@@ -1246,7 +1246,10 @@
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
-                                      (state (serialize-game-state game :include-visuals t)))
+                                      ;; Use network-only mode to exclude inventory/equipment/stats
+                                      ;; Critical for 60+ clients (reduces 72KB -> ~15KB)
+                                      (state (serialize-game-state game :include-visuals t
+                                                                        :network-only t)))
                                  (send-snapshots-parallel socket clients state event-plists
                                                           worker-threads))
                              (error (e)
@@ -1336,6 +1339,12 @@
                                   (return))
                                 (case (getf message :type)
                                   (:auth-ok
+                                   ;; Store player-id from auth-ok (used to find local player in snapshots)
+                                   ;; Critical since network-only snapshots don't include per-client player-id
+                                   (let ((player-id (getf message :player-id)))
+                                     (when player-id
+                                       (setf (game-net-player-id game) player-id)
+                                       (log-verbose "Assigned player ID: ~d" player-id)))
                                    (setf (ui-auth-complete ui) t)
                                    (setf (ui-login-active ui) nil)
                                    (log-verbose "Authentication successful"))

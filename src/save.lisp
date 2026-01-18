@@ -100,24 +100,57 @@
                 :do (setf (aref items i) item-id))))
     (%make-equipment :items items)))
 
-(defun serialize-player (player &key (include-visuals nil) (zone-id nil))
-  ;; Convert player state to plist (server-authoritative state only).
-  ;; Ephemeral fields (attack/hit timers, targets, run stamina) are excluded from DB saves.
-  ;; zone-id should be provided for DB persistence to support multi-zone login.
-  (let ((payload (list :id (player-id player)
-                       :x (player-x player)
-                       :y (player-y player)
-                       :hp (player-hp player)
-                       :lifetime-xp (player-lifetime-xp player)
-                       :playtime (player-playtime player)
-                       :created-at (player-created-at player)
-                       :stats (serialize-stat-block (player-stats player))
-                       :inventory (serialize-inventory (player-inventory player))
-                       :equipment (serialize-equipment (player-equipment player)))))
+(defun serialize-player (player &key (include-visuals nil) (zone-id nil) (network-only nil))
+  ;; Convert player state to plist.
+  ;; Modes:
+  ;;   - Default: Full durable state for DB saves (inventory, equipment, stats, etc.)
+  ;;   - :include-visuals t: Add visual/ephemeral fields for rendering
+  ;;   - :network-only t: Minimal state for network snapshots (position + visuals only)
+  ;;                      Excludes inventory/equipment/stats to reduce snapshot size.
+  ;;                      Critical for 60+ player scalability (72KB -> ~15KB).
+  (let ((payload
+          (if network-only
+              ;; NETWORK-ONLY: Minimal state for rendering other players
+              ;; Excludes: inventory, equipment, stats, playtime, created-at, lifetime-xp
+              (list :id (player-id player)
+                    :x (player-x player)
+                    :y (player-y player)
+                    :hp (player-hp player)
+                    :dx (player-dx player)
+                    :dy (player-dy player)
+                    :anim-state (player-anim-state player)
+                    :facing (player-facing player)
+                    :facing-sign (player-facing-sign player)
+                    :frame-index (player-frame-index player)
+                    :frame-timer (player-frame-timer player)
+                    :attacking (player-attacking player)
+                    :attack-hit (player-attack-hit player)
+                    :hit-active (player-hit-active player)
+                    :hit-frame (player-hit-frame player)
+                    :hit-facing (player-hit-facing player)
+                    :hit-facing-sign (player-hit-facing-sign player)
+                    :running (player-running player)
+                    :attack-timer (player-attack-timer player)
+                    :hit-timer (player-hit-timer player)
+                    :run-stamina (player-run-stamina player)
+                    :attack-target-id (player-attack-target-id player)
+                    :follow-target-id (player-follow-target-id player))
+              ;; FULL: Complete durable state for DB saves
+              (list :id (player-id player)
+                    :x (player-x player)
+                    :y (player-y player)
+                    :hp (player-hp player)
+                    :lifetime-xp (player-lifetime-xp player)
+                    :playtime (player-playtime player)
+                    :created-at (player-created-at player)
+                    :stats (serialize-stat-block (player-stats player))
+                    :inventory (serialize-inventory (player-inventory player))
+                    :equipment (serialize-equipment (player-equipment player))))))
     ;; Add zone-id to durable state (for DB saves)
-    (when zone-id
+    (when (and zone-id (not network-only))
       (setf payload (append payload (list :zone-id zone-id))))
-    (when include-visuals
+    ;; Add visual fields if requested (for full snapshots, not network-only which already has them)
+    (when (and include-visuals (not network-only))
       (setf payload (append payload
                             (list :dx (player-dx player)
                                   :dy (player-dy player)
@@ -176,6 +209,7 @@
 
 (defun apply-player-plist (player plist)
   ;; Apply plist fields onto an existing PLAYER, preserving client-only state.
+  ;; For network-only snapshots, inventory/equipment/stats may be nil - preserve existing.
   (when (and player plist)
     ;; Save client-only state before applying server snapshot
     (let ((saved-click-x (player-click-marker-x player))
@@ -186,7 +220,11 @@
           (saved-auto-right (player-auto-right player))
           (saved-auto-left (player-auto-left player))
           (saved-auto-down (player-auto-down player))
-          (saved-auto-up (player-auto-up player)))
+          (saved-auto-up (player-auto-up player))
+          ;; Check which heavy fields are present in plist
+          (has-stats (getf plist :stats))
+          (has-inventory (getf plist :inventory))
+          (has-equipment (getf plist :equipment)))
       (setf (player-id player) (getf plist :id (player-id player))
             (player-x player) (getf plist :x (player-x player))
             (player-y player) (getf plist :y (player-y player))
@@ -196,11 +234,6 @@
             (player-lifetime-xp player) (getf plist :lifetime-xp (player-lifetime-xp player))
             (player-playtime player) (getf plist :playtime (player-playtime player))
             (player-created-at player) (getf plist :created-at (player-created-at player))
-            (player-stats player) (deserialize-stat-block (getf plist :stats))
-            (player-inventory player)
-            (deserialize-inventory (getf plist :inventory) *inventory-size*)
-            (player-equipment player)
-            (deserialize-equipment (getf plist :equipment) (length *equipment-slot-ids*))
             (player-attack-timer player) (getf plist :attack-timer 0.0)
             (player-hit-timer player) (getf plist :hit-timer 0.0)
             (player-run-stamina player) (getf plist :run-stamina 1.0)
@@ -218,6 +251,13 @@
             (player-hit-facing player) (getf plist :hit-facing :down)
             (player-hit-facing-sign player) (getf plist :hit-facing-sign 1.0)
             (player-running player) (getf plist :running nil))
+      ;; Only update heavy fields if present (network-only snapshots exclude these)
+      (when has-stats
+        (setf (player-stats player) (deserialize-stat-block has-stats)))
+      (when has-inventory
+        (setf (player-inventory player) (deserialize-inventory has-inventory *inventory-size*)))
+      (when has-equipment
+        (setf (player-equipment player) (deserialize-equipment has-equipment (length *equipment-slot-ids*))))
       ;; Restore client-only state after applying server snapshot
       (setf (player-click-marker-x player) saved-click-x
             (player-click-marker-y player) saved-click-y
@@ -369,8 +409,10 @@
         :respawn (getf plist :respawn 0.0)
         :respawnable (getf plist :respawnable t)))
 
-(defun serialize-game-state (game &key (include-visuals nil))
+(defun serialize-game-state (game &key (include-visuals nil) (network-only nil))
   ;; Serialize authoritative game state to plist (server snapshot).
+  ;; When network-only is true, uses minimal player serialization (no inventory/stats)
+  ;; to keep snapshot size under UDP limits (~65KB).
   (let* ((players (game-players game))
          (npcs (game-npcs game))
          (world (game-world game))
@@ -379,10 +421,13 @@
          (player-list nil)
          (npc-list nil)
          (object-list nil))
-    ;; Serialize players
+    ;; Serialize players (use network-only mode for smaller snapshots)
     (when players
       (loop :for player :across players
-            :do (push (serialize-player player :include-visuals include-visuals) player-list)))
+            :do (push (serialize-player player
+                                        :include-visuals include-visuals
+                                        :network-only network-only)
+                      player-list)))
     ;; Serialize NPCs
     (when npcs
       (loop :for npc :across npcs
