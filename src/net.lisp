@@ -1196,12 +1196,16 @@
                (loop :with elapsed = 0.0
                      :with frames = 0
                      :with accumulator = 0.0
+                     :with tick-units = (floor (* *sim-tick-seconds*
+                                                  internal-time-units-per-second))
                      :until (or stop-flag
                                 (and (> max-seconds 0.0)
                                      (>= elapsed max-seconds))
                                 (and (> max-frames 0)
                                      (>= frames max-frames)))
-                     :do ;; 1. Receive all pending intents (non-blocking UDP receive)
+                     :do ;; Track frame start time for accurate sleep
+                         (let ((frame-start (get-internal-real-time)))
+                         ;; 1. Receive all pending intents (non-blocking UDP receive)
                          (loop
                            (multiple-value-bind (message host port)
                                (receive-net-message socket recv-buffer)
@@ -1263,7 +1267,13 @@
                              (error (e)
                                (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
                                (log-verbose "Snapshot error, skipping frame: ~a" e))))
-                         (sleep *sim-tick-seconds*))
+                         ;; 5. Sleep for remaining tick time (accounts for processing duration)
+                         ;; This ensures consistent tick rate regardless of frame complexity.
+                         (let* ((frame-end (get-internal-real-time))
+                                (frame-elapsed (- frame-end frame-start))
+                                (remaining-units (- tick-units frame-elapsed)))
+                           (when (> remaining-units 0)
+                             (sleep (/ remaining-units internal-time-units-per-second))))))
              #+sbcl
              (sb-sys:interactive-interrupt ()
                (setf stop-flag t stop-reason "interrupt")))

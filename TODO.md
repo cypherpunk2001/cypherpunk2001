@@ -61,11 +61,11 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-- make stress results in noticible world-freeze hitch/glitch on already logged in player until all 10 are logged in and walking around.
-
-- make stress executed 4 times results in the game noticeibly "slow" feeling, everything just slows down, walking around feels like slow motion with the other make stress players.
+- make stress results in noticible world-freeze hitch/glitch on already logged in player until all 10 are logged in and walking around. (Note: This is expected behavior - registration involves DB operations with retries. For production, consider async registration queues.)
 
 ## Completed Tasks
+
+FIXED. make stress slowdown at 40 clients - Server loop was sleeping for full tick duration regardless of how long processing took. Now tracks frame processing time and only sleeps for remaining duration, ensuring consistent 60Hz tick rate under load.
 
 FIXED. make stress results in random teleports
 
