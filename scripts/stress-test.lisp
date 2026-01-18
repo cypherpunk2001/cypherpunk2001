@@ -1,7 +1,17 @@
 ;;;; scripts/stress-test.lisp
-;;;; Headless client stress testing - ramps up indefinitely
-;;;; Run: sbcl --script scripts/stress-test.lisp
-;;;; Adds 10 clients every 10 seconds until you Ctrl+C
+;;;; Headless client stress testing
+;;;;
+;;;; Usage:
+;;;;   sbcl --script scripts/stress-test.lisp [target-count] [duration]
+;;;;
+;;;; Environment variables:
+;;;;   STRESS_RATE=10     - Clients per second (default: exponential growth)
+;;;;   STRESS_CLIENTS=50  - Target client count (or pass as arg 1)
+;;;;   STRESS_DURATION=60 - Duration in seconds (or pass as arg 2)
+;;;;
+;;;; Examples:
+;;;;   STRESS_RATE=10 make stress              # 10 clients/sec, steady
+;;;;   STRESS_RATE=5 STRESS_CLIENTS=100 make stress  # 5/sec up to 100
 
 (defun load-quicklisp ()
   (let ((setup (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname))))
@@ -18,6 +28,9 @@
 ;; Set to T to stagger client spawns within each batch
 (defvar *stagger* t)
 (defvar *stagger-delay* 0.05) ; 50ms between each client
+
+;; Fixed rate mode (nil = exponential growth, number = clients/second)
+(defvar *rate* nil)
 
 (defun inc-active ()
   (sb-thread:with-mutex (*active-lock*) (incf *active-clients*)))
@@ -96,29 +109,50 @@
   (let ((host (or (sb-ext:posix-getenv "MMORPG_HOST") "127.0.0.1"))
         (port (parse-integer (or (sb-ext:posix-getenv "MMORPG_PORT") "1337")))
         (total 0))
+
+    ;; Parse STRESS_RATE for fixed rate mode
+    (setf *rate* (ignore-errors
+                   (parse-integer (sb-ext:posix-getenv "STRESS_RATE"))))
+
     (format t "~&=== Stress Test ===~%")
-    (format t "Adding 10 clients every 10 seconds. Ctrl+C to stop.~%~%")
+    (if *rate*
+        (format t "Fixed rate: ~d clients/second~%" *rate*)
+        (format t "Exponential growth mode (use STRESS_RATE=N for fixed rate)~%"))
+    (format t "~%")
     (finish-output)
 
-    (let ((batch 10))
-      (loop
-        ;; Spawn batch (staggered if enabled)
-        (dotimes (i batch)
-          (sb-thread:make-thread (lambda () (run-client host port)))
-          (when *stagger*
-            (sleep *stagger-delay*)))
-        (incf total batch)
+    (if *rate*
+        ;; Fixed rate mode - spawn at constant rate
+        (let ((delay (/ 1.0 *rate*)))  ; seconds between spawns
+          (loop
+            (sb-thread:make-thread (lambda () (run-client host port)))
+            (incf total)
+            ;; Log every 10 clients
+            (when (zerop (mod total 10))
+              (format t "[STRESS] Total: ~d | Active: ~d~%" total (get-active))
+              (finish-output))
+            (sleep delay)))
 
-        ;; Log
-        (format t "[STRESS] +~d spawned | Total: ~d | Active: ~d~%" batch total (get-active))
-        (finish-output)
+        ;; Exponential growth mode (original behavior)
+        (let ((batch 10))
+          (loop
+            ;; Spawn batch (staggered if enabled)
+            (dotimes (i batch)
+              (sb-thread:make-thread (lambda () (run-client host port)))
+              (when *stagger*
+                (sleep *stagger-delay*)))
+            (incf total batch)
 
-        ;; Grow batch by 1.2x each round (doubles every ~40 seconds)
-        (setf batch (max batch (truncate (* batch 1.2))))
+            ;; Log
+            (format t "[STRESS] +~d spawned | Total: ~d | Active: ~d~%" batch total (get-active))
+            (finish-output)
 
-        ;; Wait 10 seconds (minus stagger time already spent)
-        (let ((wait (- 10 (if *stagger* (* batch *stagger-delay*) 0))))
-          (when (> wait 0)
-            (sleep wait)))))))
+            ;; Grow batch by 1.2x each round (doubles every ~40 seconds)
+            (setf batch (max batch (truncate (* batch 1.2))))
+
+            ;; Wait 10 seconds (minus stagger time already spent)
+            (let ((wait (- 10 (if *stagger* (* batch *stagger-delay*) 0))))
+              (when (> wait 0)
+                (sleep wait))))))))
 
 (main)
