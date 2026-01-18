@@ -61,13 +61,28 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-**CRITICAL: REVIEW ## Going Forward: Snapshot Size Optimization (4-Prong Approach) of net.md** and implement step by step in full.
+### Snapshot Size Optimization (4-Prong Approach) - Status
+
+See `docs/net.md` for full spec.
+
+| Prong | Status | Notes |
+|-------|--------|-------|
+| **Prong 1: Compact Serialization** | ✅ DONE | Vectors instead of plists, ~64 bytes/player |
+| **Prong 2: Delta Compression** | ❌ REVERTED | Bug: players disappear when idle, new clients get empty arrays. Needs `needs-full-resync` logic. |
+| **Prong 3: UDP Fragmentation** | ✅ DONE | Split large snapshots into numbered chunks |
+| **Prong 4: zlib Compression** | ⏸️ DEFERRED | Not needed yet |
+
+**Stress Test Results (2026-01-17):**
+- Prong 1 + Prong 3 only (no delta): **419 clients stable**, players visible and moving
+- Previous test with Prong 2 delta: players disappeared at ~50 clients
+
+**Next:** Fix Prong 2 properly - send full snapshot on first connect (`needs-full-resync=t`), then deltas.
 
 ## Future Tasks / Roadmap
 
 **Potential optimizations to investigate:**
 
-- Delta compression for snapshots (send changes, not full state)
+- Delta compression for snapshots - FIX PRONG 2 (send full snapshot first, then deltas)
 
 - Entity culling in snapshots (skip distant players)
 - Batch intent processing

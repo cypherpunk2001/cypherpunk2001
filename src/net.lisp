@@ -1779,16 +1779,12 @@
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
-                                      ;; Increment sequence for this snapshot
-                                      (current-seq (incf snapshot-seq))
-                                      ;; Delta compression: only dirty entities
-                                      ;; Full snapshot still sent to new/desynced clients
-                                      ;; See docs/net.md "4-Prong Approach" Prong 2
-                                      (state (serialize-game-state-delta game current-seq nil)))
+                                      ;; Use compact serialization (Prong 1) - full snapshots
+                                      ;; TODO: Implement proper delta (Prong 2) with needs-full-resync
+                                      ;; See docs/net.md "4-Prong Approach"
+                                      (state (serialize-game-state-compact game)))
                                  (send-snapshots-parallel socket clients state event-plists
-                                                          worker-threads)
-                                 ;; Clear dirty flags after broadcast
-                                 (clear-snapshot-dirty-flags game))
+                                                          worker-threads))
                              (error (e)
                                (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
                                (log-verbose "Snapshot error, skipping frame: ~a" e))))

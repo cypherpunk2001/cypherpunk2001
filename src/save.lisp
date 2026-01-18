@@ -674,15 +674,21 @@
 
 (defun deserialize-game-state-delta (delta game)
   "Apply delta snapshot to GAME, updating only changed entities.
-   Preserves existing entities not included in the delta."
+   Preserves existing entities not included in the delta.
+   CRITICAL: Only updates entities by ID - does NOT replace the arrays."
   (let ((changed-players (getf delta :changed-players))
-        (changed-npcs (getf delta :changed-npcs)))
-    ;; Apply changed players (update existing or add new)
-    (when changed-players
-      (let ((player-plists (loop :for vec :across changed-players
-                                 :collect (deserialize-player-compact vec))))
-        (apply-player-plists game player-plists)))
-    ;; Apply changed NPCs
+        (changed-npcs (getf delta :changed-npcs))
+        (players (game-players game)))
+    ;; Apply changed players - update existing by ID, preserve others
+    (when (and changed-players (> (length changed-players) 0))
+      (loop :for vec :across changed-players
+            :for plist = (deserialize-player-compact vec)
+            :for id = (getf plist :id)
+            :for existing = (and players (find-player-by-id players id))
+            :do (when existing
+                  ;; Update existing player in place
+                  (apply-player-plist existing plist))))
+    ;; Apply changed NPCs - update existing by ID
     (when changed-npcs
       (let ((npcs (game-npcs game)))
         (loop :for vec :across changed-npcs
