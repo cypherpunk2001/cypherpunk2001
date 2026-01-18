@@ -1016,8 +1016,10 @@
       (let ((full-state (serialize-game-state-compact game)))
         ;; Add sequence number for client to ack
         (setf (getf full-state :seq) current-seq)
-        (log-verbose "Sending full resync to ~d clients (seq ~d)"
-                     (length resync-clients) current-seq)
+        (log-verbose "Sending full resync to ~d clients (seq ~d, ~d players, ~d npcs)"
+                     (length resync-clients) current-seq
+                     (length (getf full-state :players))
+                     (length (getf full-state :npcs)))
         (send-snapshots-parallel socket resync-clients full-state event-plists 1)
         ;; Mark these clients as no longer needing resync
         (dolist (c resync-clients)
