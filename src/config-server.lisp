@@ -20,6 +20,14 @@
   "Max snapshots a client can be behind before forcing full resync.
    At 20 Hz, 60 = 3 seconds of missed packets.")
 
+;;; UDP Fragmentation - See docs/net.md Prong 3
+(defparameter *chunk-overhead* 100
+  "Reserved bytes for chunk message header.")
+(defparameter *max-chunk-payload* (- usocket:+max-datagram-packet-size+ 100)
+  "Maximum payload bytes per UDP chunk (buffer size minus header overhead).")
+(defparameter *chunk-timeout* 1.0
+  "Seconds before discarding incomplete chunk sequences.")
+
 ;;; Auth Encryption - X25519 + ChaCha20-Poly1305
 (defparameter *auth-encryption-enabled* nil
   "Enable auth payload encryption. Requires server public key.")

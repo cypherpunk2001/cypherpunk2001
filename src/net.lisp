@@ -103,6 +103,14 @@
   last-acked-seq        ; Sequence number client confirmed receiving
   needs-full-resync)    ; T after zone change or reconnect
 
+;;; UDP Fragmentation - See docs/net.md Prong 3
+(defstruct chunk-buffer
+  "Client-side buffer for reassembling fragmented snapshots."
+  (seq nil)                    ; Sequence number being assembled
+  (total 0 :type fixnum)       ; Expected chunk count
+  (received (make-hash-table)) ; chunk-idx -> data string
+  (timestamp 0.0))             ; For timeout detection
+
 (defparameter *active-sessions* (make-hash-table :test 'equal)
   "Map of username (lowercase) -> net-client for logged-in accounts.")
 
@@ -912,6 +920,72 @@
       (log-verbose "Failed to send snapshot to ~a:~d: ~a" host port e)
       nil)))
 
+;;;; ========================================================================
+;;;; UDP FRAGMENTATION - See docs/net.md Prong 3
+;;;; ========================================================================
+
+(defun send-fragmented-snapshot (socket state event-plists seq host port)
+  "Split snapshot into chunks and send each via UDP.
+   Used when snapshot exceeds UDP buffer size."
+  (let* ((payload (with-output-to-string (out)
+                    (prin1 (list :state state :events event-plists) out)))
+         (total-size (length payload))
+         (chunk-count (ceiling total-size *max-chunk-payload*)))
+    (log-verbose "Fragmenting snapshot: ~d bytes into ~d chunks for ~a:~d"
+                 total-size chunk-count host port)
+    (loop :for chunk-idx :from 0 :below chunk-count
+          :for start = (* chunk-idx *max-chunk-payload*)
+          :for end = (min (+ start *max-chunk-payload*) total-size)
+          :for chunk-data = (subseq payload start end)
+          :do (send-net-message socket
+                               (list :type :snapshot-chunk
+                                     :seq seq
+                                     :chunk chunk-idx
+                                     :total chunk-count
+                                     :data chunk-data)
+                               :host host :port port))))
+
+(defun receive-snapshot-chunk (buffer chunk-message current-time)
+  "Add chunk to reassembly buffer. Returns complete state or nil.
+   BUFFER is a chunk-buffer struct.
+   CHUNK-MESSAGE is the incoming :snapshot-chunk message.
+   CURRENT-TIME is used for timeout detection."
+  (let ((seq (getf chunk-message :seq))
+        (idx (getf chunk-message :chunk))
+        (total (getf chunk-message :total))
+        (data (getf chunk-message :data)))
+    ;; Timeout check - discard old incomplete sequences
+    (when (and (chunk-buffer-seq buffer)
+               (> (- current-time (chunk-buffer-timestamp buffer)) *chunk-timeout*))
+      (log-verbose "Chunk timeout: discarding incomplete seq ~d" (chunk-buffer-seq buffer))
+      (setf (chunk-buffer-seq buffer) nil))
+    ;; New sequence? Reset buffer
+    (when (or (null (chunk-buffer-seq buffer))
+              (/= seq (chunk-buffer-seq buffer)))
+      (setf (chunk-buffer-seq buffer) seq
+            (chunk-buffer-total buffer) total
+            (chunk-buffer-received buffer) (make-hash-table)
+            (chunk-buffer-timestamp buffer) current-time))
+    ;; Store chunk
+    (setf (gethash idx (chunk-buffer-received buffer)) data)
+    ;; Check if complete
+    (when (= (hash-table-count (chunk-buffer-received buffer)) total)
+      ;; Reassemble in order
+      (let ((parts nil))
+        (loop :for i :from 0 :below total
+              :do (push (gethash i (chunk-buffer-received buffer)) parts))
+        (let* ((combined (apply #'concatenate 'string (nreverse parts)))
+               (*read-eval* nil)
+               (parsed (handler-case
+                           (read-from-string combined nil nil)
+                         (error () nil))))
+          (when parsed
+            ;; Clear buffer for next sequence
+            (setf (chunk-buffer-seq buffer) nil)
+            ;; Return the parsed state and events
+            (values (getf parsed :state)
+                    (getf parsed :events))))))))
+
 (defun send-snapshots-parallel (socket clients state event-plists worker-threads)
   ;; Send snapshots to clients.
   ;; Only sends to authenticated clients with a player.
@@ -920,6 +994,8 @@
   ;; to all clients. This reduces encoding from O(clients × state_size) to O(state_size).
   ;; The player-id field is omitted from broadcast snapshots - clients use the ID
   ;; they received from auth-ok (stored in game-net-player-id).
+  ;;
+  ;; UDP FRAGMENTATION (Prong 3): If snapshot exceeds buffer size, split into chunks.
   (declare (ignore worker-threads)) ; Parallel disabled - socket serializes sends anyway
   (let ((authenticated-clients nil))
     ;; Filter authenticated clients
@@ -936,14 +1012,22 @@
              (text (encode-net-message message))
              (octets (string-to-octets text))
              (size (length octets)))
-        (when (> size *net-buffer-size*)
-          (warn "Dropping snapshot (~d bytes) over buffer size ~d" size *net-buffer-size*)
-          (return-from send-snapshots-parallel nil))
-        ;; Send identical bytes to all clients (one syscall per client)
-        (dolist (client authenticated-clients)
-          (send-snapshot-bytes socket octets size
-                               (net-client-host client)
-                               (net-client-port client)))))))
+        (cond
+          ;; Normal case: snapshot fits in one UDP packet
+          ((<= size *net-buffer-size*)
+           (dolist (client authenticated-clients)
+             (send-snapshot-bytes socket octets size
+                                  (net-client-host client)
+                                  (net-client-port client))))
+          ;; Large snapshot: use UDP fragmentation (Prong 3)
+          (t
+           (let ((seq (or (getf state :seq) 0)))
+             (log-verbose "Snapshot too large (~d bytes), fragmenting for ~d clients"
+                          size (length authenticated-clients))
+             (dolist (client authenticated-clients)
+               (send-fragmented-snapshot socket state event-plists seq
+                                         (net-client-host client)
+                                         (net-client-port client))))))))))
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
@@ -1752,6 +1836,7 @@
                    :with auto-login-attempted = nil
                    :with auto-login-register-failed = nil
                    :with last-snapshot-seq = nil  ; Delta compression: last received seq
+                   :with chunk-buf = (make-chunk-buffer)  ; UDP fragmentation: reassembly buffer
                    :until (or (raylib:window-should-close)
                               (ui-exit-requested ui)
                               (and (> max-seconds 0.0)
@@ -1892,6 +1977,19 @@
                                          (setf latest-snapshot-seq state-seq)))
                                      (dolist (event (getf message :events))
                                        (push event latest-events)))
+                                    ;; Fragmented snapshot chunk (Prong 3)
+                                    (:snapshot-chunk
+                                     (multiple-value-bind (reassembled-state reassembled-events)
+                                         (receive-snapshot-chunk chunk-buf message
+                                                                 (game-client-time game))
+                                       (when reassembled-state
+                                         ;; Complete snapshot reassembled - use it
+                                         (setf latest-state reassembled-state)
+                                         (let ((state-seq (getf reassembled-state :seq)))
+                                           (when state-seq
+                                             (setf latest-snapshot-seq state-seq)))
+                                         (dolist (event reassembled-events)
+                                           (push event latest-events)))))
                                     (t
                                      (log-verbose "Unknown message type from server: ~s"
                                                   (getf message :type)))))
