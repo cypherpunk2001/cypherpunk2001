@@ -105,7 +105,10 @@ Client-Side Prediction (Optional)
 Performance & Scaling
 - Current server runs ONE zone (tested smooth with hundreds of entities on client).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
-- Snapshot optimization: state serialized once per frame, shared across all clients.
+- Snapshot optimization:
+  - State serialized once per frame via `serialize-game-state`
+  - Snapshot encoded to bytes ONCE and sent to all clients (encode-once-send-many)
+  - Previously encoded O(clients × state_size), now O(state_size) - critical for 40+ clients
 - Accurate tick timing: Server tracks frame processing time and only sleeps for remaining duration. This ensures consistent tick rate regardless of frame complexity (no slowdown under load).
 - Optional parallel snapshot sending: Use `worker-threads` parameter to parallelize network sends across multiple threads.
   - Default: 1 (serial sending, simple)

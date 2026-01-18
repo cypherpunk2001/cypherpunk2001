@@ -510,63 +510,48 @@
     (make-combat-event :type (getf plist :type)
                        :text (getf plist :text))))
 
+(defun send-snapshot-bytes (socket octets size host port)
+  "Send pre-encoded snapshot bytes to a client. Returns T on success."
+  (handler-case
+      (progn
+        (usocket:socket-send socket octets size :host host :port port)
+        t)
+    (error (e)
+      (log-verbose "Failed to send snapshot to ~a:~d: ~a" host port e)
+      nil)))
+
 (defun send-snapshots-parallel (socket clients state event-plists worker-threads)
-  ;; Send snapshots to clients using WORKER-THREADS parallel threads.
-  ;; Falls back to serial sending if worker-threads <= 1.
+  ;; Send snapshots to clients.
   ;; Only sends to authenticated clients with a player.
-  (let ((authenticated-clients (remove-if-not
-                                (lambda (c)
-                                  (and (net-client-authenticated-p c)
-                                       (net-client-player c)))
-                                clients)))
-    (if (<= worker-threads 1)
-        ;; Serial: Send to each client in order
+  ;;
+  ;; PERFORMANCE OPTIMIZATION: Encode the snapshot ONCE and send identical bytes
+  ;; to all clients. This reduces encoding from O(clients × state_size) to O(state_size).
+  ;; The player-id field is omitted from broadcast snapshots - clients use the ID
+  ;; they received from auth-ok (stored in game-net-player-id).
+  (declare (ignore worker-threads)) ; Parallel disabled - socket serializes sends anyway
+  (let ((authenticated-clients nil))
+    ;; Filter authenticated clients
+    (dolist (c clients)
+      (when (and (net-client-authenticated-p c)
+                 (net-client-player c))
+        (push c authenticated-clients)))
+    (when authenticated-clients
+      ;; CRITICAL OPTIMIZATION: Encode snapshot once, reuse for all clients
+      ;; Previously we called encode-net-message 40 times for 40 clients!
+      (let* ((message (list :type :snapshot
+                            :state state
+                            :events event-plists))
+             (text (encode-net-message message))
+             (octets (string-to-octets text))
+             (size (length octets)))
+        (when (> size *net-buffer-size*)
+          (warn "Dropping snapshot (~d bytes) over buffer size ~d" size *net-buffer-size*)
+          (return-from send-snapshots-parallel nil))
+        ;; Send identical bytes to all clients (one syscall per client)
         (dolist (client authenticated-clients)
-          (send-net-message socket
-                            (list :type :snapshot
-                                  :state state
-                                  :events event-plists
-                                  :player-id (player-id (net-client-player client)))
-                            :host (net-client-host client)
-                            :port (net-client-port client)))
-        ;; Parallel: Distribute clients across worker threads with socket synchronization
-        #+sbcl
-        (let* ((client-count (length authenticated-clients))
-               (chunk-size (ceiling client-count worker-threads))
-               (socket-lock (sb-thread:make-mutex :name "snapshot-socket-lock"))
-               (threads nil))
-          (loop :for start :from 0 :below client-count :by chunk-size
-                :do (let ((end (min (+ start chunk-size) client-count)))
-                      (push
-                       (sb-thread:make-thread
-                        (lambda ()
-                          (loop :for i :from start :below end
-                                :for client = (nth i authenticated-clients)
-                                ;; Synchronize socket access across threads
-                                :do (sb-thread:with-mutex (socket-lock)
-                                      (send-net-message socket
-                                                        (list :type :snapshot
-                                                              :state state
-                                                              :events event-plists
-                                                              :player-id (player-id
-                                                                          (net-client-player client)))
-                                                        :host (net-client-host client)
-                                                        :port (net-client-port client)))))
-                        :name (format nil "snapshot-sender-~d" start))
-                       threads)))
-          ;; Wait for all threads to complete
-          (dolist (thread threads)
-            (sb-thread:join-thread thread)))
-        #-sbcl
-        ;; Non-SBCL: Fall back to serial
-        (dolist (client authenticated-clients)
-          (send-net-message socket
-                            (list :type :snapshot
-                                  :state state
-                                  :events event-plists
-                                  :player-id (player-id (net-client-player client)))
-                            :host (net-client-host client)
-                            :port (net-client-port client))))))
+          (send-snapshot-bytes socket octets size
+                               (net-client-host client)
+                               (net-client-port client)))))))
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.

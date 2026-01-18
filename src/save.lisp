@@ -340,10 +340,10 @@
            (setf (game-player game) local-player))
           ;; CRITICAL: Valid player ID but not found in snapshot
           ;; DO NOT fall back to first player - it could be another client!
-          ;; Log warning and keep current player to avoid teleporting
+          ;; Log warning (verbose only to avoid spam) and keep current player
           ((and (null local-player) local-id (plusp local-id) (> (length players) 0))
-           (warn "Client player ID ~d not found in snapshot (~d players). Keeping current player to avoid teleport."
-                 local-id (length players)))
+           (log-verbose "Client player ID ~d not found in snapshot (~d players). Keeping current."
+                        local-id (length players)))
           ;; No valid local ID set yet and players exist - use first player on initial connection
           ((and (or (null local-id) (zerop local-id)) (> (length players) 0))
            (setf (game-player game) (aref players 0)))))
