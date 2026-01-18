@@ -27,6 +27,32 @@
 
 **Full doc:** `docs/PLIST_SETF_GETF_PITFALL.md`
 
+### Plist `setf getf` Codebase Audit (2026-01-18)
+
+**17 total `setf (getf ...)` patterns found. 14 safe, 3 bugs fixed.**
+
+| File | Lines | Key(s) | Status |
+|------|-------|--------|--------|
+| data.lisp | 356, 369, 371 | dynamic | ✅ SAFE - Building plist from scratch |
+| migrations.lisp | 15, 23, 25 | `:lifetime-xp`, `:playtime`, `:created-at` | ✅ SAFE - Guarded with `unless` |
+| migrations.lisp | 55 | `:version` | ✅ SAFE - Always safe to overwrite |
+| net.lisp | 1028 | `:seq` | ✅ SAFE - Augmenting serialized output |
+| db.lisp | 377, 521 | `:version` | ✅ SAFE - Metadata field |
+| save.lisp | 679, 835 | `:count` | ✅ SAFE - Zone objects initialized |
+| save.lisp | 748 | `:snapshot-dirty` | ✅ SAFE - Zone objects initialized |
+| progression.lisp | 613, 653, 659, 712 | `:count`, `:respawn`, `:snapshot-dirty` | ✅ SAFE - Zone objects from `load-zone` |
+| **editor.lisp** | **914-916** | missing 4 keys | ✅ FIXED - Added `:count`, `:respawn`, `:respawnable`, `:snapshot-dirty` |
+| **progression.lisp** | **714-718, 720-724** | missing 2 keys | ✅ FIXED - Added `:respawn`, `:snapshot-dirty` |
+
+**Zone object required keys (per `zone.lisp:453-462`):**
+```lisp
+(list :id ... :x ... :y ...
+      :count nil          ;; MUTABLE
+      :respawn 0.0        ;; MUTABLE
+      :respawnable t
+      :snapshot-dirty nil) ;; MUTABLE
+```
+
 ### Building and Testing
 REMINDER:
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**

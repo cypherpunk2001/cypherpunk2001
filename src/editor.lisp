@@ -913,7 +913,11 @@
                    (when object-id
                      (zone-add-object zone (list :id object-id
                                                  :x tx
-                                                 :y ty))
+                                                 :y ty
+                                                 :count 1
+                                                 :respawn 0.0
+                                                 :respawnable t
+                                                 :snapshot-dirty nil))
                      (setf (editor-dirty editor) t)))))
             (:spawn
              (if right-down

@@ -715,13 +715,17 @@
                                                      :x tx
                                                      :y ty
                                                      :count dropped
-                                                     :respawnable nil)))
+                                                     :respawn 0.0
+                                                     :respawnable nil
+                                                     :snapshot-dirty nil)))
                         (t
                          (zone-add-object zone (list :id object-id
                                                      :x tx
                                                      :y ty
                                                      :count dropped
-                                                     :respawnable nil))))
+                                                     :respawn 0.0
+                                                     :respawnable nil
+                                                     :snapshot-dirty nil))))
                       dropped)))))))))))
 
 (defun roll-loot-entry (entries)
