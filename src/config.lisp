@@ -208,12 +208,13 @@
 ;;;; ========================================================================
 
 ;;; Animation State Codes - Map keywords to small integers
+;;; NOTE: Game uses :walk/:attack (not :walking/:attacking) - see utils.lisp:player-state
 (defparameter *anim-state-to-code*
-  '((:idle . 0) (:walking . 1) (:attacking . 2) (:hit . 3) (:dead . 4))
+  '((:idle . 0) (:walk . 1) (:attack . 2))
   "Animation state keyword to integer code mapping for compact serialization.")
 
 (defparameter *code-to-anim-state*
-  '((0 . :idle) (1 . :walking) (2 . :attacking) (3 . :hit) (4 . :dead))
+  '((0 . :idle) (1 . :walk) (2 . :attack))
   "Integer code to animation state keyword mapping for deserialization.")
 
 ;;; Facing Direction Codes - Map keywords to small integers

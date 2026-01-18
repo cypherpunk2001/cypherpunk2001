@@ -752,7 +752,7 @@
     (setf (player-hp player) 85
           (player-dx player) 1.0
           (player-dy player) -0.5
-          (player-anim-state player) :walking
+          (player-anim-state player) :walk
           (player-facing player) :side
           (player-facing-sign player) 1.0
           (player-frame-index player) 3
@@ -776,7 +776,7 @@
       (assert (< (abs (- 123.4 (getf plist :x))) 0.2) nil "x not preserved within tolerance")
       (assert (< (abs (- 789.0 (getf plist :y))) 0.2) nil "y not preserved within tolerance")
       (assert-equal 85 (getf plist :hp) "hp not preserved")
-      (assert-equal :walking (getf plist :anim-state) "anim-state not preserved")
+      (assert-equal :walk (getf plist :anim-state) "anim-state not preserved")
       (assert-equal :side (getf plist :facing) "facing not preserved")
       (assert (getf plist :attacking) nil "attacking flag not preserved")
       (assert (getf plist :hit-active) nil "hit-active flag not preserved")
@@ -797,7 +797,7 @@
           (npc-provoked npc) t
           (npc-behavior-state npc) :chasing
           (npc-attack-timer npc) 0.75
-          (npc-anim-state npc) :attacking
+          (npc-anim-state npc) :attack
           (npc-facing npc) :up
           (npc-frame-index npc) 2
           (npc-frame-timer npc) 0.15
@@ -816,7 +816,7 @@
       (assert (getf plist :alive) nil "alive flag not preserved")
       (assert (getf plist :provoked) nil "provoked flag not preserved")
       (assert-equal :chasing (getf plist :behavior-state) "behavior-state not preserved")
-      (assert-equal :attacking (getf plist :anim-state) "anim-state not preserved")
+      (assert-equal :attack (getf plist :anim-state) "anim-state not preserved")
       (assert-equal :up (getf plist :facing) "facing not preserved")
       (assert (getf plist :hit-active) nil "hit-active flag not preserved")))
   t)
@@ -826,7 +826,7 @@
   (let ((player (make-player 123.456 789.012 :id 42)))
     (setf (player-hp player) 100
           (player-attacking player) t
-          (player-anim-state player) :walking
+          (player-anim-state player) :walk
           (player-facing player) :side
           ;; Clear inventory for fair comparison (compact includes inv, network-only excludes)
           (player-inventory player) nil)
@@ -849,8 +849,8 @@
 
 (defun test-compact-enum-encoding ()
   "Test that enum encoding/decoding works correctly for all values."
-  ;; Test animation states
-  (dolist (state '(:idle :walking :attacking :hit :dead))
+  ;; Test animation states (game uses :walk/:attack not :walking/:attacking)
+  (dolist (state '(:idle :walk :attack))
     (let ((code (encode-anim-state state)))
       (assert-equal state (decode-anim-state code)
                     (format nil "anim-state ~a roundtrip failed" state))))

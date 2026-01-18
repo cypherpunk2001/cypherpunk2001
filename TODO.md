@@ -1,3 +1,30 @@
+## CRITICAL: Player Animation Regression (2026-01-18)
+
+**Status: FIXED - Ready for testing/commit**
+
+**Symptoms (now fixed):**
+1. Idle animation broken - no slow moving pace when idle
+2. Attack/spacebar staff animation broken
+3. Walking sprite arm stays "outward" (Heisman pose) instead of relaxing back
+
+**Root Cause:** Compact serialization enum tables in `src/config.lisp` used wrong keywords:
+- `*anim-state-to-code*` used `:walking`/`:attacking` but game uses `:walk`/`:attack`
+- This was introduced in commit 9b21fd5 (Prong 1: Compact Serialization)
+- Same class of bug as the `:left`/`:right` vs `:side` facing direction issue (fixed in 3edbb2c)
+
+**Fix Applied:**
+1. Changed `*anim-state-to-code*` to: `((:idle . 0) (:walk . 1) (:attack . 2))`
+2. Changed `*code-to-anim-state*` to: `((0 . :idle) (1 . :walk) (2 . :attack))`
+3. Updated tests in `tests/persistence-test.lisp` to use correct keywords
+4. All tests pass: checkparens, ci, test-persistence, test-security, smoke
+
+**Files changed (not yet committed):**
+- `src/config.lisp` - fixed anim-state enum tables
+- `tests/persistence-test.lisp` - updated test values
+- `TODO.md` - documented issue and fix
+
+---
+
 ### Code Quality Standards (MANDATORY FOR ALL CHANGES)
 
 **Check EVERY change before claiming complete:**
