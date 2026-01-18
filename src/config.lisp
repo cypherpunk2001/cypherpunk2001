@@ -201,3 +201,33 @@
   "Raylib mouse button code for right click.")
 (defparameter +mouse-middle+ (cffi:foreign-enum-value 'raylib:mouse-button :middle)
   "Raylib mouse button code for middle click.")
+
+;;;; ========================================================================
+;;;; COMPACT SERIALIZATION - Network Snapshot Optimization
+;;;; Used to minimize snapshot size for scalability (see docs/net.md 4-Prong)
+;;;; ========================================================================
+
+;;; Animation State Codes - Map keywords to small integers
+(defparameter *anim-state-to-code*
+  '((:idle . 0) (:walking . 1) (:attacking . 2) (:hit . 3) (:dead . 4))
+  "Animation state keyword to integer code mapping for compact serialization.")
+
+(defparameter *code-to-anim-state*
+  '((0 . :idle) (1 . :walking) (2 . :attacking) (3 . :hit) (4 . :dead))
+  "Integer code to animation state keyword mapping for deserialization.")
+
+;;; Facing Direction Codes - Map keywords to small integers
+(defparameter *facing-to-code*
+  '((:up . 0) (:down . 1) (:left . 2) (:right . 3))
+  "Facing direction keyword to integer code mapping for compact serialization.")
+
+(defparameter *code-to-facing*
+  '((0 . :up) (1 . :down) (2 . :left) (3 . :right))
+  "Integer code to facing direction keyword mapping for deserialization.")
+
+;;; Quantization Parameters
+(defparameter *coord-scale* 10
+  "Scale factor for coordinate quantization. 10 = 0.1 pixel precision.")
+
+(defparameter *timer-scale* 100
+  "Scale factor for timer quantization. 100 = 0.01 second precision.")

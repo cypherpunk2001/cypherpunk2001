@@ -47,6 +47,47 @@
               default))
         default)))
 
+(defun extract-first-player-from-snapshot (state)
+  "Extract first player's position from snapshot state.
+   Handles both compact (vector) and legacy (plist) formats.
+   Returns (values x y) or (values nil nil) if not found."
+  (let* ((format (getf state :format))
+         (players (getf state :players)))
+    (when players
+      (cond
+        ;; Compact format: players is a vector of vectors
+        ((eq format :compact-v1)
+         (when (and (vectorp players) (> (length players) 0))
+           (let ((vec (aref players 0)))
+             (when (and (vectorp vec) (>= (length vec) 3))
+               ;; Compact vector format: [0]=id [1]=x*10 [2]=y*10
+               (values (dequantize-coord (aref vec 1))
+                       (dequantize-coord (aref vec 2)))))))
+        ;; Legacy format: players is a list of plists
+        (t
+         (when (listp players)
+           (let ((first-player (first players)))
+             (when first-player
+               (values (getf first-player :x)
+                       (getf first-player :y))))))))))
+
+(defun extract-players-as-plists (state)
+  "Extract all players from snapshot state as a list of plists.
+   Handles both compact (vector) and legacy (plist) formats."
+  (let* ((format (getf state :format))
+         (players (getf state :players)))
+    (when players
+      (cond
+        ;; Compact format: convert vectors to plists
+        ((eq format :compact-v1)
+         (when (vectorp players)
+           (loop :for vec :across players
+                 :collect (deserialize-player-compact vec))))
+        ;; Legacy format: already plists
+        (t
+         (when (listp players)
+           players))))))
+
 (defvar *tests-passed* 0)
 (defvar *tests-failed* 0)
 
@@ -163,10 +204,11 @@
                                (:auth-ok (setf auth-ok t))
                                (:snapshot
                                 (when auth-ok
-                                  (let ((players (getf (getf message :state) :players)))
-                                    (when players
-                                      (setf initial-x (getf (first players) :x)
-                                            initial-y (getf (first players) :y)))))))))
+                                  (multiple-value-bind (x y)
+                                      (extract-first-player-from-snapshot (getf message :state))
+                                    (when x
+                                      (setf initial-x x
+                                            initial-y y))))))))
                          (sleep 0.01))
                (unless (and auth-ok initial-x)
                  (error "Failed to get initial position"))
@@ -194,9 +236,11 @@
                                (receive-net-message socket buffer)
                              (declare (ignore _h _p))
                              (when (and message (eq (getf message :type) :snapshot))
-                               (let ((players (getf (getf message :state) :players)))
-                                 (when players
-                                   (setf final-x (getf (first players) :x))))))
+                               (multiple-value-bind (x y)
+                                   (extract-first-player-from-snapshot (getf message :state))
+                                 (declare (ignore y))
+                                 (when x
+                                   (setf final-x x)))))
                            (sleep 0.01))
                  (unless final-x
                    (error "Failed to get final position"))
@@ -770,7 +814,7 @@
                                       p1-id (getf msg1 :player-id)))
                                (:snapshot
                                 (when (and auth1 (null p1-initial-x))
-                                  (let ((players (getf (getf msg1 :state) :players)))
+                                  (let ((players (extract-players-as-plists (getf msg1 :state))))
                                     (dolist (p players)
                                       (when (eql (getf p :id) p1-id)
                                         (setf p1-initial-x (getf p :x))))))))))
@@ -784,7 +828,7 @@
                                       p2-id (getf msg2 :player-id)))
                                (:snapshot
                                 (when (and auth2 (null p2-initial-x))
-                                  (let ((players (getf (getf msg2 :state) :players)))
+                                  (let ((players (extract-players-as-plists (getf msg2 :state))))
                                     (dolist (p players)
                                       (when (eql (getf p :id) p2-id)
                                         (setf p2-initial-x (getf p :x))))))))))
@@ -811,7 +855,7 @@
                                (receive-net-message socket1 buffer1)
                              (declare (ignore _h _p))
                              (when (and msg (eq (getf msg :type) :snapshot))
-                               (let ((players (getf (getf msg :state) :players)))
+                               (let ((players (extract-players-as-plists (getf msg :state))))
                                  (dolist (p players)
                                    (cond
                                      ((eql (getf p :id) p1-id)

@@ -391,6 +391,244 @@
         (setf (game-entities game)
               (make-entities (game-players game) (game-npcs game)))))))
 
+;;;; ========================================================================
+;;;; COMPACT SERIALIZATION (Network Optimization - see docs/net.md 4-Prong)
+;;;; Uses positional vectors instead of plists to minimize snapshot size.
+;;;; Target: <100 bytes per entity (vs ~232 bytes with plist format)
+;;;; ========================================================================
+
+;;; Helper functions for quantization and enum encoding
+
+(defun quantize-coord (f)
+  "Quantize coordinate to 0.1 pixel precision for network transmission."
+  (round (* (or f 0.0) *coord-scale*)))
+
+(defun dequantize-coord (i)
+  "Restore coordinate from quantized integer."
+  (/ (or i 0) (float *coord-scale*)))
+
+(defun quantize-timer (f)
+  "Quantize timer to 0.01 second precision for network transmission."
+  (round (* (or f 0.0) *timer-scale*)))
+
+(defun dequantize-timer (i)
+  "Restore timer from quantized integer."
+  (/ (or i 0) (float *timer-scale*)))
+
+(defun encode-anim-state (state)
+  "Encode animation state keyword to integer code."
+  (or (cdr (assoc state *anim-state-to-code*)) 0))
+
+(defun decode-anim-state (code)
+  "Decode integer code to animation state keyword."
+  (or (cdr (assoc code *code-to-anim-state*)) :idle))
+
+(defun encode-facing (facing)
+  "Encode facing direction keyword to integer code."
+  (or (cdr (assoc facing *facing-to-code*)) 1))  ; default :down
+
+(defun decode-facing (code)
+  "Decode integer code to facing direction keyword."
+  (or (cdr (assoc code *code-to-facing*)) :down))
+
+(defun pack-player-flags (player)
+  "Pack player boolean flags into a single integer.
+   Bit 0: attacking, Bit 1: attack-hit, Bit 2: hit-active, Bit 3: running"
+  (logior (if (player-attacking player) 1 0)
+          (if (player-attack-hit player) 2 0)
+          (if (player-hit-active player) 4 0)
+          (if (player-running player) 8 0)))
+
+(defun unpack-player-flags (flags)
+  "Unpack player boolean flags from integer.
+   Returns (values attacking attack-hit hit-active running)"
+  (values (logbitp 0 flags)
+          (logbitp 1 flags)
+          (logbitp 2 flags)
+          (logbitp 3 flags)))
+
+(defun pack-npc-flags (npc)
+  "Pack NPC boolean flags into a single integer.
+   Bit 0: alive, Bit 1: provoked, Bit 2: hit-active"
+  (logior (if (npc-alive npc) 1 0)
+          (if (npc-provoked npc) 2 0)
+          (if (npc-hit-active npc) 4 0)))
+
+(defun unpack-npc-flags (flags)
+  "Unpack NPC boolean flags from integer.
+   Returns (values alive provoked hit-active)"
+  (values (logbitp 0 flags)
+          (logbitp 1 flags)
+          (logbitp 2 flags)))
+
+;;; Compact Player Serialization
+;;; Vector format (19 elements):
+;;; [0] id           [1] x*10        [2] y*10        [3] hp
+;;; [4] dx*10        [5] dy*10       [6] anim-code   [7] facing-code
+;;; [8] facing-sign  [9] frame-idx   [10] frame-timer*100
+;;; [11] flags       [12] attack-timer*100  [13] hit-timer*100
+;;; [14] hit-frame   [15] hit-facing-code   [16] hit-facing-sign
+;;; [17] attack-target-id  [18] follow-target-id
+
+(defun serialize-player-compact (player)
+  "Serialize player to compact vector for network transmission.
+   Produces ~64 bytes vs ~232 bytes for plist format."
+  (vector (player-id player)
+          (quantize-coord (player-x player))
+          (quantize-coord (player-y player))
+          (or (player-hp player) 0)
+          (quantize-coord (player-dx player))
+          (quantize-coord (player-dy player))
+          (encode-anim-state (player-anim-state player))
+          (encode-facing (player-facing player))
+          (round (or (player-facing-sign player) 1.0))
+          (or (player-frame-index player) 0)
+          (quantize-timer (player-frame-timer player))
+          (pack-player-flags player)
+          (quantize-timer (player-attack-timer player))
+          (quantize-timer (player-hit-timer player))
+          (or (player-hit-frame player) 0)
+          (encode-facing (player-hit-facing player))
+          (round (or (player-hit-facing-sign player) 1.0))
+          (or (player-attack-target-id player) 0)
+          (or (player-follow-target-id player) 0)))
+
+(defun deserialize-player-compact (vec)
+  "Deserialize compact vector to player plist for apply-player-plist.
+   Converts back to plist format for compatibility with existing code."
+  (when (and vec (>= (length vec) 19))
+    (multiple-value-bind (attacking attack-hit hit-active running)
+        (unpack-player-flags (aref vec 11))
+      (list :id (aref vec 0)
+            :x (dequantize-coord (aref vec 1))
+            :y (dequantize-coord (aref vec 2))
+            :hp (aref vec 3)
+            :dx (dequantize-coord (aref vec 4))
+            :dy (dequantize-coord (aref vec 5))
+            :anim-state (decode-anim-state (aref vec 6))
+            :facing (decode-facing (aref vec 7))
+            :facing-sign (float (aref vec 8))
+            :frame-index (aref vec 9)
+            :frame-timer (dequantize-timer (aref vec 10))
+            :attacking attacking
+            :attack-hit attack-hit
+            :hit-active hit-active
+            :running running
+            :attack-timer (dequantize-timer (aref vec 12))
+            :hit-timer (dequantize-timer (aref vec 13))
+            :hit-frame (aref vec 14)
+            :hit-facing (decode-facing (aref vec 15))
+            :hit-facing-sign (float (aref vec 16))
+            :attack-target-id (aref vec 17)
+            :follow-target-id (aref vec 18)))))
+
+;;; Compact NPC Serialization
+;;; Vector format (14 elements):
+;;; [0] id           [1] x*10        [2] y*10        [3] hits-left
+;;; [4] flags        [5] behavior-state-code  [6] attack-timer*100
+;;; [7] anim-code    [8] facing-code [9] frame-idx   [10] frame-timer*100
+;;; [11] hit-timer*100  [12] hit-frame  [13] hit-facing-code
+
+(defun encode-behavior-state (state)
+  "Encode NPC behavior state to integer code."
+  (case state
+    (:idle 0) (:wandering 1) (:chasing 2) (:attacking 3)
+    (:fleeing 4) (:returning 5) (:dead 6) (otherwise 0)))
+
+(defun decode-behavior-state (code)
+  "Decode integer code to NPC behavior state."
+  (case code
+    (0 :idle) (1 :wandering) (2 :chasing) (3 :attacking)
+    (4 :fleeing) (5 :returning) (6 :dead) (otherwise :idle)))
+
+(defun serialize-npc-compact (npc)
+  "Serialize NPC to compact vector for network transmission."
+  (vector (npc-id npc)
+          (quantize-coord (npc-x npc))
+          (quantize-coord (npc-y npc))
+          (or (npc-hits-left npc) 0)
+          (pack-npc-flags npc)
+          (encode-behavior-state (npc-behavior-state npc))
+          (quantize-timer (npc-attack-timer npc))
+          (encode-anim-state (npc-anim-state npc))
+          (encode-facing (npc-facing npc))
+          (or (npc-frame-index npc) 0)
+          (quantize-timer (npc-frame-timer npc))
+          (quantize-timer (npc-hit-timer npc))
+          (or (npc-hit-frame npc) 0)
+          (encode-facing (npc-hit-facing npc))))
+
+(defun deserialize-npc-compact (vec)
+  "Deserialize compact vector to NPC plist for compatibility."
+  (when (and vec (>= (length vec) 14))
+    (multiple-value-bind (alive provoked hit-active)
+        (unpack-npc-flags (aref vec 4))
+      (list :id (aref vec 0)
+            :x (dequantize-coord (aref vec 1))
+            :y (dequantize-coord (aref vec 2))
+            :hits-left (aref vec 3)
+            :alive alive
+            :provoked provoked
+            :behavior-state (decode-behavior-state (aref vec 5))
+            :attack-timer (dequantize-timer (aref vec 6))
+            :anim-state (decode-anim-state (aref vec 7))
+            :facing (decode-facing (aref vec 8))
+            :frame-index (aref vec 9)
+            :frame-timer (dequantize-timer (aref vec 10))
+            :hit-active hit-active
+            :hit-timer (dequantize-timer (aref vec 11))
+            :hit-frame (aref vec 12)
+            :hit-facing (decode-facing (aref vec 13))
+            :hit-facing-sign 1.0))))  ; Default, not stored compactly
+
+;;; Compact Game State Serialization
+
+(defun serialize-game-state-compact (game)
+  "Serialize game state using compact format for network transmission.
+   Returns plist with :format :compact-v1 and vector-based entity data."
+  (let* ((players (game-players game))
+         (npcs (game-npcs game))
+         (world (game-world game))
+         (zone (world-zone world))
+         (player-vectors nil)
+         (npc-vectors nil))
+    ;; Serialize players to compact vectors
+    (when players
+      (loop :for player :across players
+            :when player
+            :do (push (serialize-player-compact player) player-vectors)))
+    ;; Serialize NPCs to compact vectors
+    (when npcs
+      (loop :for npc :across npcs
+            :when npc
+            :do (push (serialize-npc-compact npc) npc-vectors)))
+    ;; Build compact snapshot
+    (list :format :compact-v1
+          :zone-id (and zone (zone-id zone))
+          :players (coerce (nreverse player-vectors) 'vector)
+          :npcs (coerce (nreverse npc-vectors) 'vector))))
+
+(defun deserialize-game-state-compact (state game)
+  "Apply compact game state to GAME, converting vectors back to entity updates."
+  (let ((player-vectors (getf state :players))
+        (npc-vectors (getf state :npcs)))
+    ;; Convert compact player vectors to plists and apply
+    (when player-vectors
+      (let ((player-plists (loop :for vec :across player-vectors
+                                 :collect (deserialize-player-compact vec))))
+        (apply-player-plists game player-plists)))
+    ;; Convert compact NPC vectors to plists and apply
+    (when npc-vectors
+      (let ((npcs (game-npcs game)))
+        (loop :for vec :across npc-vectors
+              :for index :from 0
+              :for plist = (deserialize-npc-compact vec)
+              :do (deserialize-npc plist npcs index))))))
+
+;;;; ========================================================================
+;;;; ZONE OBJECT SERIALIZATION
+;;;; ========================================================================
+
 (defun serialize-object (object)
   ;; Convert zone object to plist (ID, position, count, respawn timer).
   (list :id (getf object :id)
@@ -447,37 +685,46 @@
 
 (defun deserialize-game-state (plist game)
   ;; Restore authoritative game state from plist into existing GAME.
-  (let* ((version (getf plist :version 0))
-         (zone-id (getf plist :zone-id))
-         (id-next (getf plist :id-next 1))
-         (player-plists (or (getf plist :players)
-                            (let ((player-plist (getf plist :player)))
-                              (and player-plist (list player-plist)))))
-         (npc-plists (getf plist :npcs))
-         (object-plists (getf plist :objects))
-         (npcs (game-npcs game))
-         (world (game-world game))
-         (zone (world-zone world))
-         (id-source (game-id-source game)))
-    ;; Version check (for future migrations)
-    (when (> version *save-format-version*)
-      (warn "Save file version ~d is newer than current version ~d"
-            version *save-format-version*))
-    ;; Restore ID source
-    (when id-source
-      (setf (id-source-next-id id-source) id-next))
-    ;; Restore players
-    (apply-player-plists game player-plists)
-    ;; Restore NPCs
-    (loop :for npc-plist :in npc-plists
-          :for index :from 0
-          :do (deserialize-npc npc-plist npcs index))
-    ;; Restore zone objects
-    (when zone
-      (setf (zone-objects zone)
-            (mapcar #'deserialize-object object-plists)))
-    ;; Return zone ID for zone switching if needed
-    zone-id))
+  ;; Supports both legacy plist format and compact vector format.
+  (let ((format (getf plist :format)))
+    (cond
+      ;; Compact format (network-optimized, see docs/net.md 4-Prong)
+      ((eq format :compact-v1)
+       (deserialize-game-state-compact plist game)
+       (getf plist :zone-id))
+      ;; Legacy plist format (DB saves, compatibility)
+      (t
+       (let* ((version (getf plist :version 0))
+              (zone-id (getf plist :zone-id))
+              (id-next (getf plist :id-next 1))
+              (player-plists (or (getf plist :players)
+                                 (let ((player-plist (getf plist :player)))
+                                   (and player-plist (list player-plist)))))
+              (npc-plists (getf plist :npcs))
+              (object-plists (getf plist :objects))
+              (npcs (game-npcs game))
+              (world (game-world game))
+              (zone (world-zone world))
+              (id-source (game-id-source game)))
+         ;; Version check (for future migrations)
+         (when (> version *save-format-version*)
+           (warn "Save file version ~d is newer than current version ~d"
+                 version *save-format-version*))
+         ;; Restore ID source
+         (when id-source
+           (setf (id-source-next-id id-source) id-next))
+         ;; Restore players
+         (apply-player-plists game player-plists)
+         ;; Restore NPCs
+         (loop :for npc-plist :in npc-plists
+               :for index :from 0
+               :do (deserialize-npc npc-plist npcs index))
+         ;; Restore zone objects
+         (when zone
+           (setf (zone-objects zone)
+                 (mapcar #'deserialize-object object-plists)))
+         ;; Return zone ID for zone switching if needed
+         zone-id)))))
 
 (defun apply-game-state (game state &key (apply-zone t))
   ;; Apply serialized STATE into GAME, loading zones when needed.

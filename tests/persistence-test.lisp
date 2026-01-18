@@ -49,7 +49,13 @@
                 #'test-lifetime-xp-incremented
                 #'test-migration-v1-to-v3-chain
                 #'test-playtime-roundtrip
-                #'test-created-at-roundtrip)))
+                #'test-created-at-roundtrip
+                ;; Compact Serialization Tests (Network Optimization)
+                #'test-compact-player-roundtrip
+                #'test-compact-npc-roundtrip
+                #'test-compact-size-reduction
+                #'test-compact-enum-encoding
+                #'test-compact-quantization)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -733,6 +739,146 @@
       ;; Verify created-at preserved
       (assert-equal original-created-at (player-created-at restored) "created-at not preserved"))
     t))
+
+;;;; ========================================================================
+;;;; COMPACT SERIALIZATION TESTS (Network Optimization)
+;;;; Tests for the 4-Prong snapshot size optimization (see docs/net.md)
+;;;; ========================================================================
+
+(defun test-compact-player-roundtrip ()
+  "Test that player compact serialization preserves essential state."
+  (let ((player (make-player 123.456 789.012 :id 42)))
+    ;; Set various fields to test values
+    (setf (player-hp player) 85
+          (player-dx player) 1.0
+          (player-dy player) -0.5
+          (player-anim-state player) :walking
+          (player-facing player) :right
+          (player-facing-sign player) 1.0
+          (player-frame-index player) 3
+          (player-frame-timer player) 0.25
+          (player-attacking player) t
+          (player-attack-hit player) nil
+          (player-hit-active player) t
+          (player-running player) t
+          (player-attack-timer player) 1.5
+          (player-hit-timer player) 0.3
+          (player-hit-frame player) 2
+          (player-hit-facing player) :left
+          (player-hit-facing-sign player) -1.0
+          (player-attack-target-id player) 99
+          (player-follow-target-id player) 101)
+    ;; Serialize to compact vector
+    (let* ((vec (serialize-player-compact player))
+           (plist (deserialize-player-compact vec)))
+      ;; Verify essential fields preserved (with quantization tolerance)
+      (assert-equal 42 (getf plist :id) "id not preserved")
+      (assert (< (abs (- 123.4 (getf plist :x))) 0.2) nil "x not preserved within tolerance")
+      (assert (< (abs (- 789.0 (getf plist :y))) 0.2) nil "y not preserved within tolerance")
+      (assert-equal 85 (getf plist :hp) "hp not preserved")
+      (assert-equal :walking (getf plist :anim-state) "anim-state not preserved")
+      (assert-equal :right (getf plist :facing) "facing not preserved")
+      (assert (getf plist :attacking) nil "attacking flag not preserved")
+      (assert (getf plist :hit-active) nil "hit-active flag not preserved")
+      (assert (getf plist :running) nil "running flag not preserved")
+      (assert-equal 99 (getf plist :attack-target-id) "attack-target-id not preserved")
+      (assert-equal 101 (getf plist :follow-target-id) "follow-target-id not preserved")))
+  t)
+
+(defun test-compact-npc-roundtrip ()
+  "Test that NPC compact serialization preserves essential state."
+  (let ((npc (%make-npc)))
+    ;; Set various fields to test values
+    (setf (npc-id npc) 77
+          (npc-x npc) 500.5
+          (npc-y npc) 300.3
+          (npc-hits-left npc) 3
+          (npc-alive npc) t
+          (npc-provoked npc) t
+          (npc-behavior-state npc) :chasing
+          (npc-attack-timer npc) 0.75
+          (npc-anim-state npc) :attacking
+          (npc-facing npc) :up
+          (npc-frame-index npc) 2
+          (npc-frame-timer npc) 0.15
+          (npc-hit-active npc) t
+          (npc-hit-timer npc) 0.2
+          (npc-hit-frame npc) 1
+          (npc-hit-facing npc) :down)
+    ;; Serialize to compact vector
+    (let* ((vec (serialize-npc-compact npc))
+           (plist (deserialize-npc-compact vec)))
+      ;; Verify essential fields preserved
+      (assert-equal 77 (getf plist :id) "id not preserved")
+      (assert (< (abs (- 500.5 (getf plist :x))) 0.2) nil "x not preserved within tolerance")
+      (assert (< (abs (- 300.3 (getf plist :y))) 0.2) nil "y not preserved within tolerance")
+      (assert-equal 3 (getf plist :hits-left) "hits-left not preserved")
+      (assert (getf plist :alive) nil "alive flag not preserved")
+      (assert (getf plist :provoked) nil "provoked flag not preserved")
+      (assert-equal :chasing (getf plist :behavior-state) "behavior-state not preserved")
+      (assert-equal :attacking (getf plist :anim-state) "anim-state not preserved")
+      (assert-equal :up (getf plist :facing) "facing not preserved")
+      (assert (getf plist :hit-active) nil "hit-active flag not preserved")))
+  t)
+
+(defun test-compact-size-reduction ()
+  "Test that compact serialization produces smaller output than plist format."
+  (let ((player (make-player 123.456 789.012 :id 42)))
+    (setf (player-hp player) 100
+          (player-attacking player) t
+          (player-anim-state player) :walking
+          (player-facing player) :right)
+    ;; Compare sizes
+    (let* ((compact-vec (serialize-player-compact player))
+           (compact-str (prin1-to-string compact-vec))
+           (plist (serialize-player player :network-only t))
+           (plist-str (prin1-to-string plist))
+           (compact-bytes (length compact-str))
+           (plist-bytes (length plist-str)))
+      ;; Compact format should be significantly smaller
+      (assert (< compact-bytes plist-bytes) nil
+              (format nil "Compact (~d bytes) should be smaller than plist (~d bytes)"
+                      compact-bytes plist-bytes))
+      ;; Target: compact should be less than half the size
+      (assert (< compact-bytes (* plist-bytes 0.6)) nil
+              (format nil "Compact (~d bytes) should be <60% of plist (~d bytes)"
+                      compact-bytes plist-bytes))))
+  t)
+
+(defun test-compact-enum-encoding ()
+  "Test that enum encoding/decoding works correctly for all values."
+  ;; Test animation states
+  (dolist (state '(:idle :walking :attacking :hit :dead))
+    (let ((code (encode-anim-state state)))
+      (assert-equal state (decode-anim-state code)
+                    (format nil "anim-state ~a roundtrip failed" state))))
+  ;; Test facing directions
+  (dolist (facing '(:up :down :left :right))
+    (let ((code (encode-facing facing)))
+      (assert-equal facing (decode-facing code)
+                    (format nil "facing ~a roundtrip failed" facing))))
+  ;; Test behavior states
+  (dolist (state '(:idle :wandering :chasing :attacking :fleeing :returning :dead))
+    (let ((code (encode-behavior-state state)))
+      (assert-equal state (decode-behavior-state code)
+                    (format nil "behavior-state ~a roundtrip failed" state))))
+  t)
+
+(defun test-compact-quantization ()
+  "Test that quantization preserves values within acceptable precision."
+  ;; Test coordinate quantization (0.1 pixel precision)
+  (dolist (val '(0.0 1.0 123.45 999.99 -50.0))
+    (let ((restored (dequantize-coord (quantize-coord val))))
+      (assert (< (abs (- val restored)) 0.1) nil
+              (format nil "Coord ~a not preserved within 0.1 precision (got ~a)"
+                      val restored))))
+  ;; Test timer quantization (0.01 second precision)
+  (dolist (val '(0.0 0.5 1.25 3.99))
+    (let ((restored (dequantize-timer (quantize-timer val))))
+      (assert (< (abs (- val restored)) 0.01) nil
+              (format nil "Timer ~a not preserved within 0.01 precision (got ~a)"
+                      val restored))))
+  t)
 
 ;;; Export for REPL usage
 (export 'run-persistence-tests)

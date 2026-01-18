@@ -1680,10 +1680,10 @@
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
-                                      ;; Use network-only mode to exclude inventory/equipment/stats
-                                      ;; Critical for 60+ clients (reduces 72KB -> ~15KB)
-                                      (state (serialize-game-state game :include-visuals t
-                                                                        :network-only t)))
+                                      ;; Use compact serialization for network efficiency
+                                      ;; Reduces ~232 bytes/player to ~64 bytes/player
+                                      ;; See docs/net.md "4-Prong Approach"
+                                      (state (serialize-game-state-compact game)))
                                  (send-snapshots-parallel socket clients state event-plists
                                                           worker-threads))
                              (error (e)

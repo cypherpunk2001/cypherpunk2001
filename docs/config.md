@@ -164,3 +164,25 @@ Constants for input handling: `+key-right+`, `+key-left+`, `+key-down+`, `+key-u
    :respawn-seconds 5.0
    :animation-set-id :npc-slime)))
 ```
+
+---
+
+## Compact Serialization (Network Optimization)
+
+These parameters control the compact snapshot format used for network transmission. See `docs/net.md` "4-Prong Approach" for details.
+
+### Enum Mappings
+| Parameter | Description |
+|-----------|-------------|
+| `*anim-state-to-code*` | Animation state keyword → integer code |
+| `*code-to-anim-state*` | Integer code → animation state keyword |
+| `*facing-to-code*` | Facing direction keyword → integer code |
+| `*code-to-facing*` | Integer code → facing direction keyword |
+
+### Quantization Parameters
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*coord-scale*` | `10` | Scale factor for coordinate quantization (10 = 0.1 pixel precision) |
+| `*timer-scale*` | `100` | Scale factor for timer quantization (100 = 0.01 second precision) |
+
+These parameters reduce snapshot size from ~232 bytes/player to ~64 bytes/player, enabling 3-4x more players per UDP packet.
