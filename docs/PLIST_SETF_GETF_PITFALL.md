@@ -116,6 +116,123 @@ When adding new plist-based features, document which keys must be initialized:
 ;; :snapshot-dirty - boolean, needs sync to clients (MUTABLE)
 ```
 
+## Debugging Strategy: Verbose Logging Through the Pipeline
+
+This bug required tracing data flow through multiple systems on **both server and client**. Here's the logging strategy that helped diagnose it:
+
+### Running with Verbose Logging
+
+```bash
+# Terminal 1 - Server with verbose logging
+MMORPG_VERBOSE=1 make server
+
+# Terminal 2 - Client (also sees verbose logs)
+make client
+```
+
+Both processes output to their respective terminals. The server logs show intent receipt, game logic execution, and snapshot serialization. The client logs show snapshot deserialization and rendering decisions.
+
+### Tracing the Full Pipeline (Server → Client)
+
+### 1. Pickup Intent (Client → Server) [SERVER LOGS]
+
+```lisp
+;; In net.lisp - verify server receives pickup request
+(log-verbose "RECV-INTENT: pickup id=~a tx=~a ty=~a"
+             requested-id requested-tx requested-ty)
+
+;; In combat.lisp - verify pickup target is set
+(log-verbose "SYNC-PICKUP: req-id=~a req-tx=~a req-ty=~a cur-id=~a"
+             requested-id requested-tx requested-ty current-id)
+```
+
+### 2. Pickup Execution (Server Game Logic) [SERVER LOGS]
+
+```lisp
+;; In progression.lisp - trace through pickup-object-at-tile
+(log-verbose "PICKUP-TILE: zone=~a objects=~a tx=~d ty=~d id=~a"
+             (and zone (zone-id zone)) (length objects) tx ty object-id)
+
+(log-verbose "PICKUP-TILE: checking obj ox=~a oy=~a id=~a" ox oy id)
+
+(log-verbose "PICKUP-TILE: MATCH! archetype=~a item-id=~a count=~d respawn=~a"
+             archetype item-id count respawn)
+
+(log-verbose "PICKUP-TILE: granted! leftover=~d respawn=~a" leftover respawn)
+```
+
+### 3. Snapshot Serialization [SERVER LOGS]
+
+```lisp
+;; In save.lisp - verify inventory is included in snapshot
+(log-verbose "SERIALIZE-COMPACT: player=~a inv-slots=~a"
+             (player-id player) (length (getf inv :slots)))
+
+;; In save.lisp - verify objects are included in delta
+(log-verbose "DELTA-OBJECT: id=~a respawn=~a dirty=~a"
+             (getf object :id) respawn dirty)
+```
+
+### 4. Snapshot Deserialization [CLIENT LOGS]
+
+```lisp
+;; In save.lisp - verify client receives inventory
+(log-verbose "DESERIALIZE-COMPACT: player=~a inv=~a slots=~a"
+             (getf plist :id) (not (null inv))
+             (and inv (length (getf inv :slots))))
+
+;; In save.lisp - verify client receives object updates
+(log-verbose "DELTA-DESER: received ~a objects" (length object-plists))
+(log-verbose "DELTA-DESER: MATCHED id=~a setting respawn=~a"
+             server-id server-respawn)
+```
+
+### 5. Respawn Timer [SERVER LOGS]
+
+```lisp
+;; In progression.lisp - verify respawn completes
+(log-verbose "RESPAWN-READY: timer=~a id=~a" timer (getf object :id))
+(log-verbose "RESPAWN-COMPLETE: id=~a count=~a"
+             object-id (object-archetype-count archetype))
+```
+
+### 6. Rendering Decision [CLIENT LOGS]
+
+```lisp
+;; In rendering.lisp - verify client hides/shows objects based on respawn
+(when (and respawn (> respawn 0.0))
+  (log-verbose "RENDER-OBJ: id=~a respawn=~a (hidden)" object-id respawn))
+```
+
+### What Each Log Revealed
+
+| Log Point | Side | What It Showed | Problem Found |
+|-----------|------|---------------|---------------|
+| RECV-INTENT | Server | Server got pickup request | Intent was reaching server ✓ |
+| SYNC-PICKUP | Server | Target was set on player | Pickup target working ✓ |
+| PICKUP-TILE | Server | Grant succeeded, respawn set | Pickup logic working ✓ |
+| SERIALIZE-COMPACT | Server | Inventory had correct slots | Inventory serialized ✓ |
+| DESERIALIZE-COMPACT | Client | Client got inventory | Inventory syncing ✓ |
+| DELTA-OBJECT | Server | respawn counting down, dirty=NIL | **BUG: dirty flag not set!** |
+| RESPAWN-COMPLETE | Server | Count restored correctly | Server respawn working ✓ |
+| No DELTA-OBJECT after | Server | Object not in delta | **BUG: dirty flag not being read** |
+| DELTA-DESER | Client | Client never got respawn=0 | Confirmed client-side gap |
+| RENDER-OBJ | Client | respawn stuck at 0.016 | Client state never updated |
+
+The `dirty=NIL` log on the **server** after `RESPAWN-COMPLETE` was the smoking gun. The server was setting `(setf (getf object :snapshot-dirty) t)` but the value stayed NIL - revealing the `setf getf` pitfall.
+
+Cross-referencing server and client logs showed the data flow breaking between serialization (server) and deserialization (client) - the object update was never sent because the dirty flag was silently not being set.
+
+### Key Insight: Log BEFORE and AFTER Mutations
+
+```lisp
+;; This pattern reveals setf getf failures:
+(log-verbose "BEFORE: respawn=~a" (getf object :respawn))
+(setf (getf object :respawn) 5.0)
+(log-verbose "AFTER: respawn=~a" (getf object :respawn))
+;; If BEFORE and AFTER show same value, setf failed silently!
+```
+
 ## Debugging Checklist
 
 When object/entity sync breaks mysteriously:
