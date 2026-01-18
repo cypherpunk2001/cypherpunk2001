@@ -43,10 +43,20 @@ Key functions
 - `apply-snapshot`: apply game state, update player id, queue events; clears interpolation buffer on zone change.
 
 **Authentication:**
-- `handle-register-request`: Create account, spawn character, register session.
-- `handle-login-request`: Verify credentials, load character, register session.
+- `handle-register-request`: Create account, spawn character, register session. (Legacy, replaced by async)
+- `handle-login-request`: Verify credentials, load character, register session. (Legacy, replaced by async)
 - `handle-logout-request`: Save player, unregister session.
 - `extract-auth-credentials`: Parse credentials from encrypted or plaintext auth messages.
+
+**Async Auth Worker (Non-Blocking Login):**
+- Auth requests (register/login) are processed asynchronously to prevent game freezes during DB operations.
+- Architecture: Main loop queues auth requests -> Worker thread processes DB operations -> Main loop integrates results
+- `auth-request-queue` / `auth-result-queue`: Thread-safe queues for async communication.
+- `process-register-async`: Worker thread processes registration (db-create-account, spawn, db-set-character-id).
+- `process-login-async`: Worker thread processes login (db-verify-credentials, db-load-player).
+- `integrate-auth-results`: Main thread integrates completed results (add player to game, send response).
+- `start-auth-worker` / `stop-auth-worker`: Lifecycle management for worker thread.
+- Benefits: Game world continues smoothly while 10+ players log in simultaneously.
 
 **Session Management:**
 - `*active-sessions*`: Hash table mapping username -> net-client for logged-in accounts.

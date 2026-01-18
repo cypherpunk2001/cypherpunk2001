@@ -61,23 +61,68 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-- make stress results in noticible world-freeze hitch/glitch on already logged in player until all 10 are logged in and walking around. (Note: This is expected behavior - registration involves DB operations with retries. For production, consider async registration queues.)
+(No current tasks - please test async auth worker implementation)
 
 ## Completed Tasks
 
-FIXED. make stress slowdown at 40 clients - Server loop was sleeping for full tick duration regardless of how long processing took. Now tracks frame processing time and only sleeps for remaining duration, ensuring consistent 60Hz tick rate under load.
+### Auth Worker Thread - Non-Blocking Login (TESTING NEEDED)
+**Problem:** World freeze during `make stress` when multiple players log in simultaneously
+**Root cause:** DB operations (db-create-account, db-verify-credentials, db-load-player) with retry sleeps blocked the main game loop
+**Solution:** Auth requests now processed asynchronously on a dedicated worker thread
 
-FIXED. make stress results in random teleports
+**Architecture:**
+```
+Main Thread                              Auth Worker Thread
+-----------                              ------------------
+[Receive :register/:login]
+       |
+       v
+[Push to auth-request-queue] --------> [Process DB operations with retries]
+       |                                      |
+       v                                      v
+[Continue game simulation]             [Push to auth-result-queue]
+       |
+       v
+[Drain result queue each frame] <-------------+
+       |
+       v
+[Integrate: add player, send response]
+```
 
-### Stress Testing ✓
-Implemented headless client stress testing tool:
-- `make stress` runs configurable number of headless clients
-- Each client registers, authenticates, and walks randomly
-- Clients send movement intents every 100ms
-- Useful for finding server bottlenecks and testing concurrent load
-- See CLAUDE.md for usage examples
+**Key changes in net.lisp:**
+- Added `auth-queue`, `auth-request`, `auth-result` structs
+- Added thread-safe queue operations (`auth-queue-push`, `auth-queue-pop-blocking`, `auth-queue-drain-nonblocking`)
+- Added `process-register-async`, `process-login-async` for worker thread
+- Added `integrate-auth-results` for main thread
+- Worker lifecycle: `start-auth-worker`, `stop-auth-worker`
+
+**All tests pass:** checkparens, ci, test-persistence, test-security, checkdocs, smoke
+
+**To test:** Start server, connect client, walk around. Then `make stress` - world should NOT freeze.
 
 ## Future Tasks / Roadmap
+
+### Server Performance Optimization (300+ players)
+**Current benchmarks (single zone, single server process):**
+- Smooth: up to ~150 simultaneous players
+- Playable: ~300-500 players (noticeable lag, needs optimization)
+- Beyond 500: requires optimization work
+
+**Potential optimizations to investigate:**
+- Spatial partitioning for collision/AI (only check nearby entities)
+- Delta compression for snapshots (send changes, not full state)
+- Interest management (only send entities within player's view)
+- Entity culling in snapshots (skip distant players)
+- Batch intent processing
+- Profile hot loops for consing/GC pressure
+
+-- in my opinion, i am wondering if we utilize the concept of "zone's", as we have zones and there is a brief 'Loading...' between them as we travel the world map, theoretically we can ignore all events that occur within a zone that we are currently in, this might help us get a better gameplay and support more live players.
+
+-- We need to profile the code while make stress testing and find our hotspots, for this test, I suggest Claude will start the server in some profile mode (I dont know how to do this), then claude will also launch make client for me to connect, then after about 5 seconds claude can start the make stress test. From there I think within a minute or so we should have some interesting data to analyze. Moreover, I think claude ran feel free to collect a few metrics during the test period on the host system, some basic commands could be observed, how about running top (claude should be able to see top as it does support dumb terminal mode output). OK? It is unlikely the host system is a problem as we are on massive cutting edge hardware, but it is still worth monitoring. Let me know what you think about this plan and prepare the exact details and then we will do this together when you're ready and when i'm ready.
+
+-- Also we have not explored multi threading usage, yes we've dev'ed it, but currently we focus on optimize single threaded as much as possible before going multi
+
+### We'd like to support 8,000 players, 2,000 per zone simultaneously. This would blow old school runescape out of the water theoretically if it is possible. They used to support around 2,000 per server. If we had one server and supported 2,000 per zone that would be unreal and truly epic.
 
 ---
 
@@ -118,3 +163,7 @@ Not Tested (features don't exist yet):
 - Economy bugs (no gold/currency system)
 - Trade duplication (no trade system)
 - Shop exploits (no vendors)
+
+---
+
+In general, my finding is that tests are pretty cheap for us to make, and offer us a great ability to try to prevent regressions. So going forward from here, now that our codebase is generally performant and behaving in a way that we like, I would like you to try and go through the entire codebase wide and get as much test coverage as possible with a goal towards simply "preventing regressions" or "catching breaking/changing behavior that we previously intentionally had here" to help us streamline codegen going forwards.
