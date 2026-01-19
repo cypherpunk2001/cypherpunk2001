@@ -113,19 +113,23 @@
  (:coins
   (:name "Coins"
    :stack-size 9999
-   :value 1))
+   :value 1
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/1.png"))
  (:bones
   (:name "Bones"
    :stack-size 1
-   :value 5))
+   :value 5
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/2.png"))
  (:rat-tail
   (:name "Rat Tail"
    :stack-size 1
-   :value 2))
+   :value 2
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/3.png"))
  (:goblin-ear
   (:name "Goblin Ear"
    :stack-size 1
-   :value 4))
+   :value 4
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/4.png"))
  (:arrows
   (:name "Arrows"
    :description "A bundle of mismatched arrows. Most look usable."
@@ -137,13 +141,15 @@
    :stack-size 1
    :value 9
    :equip-slot :head
-   :defense 1))
+   :defense 1
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/5.png"))
  (:rusty-sword
   (:name "Rusty Sword"
    :stack-size 1
    :value 12
    :equip-slot :weapon
-   :attack 1))
+   :attack 1
+   :sprite "../assets/2 Dungeon Tileset/2 Objects/Other/6.png"))
 
 :object-archetypes
 (:arrows

@@ -549,7 +549,9 @@
                              (> x2 view-left)
                              (< y view-bottom)
                              (> y2 view-top))
-                    (let ((texture (object-texture-for assets object-id)))
+                    ;; Try object texture first, fall back to item texture for dropped items
+                    (let ((texture (or (object-texture-for assets object-id)
+                                       (item-texture-for assets object-id))))
                       (when texture
                         (let* ((src-w (float (raylib:texture-width texture) 1.0))
                                (src-h (float (raylib:texture-height texture) 1.0))
