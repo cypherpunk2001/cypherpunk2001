@@ -119,6 +119,7 @@
          (object-textures (make-hash-table :test 'eq))
          (item-textures (make-hash-table :test 'eq))
          (tileset (load-texture-required *tileset-path* "tileset"))
+         (_ (raylib:set-texture-filter tileset 0))  ; POINT filter - no interpolation
          (tileset-columns (max 1 (truncate (/ (raylib:texture-width tileset)
                                               (max 1 *tile-size*)))))
          (down-idle (load-texture-required (animation-path player-set :down-idle)
