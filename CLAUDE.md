@@ -15,9 +15,15 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
 
 ```bash
+make tests              # Run ALL tests (recommended - single command)
+make smoke              # Full client/server smoke test with window (2s default)
+```
+
+Individual test targets (run by `make tests`):
+```bash
 make checkparens        # Verify balanced parentheses in all .lisp files
 make ci                 # Cold compile + UDP handshake test (no GPU needed)
-make smoke              # Full client/server smoke test with window (2s default)
+make test-unit          # Unit tests (pure functions, game logic, utilities)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
 make test-security      # Security tests (input validation, exploit prevention)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
@@ -53,82 +59,76 @@ Useful for:
 
 ### When to Write Tests
 
+**POLICY: If a unit test CAN be written, it SHOULD be written.**
+
+We aim for 99% test coverage. Tests prevent regressions and catch bugs early. Every testable function deserves a test.
+
 **Write tests for:**
-- ✅ **Data corruption risk**: Serialization, migrations, database writes
-- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
-- ✅ **Backend equivalence**: Storage abstraction must work identically across backends
-- ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
+- ✅ **All pure functions**: Functions that take input and return output without side effects
+- ✅ **Game logic**: Combat calculations, XP/leveling, inventory operations, movement physics
+- ✅ **Data transformations**: Serialization, migrations, protocol encoding/decoding
+- ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0, valid state transitions)
+- ✅ **Edge cases**: Boundary conditions, empty inputs, max values, error paths
+- ✅ **AI behavior**: Decision-making logic, state transitions, target selection
+- ✅ **Utility functions**: All helpers in utils.lisp, data.lisp, etc.
+- ✅ **Protocol handling**: Message parsing, validation, response generation
 
-**Skip tests for:**
-- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
-- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
-- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
-- ❌ **Helper functions**: Utils that don't touch persistent state
+**Skip tests ONLY for:**
+- ❌ **Rendering code**: Functions that call raylib directly (require GPU)
+- ❌ **Audio code**: Functions that play sounds (require audio device)
+- ❌ **Interactive input**: Real-time mouse/keyboard handling (tested via smoke test)
 
-**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
+**Rule of thumb**: If a function has logic that could break, write a test. The only exception is code that requires hardware (GPU, audio, input devices).
 
-**Test location**: `tests/persistence-test.lisp` for data integrity tests.
+**Test locations**:
+- `tests/persistence-test.lisp` - Data integrity, serialization, migrations
+- `tests/security-test.lisp` - Input validation, exploit prevention
+- `tests/unit-test.lisp` - Pure functions, game logic, utilities (NEW)
 
 ### Proactive Test Writing Requirements (For Claude)
 
-**CRITICAL**: When implementing new features, you MUST write accompanying tests if ANY of these conditions are met:
+**CRITICAL**: When implementing ANY new code, you MUST write accompanying tests.
 
-**Auto-write tests when:**
-1. **Adding persistent fields to player/NPC/world structs**
-   - Write round-trip serialization test
-   - Verify field classified as durable or ephemeral
-   - Test that durable fields survive save/load, ephemeral fields don't
+**The rule is simple: If you can test it, test it.**
 
-2. **Implementing schema migrations**
-   - Write migration test with old-version plist
-   - Verify defaults applied correctly for new fields
-   - Test migration chain (v1→v2→v3)
+**For every new function, ask:**
+1. Can I call this function in isolation? → Write a unit test
+2. Does it transform data? → Test input/output pairs
+3. Does it have edge cases? → Test boundaries (0, 1, max, empty, nil)
+4. Can it fail? → Test error conditions
+5. Does it interact with state? → Test state before/after
 
-3. **Adding new persistence tiers or save mechanisms**
-   - Write test comparing behavior to existing tier
-   - Verify atomic/non-corrupt behavior
-   - Test both storage backends (memory + Redis)
+**Test categories by file:**
 
-4. **Implementing economy/progression systems**
-   - Write invariant tests (currency ≥ 0, XP never decreases)
-   - Test edge cases (overflow, underflow, max values)
-   - Verify transaction atomicity
-
-5. **Adding inventory/equipment/trade systems**
-   - Write tests for duplication exploits
-   - Test item loss scenarios
-   - Verify count limits enforced
-
-6. **Modifying zone transition or respawn logic**
-   - Test player state preserved across transitions
-   - Verify no item/progress loss on death/respawn
-   - Test edge case: transition during combat/trade
+| Test File | What to Test |
+|-----------|--------------|
+| `tests/unit-test.lisp` | Pure functions, utilities, game logic, AI decisions |
+| `tests/persistence-test.lisp` | Serialization, migrations, database operations |
+| `tests/security-test.lisp` | Input validation, exploit prevention, auth |
 
 **How to implement:**
-- Add test to `tests/persistence-test.lisp` BEFORE claiming feature complete
-- Run `make test-persistence` to verify test passes
-- Update this list if you discover new test-worthy patterns
+1. Write the test BEFORE or ALONGSIDE the implementation
+2. Run `make test-unit` (or appropriate target) to verify
+3. If a function is hard to test, refactor it to be testable (extract pure logic)
 
-**When NOT to auto-write tests:**
-- Rendering changes (colors, positions, animations)
-- UI layout adjustments
-- Sound/music changes
-- AI behavior tuning (aggro range, wander patterns)
-- Performance optimizations that don't change behavior
-- Refactoring that doesn't touch persistence
+**When NOT to write tests (the ONLY exceptions):**
+- Code that directly calls raylib (rendering, textures, fonts)
+- Code that directly plays audio
+- Code that reads real-time input devices
+- Top-level entry points (main, run-server, run-client)
 
-**If uncertain:** Ask yourself: "If this breaks, will players lose progress or items?" If yes → write a test.
+**If uncertain:** Write the test. It's always better to have a test you might not need than to skip a test you did need.
 
 ## Code Quality Checklist (MANDATORY)
 
 **Review EVERY change against these criteria before claiming work complete:**
 
 ### 1. Tests Written?
-- **Persistent state changes** → Write test (XP, HP, inventory, position, level)
-- **New invariants** → Write test (HP ≤ max, coins ≥ 0, XP never decreases)
-- **Database operations** → Write test (save/load round-trip, backend equivalence)
-- **Schema changes** → Write migration test
-- **Visual/UI only** → Skip test (manual verification fine)
+- **Any new function with logic** → Write test (if it can break, test it)
+- **Pure functions** → Write unit test with input/output pairs
+- **State-changing functions** → Test before/after state
+- **Edge cases** → Test boundaries (0, 1, max, empty, nil)
+- **Only skip tests for**: Direct raylib calls, audio playback, real-time input
 
 ### 2. Retry Logic Added?
 - **Tier-1 saves (death, level-up)** → Use `with-retry-exponential` 5 retries, 100-500ms
