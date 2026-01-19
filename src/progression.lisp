@@ -660,8 +660,14 @@
               (if (and (eql ox tx)
                        (eql oy ty)
                        (or (null object-id) (eq id object-id)))
+                  ;; Check for object archetype first, then check if id is a valid item directly
                   (let* ((archetype (and id (find-object-archetype id)))
-                         (item-id (and archetype (object-archetype-item-id archetype)))
+                         (item-id (cond
+                                    ;; Object archetype maps to item
+                                    (archetype (object-archetype-item-id archetype))
+                                    ;; No archetype - check if id is a valid item directly
+                                    ((and id (find-item-archetype id)) id)
+                                    (t nil)))
                          (count (object-entry-count object archetype))
                          (respawn (object-entry-respawn-seconds object archetype)))
                     (log-verbose "PICKUP-TILE: MATCH! archetype=~a item-id=~a count=~d respawn=~a respawning=~a"
@@ -724,58 +730,64 @@
 (defun drop-inventory-item (player world item-id count &optional slot-index)
   ;; Drop COUNT of ITEM-ID onto the player's current tile.
   ;; If SLOT-INDEX is provided, only remove from that specific slot.
+  ;; Works for ANY valid item - uses object archetype if available, otherwise uses item-id directly.
   (log-verbose "DROP-INV: item=~a count=~a slot=~a" item-id count slot-index)
   (let* ((zone (world-zone world))
          (amount (max 0 (truncate count))))
     (when (and player zone item-id (> amount 0))
-      (let* ((archetype (find-object-archetype-by-item item-id))
-             (object-id (and archetype (object-archetype-id archetype))))
-        (log-verbose "DROP-INV: archetype=~a obj-id=~a" (not (null archetype)) object-id)
-        (when object-id
-          (multiple-value-bind (tx ty)
-              (player-tile-coords player world)
-            (let* ((objects (zone-objects zone))
-                   (existing (and objects
-                                  (find-if (lambda (obj)
-                                             (and (eql (getf obj :x) tx)
-                                                  (eql (getf obj :y) ty)))
-                                           objects)))
-                   (existing-id (and existing (getf existing :id)))
-                   (existing-respawnable (and existing (object-respawnable-p existing))))
-              (log-verbose "DROP-INV: tile=~d,~d existing=~a existing-id=~a object-id=~a"
-                           tx ty (not (null existing)) existing-id object-id)
-              (when (or (null existing)
-                        (eq existing-id object-id))
-                (let ((leftover (consume-inventory-item player item-id amount slot-index)))
-                  (let ((dropped (- amount leftover)))
-                    (log-verbose "DROP-INV: consumed, leftover=~d dropped=~d" leftover dropped)
-                    (when (> dropped 0)
-                      ;; Mark player snapshot-dirty so inventory syncs via delta
-                      (setf (player-snapshot-dirty player) t)
-                      (cond
-                        ((and existing (not existing-respawnable))
-                         (log-verbose "DROP-INV: adding to existing non-respawnable")
-                         (let ((base-count (object-entry-count existing archetype)))
-                           (setf (getf existing :count) (+ base-count dropped))))
-                        ((and existing existing-respawnable)
-                         (log-verbose "DROP-INV: creating new object (existing is respawnable)")
-                         (zone-add-object zone (list :id object-id
-                                                     :x tx
-                                                     :y ty
-                                                     :count dropped
-                                                     :respawn 0.0
-                                                     :respawnable nil
-                                                     :snapshot-dirty nil)))
-                        (t
-                         (log-verbose "DROP-INV: creating new object at ~d,~d" tx ty)
-                         (zone-add-object zone (list :id object-id
-                                                     :x tx
-                                                     :y ty
-                                                     :count dropped
-                                                     :respawn 0.0
-                                                     :respawnable nil
-                                                     :snapshot-dirty nil))))
-                      dropped)))))))))))
+      ;; Validate this is a real item
+      (let ((item-arch (find-item-archetype item-id)))
+        (when item-arch
+          ;; Use object archetype's id if available, otherwise use item-id directly
+          (let* ((obj-archetype (find-object-archetype-by-item item-id))
+                 (object-id (if obj-archetype
+                                (object-archetype-id obj-archetype)
+                                item-id)))
+            (log-verbose "DROP-INV: obj-archetype=~a object-id=~a" (not (null obj-archetype)) object-id)
+            (multiple-value-bind (tx ty)
+                (player-tile-coords player world)
+              (let* ((objects (zone-objects zone))
+                     (existing (and objects
+                                    (find-if (lambda (obj)
+                                               (and (eql (getf obj :x) tx)
+                                                    (eql (getf obj :y) ty)))
+                                             objects)))
+                     (existing-id (and existing (getf existing :id)))
+                     (existing-respawnable (and existing (object-respawnable-p existing))))
+                (log-verbose "DROP-INV: tile=~d,~d existing=~a existing-id=~a object-id=~a"
+                             tx ty (not (null existing)) existing-id object-id)
+                (when (or (null existing)
+                          (eq existing-id object-id))
+                  (let ((leftover (consume-inventory-item player item-id amount slot-index)))
+                    (let ((dropped (- amount leftover)))
+                      (log-verbose "DROP-INV: consumed, leftover=~d dropped=~d" leftover dropped)
+                      (when (> dropped 0)
+                        ;; Mark player snapshot-dirty so inventory syncs via delta
+                        (setf (player-snapshot-dirty player) t)
+                        (cond
+                          ((and existing (not existing-respawnable))
+                           (log-verbose "DROP-INV: adding to existing non-respawnable")
+                           (let ((base-count (object-entry-count existing obj-archetype)))
+                             (setf (getf existing :count) (+ base-count dropped))))
+                          ((and existing existing-respawnable)
+                           (log-verbose "DROP-INV: creating new object (existing is respawnable)")
+                           (zone-add-object zone (list :id object-id
+                                                       :x tx
+                                                       :y ty
+                                                       :count dropped
+                                                       :respawn 0.0
+                                                       :respawnable nil
+                                                       :snapshot-dirty nil)))
+                          (t
+                           (log-verbose "DROP-INV: creating new object at ~d,~d" tx ty)
+                           (zone-add-object zone (list :id object-id
+                                                       :x tx
+                                                       :y ty
+                                                       :count dropped
+                                                       :respawn 0.0
+                                                       :respawnable nil
+                                                       :snapshot-dirty nil))))
+                        dropped))))))))))))
 
 (defun roll-loot-entry (entries)
   ;; Roll a single loot entry from ENTRIES.
