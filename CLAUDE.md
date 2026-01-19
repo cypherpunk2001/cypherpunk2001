@@ -15,8 +15,7 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
 
 ```bash
-make tests              # Run ALL tests (recommended - single command)
-make smoke              # Full client/server smoke test with window (2s default)
+make tests              # Run ALL tests including smoke test (recommended)
 ```
 
 Individual test targets (run by `make tests`):
@@ -27,6 +26,7 @@ make test-unit          # Unit tests (pure functions, game logic, utilities)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
 make test-security      # Security tests (input validation, exploit prevention)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
+make smoke              # Full client/server smoke test with window (2s default)
 ```
 
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.

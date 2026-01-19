@@ -4,7 +4,7 @@ MMORPG_SMOKE_SECONDS ?= 2.0
 STRESS_CLIENTS ?= 10
 STRESS_DURATION ?= 60
 
-tests: checkparens ci test-unit test-persistence test-security checkdocs
+tests: checkparens ci test-unit test-persistence test-security checkdocs smoke
 	@echo "All tests passed!"
 
 ci:

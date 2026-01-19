@@ -1,41 +1,3 @@
-## Inventory Drop - Client/Server Fix (2026-01-18)
-
-**Status: FIXED - Ready for testing/commit**
-
-**Symptoms (now fixed):**
-1. Dropping items from inventory showed them on ground but didn't remove from inventory
-2. Dropped items couldn't be picked back up
-
-**Root Cause:** Drop action was client-side only - not sent to server via intent.
-- Client called `drop-inventory-item` directly instead of via server intent
-- Server never knew about drops, sent snapshots with original inventory
-- Client's local drop was overwritten by snapshot
-
-**Fix Applied:**
-1. Added `requested-drop-item-id` and `requested-drop-count` to intent struct
-2. Added intent serialization/deserialization in net.lisp
-3. Added `process-player-drop-request` server-side handler in progression.lisp
-4. Changed client to use `request-drop-item` intent instead of direct call
-5. Server clears drop request after processing
-6. Updated docs/intent.md with new fields
-
-**Files changed (not yet committed):**
-- `src/intent.lisp` - added drop intent fields and helpers
-- `src/net.lisp` - added drop intent serialization
-- `src/progression.lisp` - added server-side drop handler
-- `src/main.lisp` - changed client drop to use intent, added server processing
-- `docs/intent.md` - documented new fields
-
----
-
-## Player Animation Regression (2026-01-18) - RESOLVED
-
-**Status: COMMITTED by user**
-
-Fixed compact serialization enum tables using wrong keywords (`:walking`/`:attacking` vs `:walk`/`:attack`).
-
----
-
 ### Code Quality Standards (MANDATORY FOR ALL CHANGES)
 *CRITICAL* - Any logging we develop that helps us solve problems
 should always belong and stay in verbose mode to help us again in the future.
@@ -67,56 +29,47 @@ should always belong and stay in verbose mode to help us again in the future.
 
 **Full doc:** `docs/PLIST_SETF_GETF_PITFALL.md`
 
-### Plist `setf getf` Codebase Audit (2026-01-18)
-
-**17 total `setf (getf ...)` patterns found. 14 safe, 3 bugs fixed.**
-
-| File | Lines | Key(s) | Status |
-|------|-------|--------|--------|
-| data.lisp | 356, 369, 371 | dynamic | ✅ SAFE - Building plist from scratch |
-| migrations.lisp | 15, 23, 25 | `:lifetime-xp`, `:playtime`, `:created-at` | ✅ SAFE - Guarded with `unless` |
-| migrations.lisp | 55 | `:version` | ✅ SAFE - Always safe to overwrite |
-| net.lisp | 1028 | `:seq` | ✅ SAFE - Augmenting serialized output |
-| db.lisp | 377, 521 | `:version` | ✅ SAFE - Metadata field |
-| save.lisp | 679, 835 | `:count` | ✅ SAFE - Zone objects initialized |
-| save.lisp | 748 | `:snapshot-dirty` | ✅ SAFE - Zone objects initialized |
-| progression.lisp | 613, 653, 659, 712 | `:count`, `:respawn`, `:snapshot-dirty` | ✅ SAFE - Zone objects from `load-zone` |
-| **editor.lisp** | **914-916** | missing 4 keys | ✅ FIXED - Added `:count`, `:respawn`, `:respawnable`, `:snapshot-dirty` |
-| **progression.lisp** | **714-718, 720-724** | missing 2 keys | ✅ FIXED - Added `:respawn`, `:snapshot-dirty` |
-
-**Zone object required keys (per `zone.lisp:453-462`):**
-```lisp
-(list :id ... :x ... :y ...
-      :count nil          ;; MUTABLE
-      :respawn 0.0        ;; MUTABLE
-      :respawnable t
-      :snapshot-dirty nil) ;; MUTABLE
-```
 
 ### Building and Testing
 REMINDER:
 **CRITICAL: Before claiming any task is complete, ALL tests must pass:**
 ```bash
+make tests              # Run ALL tests including smoke (recommended)
+```
+
+Individual test targets (run by `make tests`):
+```bash
 make checkparens        # Verify balanced parentheses in all .lisp files
 make ci                 # Cold compile + UDP handshake test (no GPU needed)
+make test-unit          # Unit tests (68 tests: pure functions, game logic)
+make test-persistence   # Data integrity tests (37 tests: serialization, migrations)
+make test-security      # Security tests (23 tests: auth, input validation)
+make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 make smoke              # Full client/server smoke test with window (2s default)
-make test-persistence   # Data integrity tests (serialization, migrations, invariants)
-make test-security      # Security tests (input validation, exploit prevention)
-make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp```
+```
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
 ### When to Write Tests (Decision Criteria)
+
+**POLICY: If a unit test CAN be written, it SHOULD be written.**
+
+We aim for 99% test coverage. Tests prevent regressions and catch bugs early.
+
 **Write tests for:**
+- ✅ **All pure functions**: Functions that take input and return output
+- ✅ **Game logic**: Combat calculations, XP/leveling, inventory operations
 - ✅ **Data corruption risk**: Serialization, migrations, database writes
 - ✅ **Invariants**: Things that MUST always be true (HP ≤ max, gold ≥ 0)
 - ✅ **Backend equivalence**: Storage abstraction must work identically across backends
 - ✅ **Player-facing bugs**: Anything that loses progress, duplicates items, corrupts saves
-- ✅ **Security bugs**: Auth/session edge cases, privilege escalation (owning/controlling another entity), replay/forged intent packets, rate-limit abuse, and “double-login” / possession bypasses
-**Skip tests for:**
-- ❌ **Visual bugs**: Rendering, animations, UI layout (manual testing fine)
-- ❌ **Input handling**: Mouse clicks, keyboard (already tested via smoke test)
-- ❌ **Gameplay feel**: AI behavior, movement smoothness, combat balance
-- ❌ **Helper functions**: Utils that don't touch persistent state
-**Rule of thumb**: If a bug loses player progress or corrupts their save, write a test. If it's just annoying or ugly, manual testing is fine.
+- ✅ **Security bugs**: Auth/session edge cases, privilege escalation, replay/forged packets
+
+**Skip tests ONLY for:**
+- ❌ **Rendering code**: Functions that call raylib directly
+- ❌ **Audio code**: Functions that play sounds
+- ❌ **Interactive input**: Real-time mouse/keyboard handling
+- ❌ **Network I/O**: UDP send/receive (tested via smoke test)
+
+**Rule of thumb**: If a function has deterministic output for given input, write a test.
 ## Documentation
 Every `src/foo.lisp` must have a matching `docs/foo.md`. Run `make checkdocs` to verify.
 Key design docs:
@@ -128,7 +81,7 @@ Key design docs:
 - `docs/movement.md` - Physics, collision, zone transitions
 **REMINDER: If you update a feature, update the doc.**
 ## Important Reminders
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run `make tests`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
 - **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
@@ -223,4 +176,24 @@ Not Tested (features don't exist yet):
 
 ---
 
-In general, my finding is that tests are pretty cheap for us to make, and offer us a great ability to try to prevent regressions. So going forward from here, now that our codebase is generally performant and behaving in a way that we like, I would like you to try and go through the entire codebase wide and get as much test coverage as possible with a goal towards simply "preventing regressions" or "catching breaking/changing behavior that we previously intentionally had here" to help us streamline codegen going forwards.
+### Unit Test Coverage (2026-01-18) - DONE
+
+**Status: 68 unit tests implemented** covering pure functions across 13 modules.
+
+| Module | Coverage |
+|--------|----------|
+| utils.lisp | clamp, normalize-direction/vector, point-in-rect-p, basename, sanitize-identifier, player-direction/state, u32-hash, exponential-backoff-delay |
+| combat.lisp | aabb-overlap-p, melee-hit-chance, melee-max-hit |
+| progression.lisp | xp->level, level->xp, training modes, split-combat-xp, inventory ops |
+| movement.lisp | wall-blocked-p, tile-center-position, edge-opposite, edge-offset-ratio |
+| ai.lisp | npc-should-flee-p, npc-perception-range-sq |
+| data.lisp | plist-form-p, data-section-header-p, data-section-entry-p, normalize-pairs |
+| zone.lisp | zone-chunk-key, tile-key roundtrip, zone-tile-in-bounds-p |
+| intent.lisp | set-intent-move, set-intent-face |
+| save.lisp | quantize/encode roundtrips, pack-flags, serialize-skill/stat-block/inventory-slot |
+| migrations.lisp | v1->v2, v2->v3, full migration chain |
+| world-graph.lisp | world-graph-data-plist, normalize-world-graph-edges |
+| chat.lisp | trim-chat-message |
+| types.lisp | skill-xp-for-level, allocate-entity-id, find-player-by-id |
+
+**Policy going forward**: If a unit test CAN be written, it SHOULD be written. See "When to Write Tests" above.

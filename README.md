@@ -78,12 +78,18 @@ MMORPG_DB_BACKEND=memory make server
 
 ## Tests
 ```shell
-make checkparens        # Syntax error testing
+make tests              # Run ALL tests including smoke (recommended)
+```
+
+Individual test targets (run by `make tests`):
+```shell
+make checkparens        # Syntax error testing (balanced parens)
 make ci                 # Compile-time error testing, UDP handshake testing
-make test-persistence   # Data integrity unit testing
-make test-security      # Security related unit testing
+make test-unit          # Unit tests (68 tests: pure functions, game logic)
+make test-persistence   # Data integrity tests (37 tests: serialization, migrations)
+make test-security      # Security tests (23 tests: auth, input validation)
 make checkdocs          # Verify docs exist for each src file
-make smoke              # Runtime error testing
+make smoke              # Full client/server smoke test with window (2s default)
 ```
 
 Test env overrides:
