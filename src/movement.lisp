@@ -800,28 +800,30 @@
       (setf (gethash (first entry) table) t))
     table))
 
-(defun cache-zone-npcs (world zone-id npcs carried-table)
-  ;; Cache NPCs for ZONE-ID, excluding those in CARRIED-TABLE.
-  (let ((cache (world-zone-npc-cache world)))
-    (when (and cache zone-id npcs)
-      (if (null carried-table)
-          (setf (gethash zone-id cache) npcs)
-          (let ((kept 0))
-            (loop :for npc :across npcs
-                  :unless (gethash npc carried-table)
-                    :do (incf kept))
-            (let ((stored (make-array kept))
-                  (index 0))
+(defun cache-zone-npcs (zone-id npcs carried-table)
+  ;; Cache NPCs for ZONE-ID in zone-state, excluding those in CARRIED-TABLE.
+  (when zone-id
+    (let ((zone-state (get-zone-state zone-id)))
+      (when zone-state
+        (if (or (null carried-table) (null npcs))
+            (setf (zone-state-npcs zone-state) npcs)
+            (let ((kept 0))
               (loop :for npc :across npcs
                     :unless (gethash npc carried-table)
-                      :do (setf (aref stored index) npc)
-                          (incf index))
-              (setf (gethash zone-id cache) stored)))))))
+                      :do (incf kept))
+              (let ((stored (make-array kept))
+                    (index 0))
+                (loop :for npc :across npcs
+                      :unless (gethash npc carried-table)
+                        :do (setf (aref stored index) npc)
+                            (incf index))
+                (setf (zone-state-npcs zone-state) stored))))))))
 
-(defun cached-zone-npcs (world zone-id)
-  ;; Return cached NPCs for ZONE-ID, if any.
-  (let ((cache (world-zone-npc-cache world)))
-    (and cache zone-id (gethash zone-id cache))))
+(defun cached-zone-npcs (zone-id)
+  ;; Return cached NPCs for ZONE-ID from zone-state, if any.
+  (when zone-id
+    (let ((zone-state (get-zone-state zone-id)))
+      (and zone-state (zone-state-npcs zone-state)))))
 
 (defun reposition-transition-npcs (entries player world)
   ;; Reposition carried NPCs around the player's new spawn.
@@ -876,12 +878,8 @@
          (carry (collect-transition-npcs current-npcs player world))
          (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
-      (cache-zone-npcs world current-zone-id current-npcs carry-table)
-      ;; Also cache current zone's NPCs in zone-state for zone-filtered snapshots
-      (when current-zone-id
-        (let ((current-state (get-zone-state current-zone-id)))
-          (when current-state
-            (setf (zone-state-npcs current-state) current-npcs))))
+      ;; Cache current zone's NPCs in zone-state (excluding carried NPCs)
+      (cache-zone-npcs current-zone-id current-npcs carry-table)
       (let* ((zone (with-retry-exponential (loaded (lambda () (load-zone target-path))
                                              :max-retries 2
                                              :initial-delay 100
@@ -946,7 +944,7 @@
                 (build-adjacent-minimap-spawns world player))
           (let* ((players (game-players game))
                  (target-zone-id (and zone (zone-id zone)))
-                 (cached (cached-zone-npcs world target-zone-id))
+                 (cached (cached-zone-npcs target-zone-id))
                  (npcs (or cached
                            (make-npcs player world
                                       :id-source (game-npc-id-source game))))
@@ -1091,7 +1089,6 @@
                               :zone zone
                               :zone-label (zone-label zone)
                               :world-graph graph
-                              :zone-npc-cache (make-hash-table :test 'eq)
                               :zone-preview-cache (make-hash-table :test 'eq)
                               :minimap-spawns nil
                               :minimap-collisions nil

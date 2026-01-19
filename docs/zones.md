@@ -350,12 +350,16 @@ This section contains the concrete implementation steps, organized into phases t
 
 **Goal:** Remove legacy single-zone assumptions, optimize.
 
-**Changes:**
+**Changes (Done):**
 
-1. Remove `world-zone-npc-cache` (NPCs now persistent in zone-states)
-2. Simplify zone preview cache (reuse zone-states)
-3. Only simulate NPCs in zones with players (CPU optimization)
-4. Add zone-state unloading for empty zones (memory optimization, optional)
+1. Removed `world-zone-npc-cache` from world struct (NPCs now only in zone-states)
+2. Updated `cache-zone-npcs` and `cached-zone-npcs` to use zone-states directly
+3. NPCs only simulated in zones with players (CPU optimization, done in Phase 5)
+
+**Changes (Optional/Future):**
+
+4. Simplify zone preview cache (reuse zone-states)
+5. Add zone-state unloading for empty zones (memory optimization)
 
 ---
 
@@ -398,14 +402,14 @@ This section contains the concrete implementation steps, organized into phases t
   - [x] NPC respawn per zone
   - [x] Tests pass
 
-- [ ] **Phase 6:** Cleanup
-  - [ ] Remove legacy caches (world-zone-npc-cache)
-  - [ ] Optimize empty zone handling
-  - [ ] Final testing
+- [x] **Phase 6:** Cleanup
+  - [x] Remove legacy caches (world-zone-npc-cache)
+  - [ ] Optimize empty zone handling (optional)
+  - [x] Final testing
 
 ### Current Limitations
 
-After Phase 5 implementation, the following limitations remain:
+After Phase 6 implementation, the following limitations remain:
 
 1. **Shared Collision Map:** All players use the world's current zone for collision detection.
    Players who transition to a different zone may have imperfect collision until the world
@@ -414,6 +418,3 @@ After Phase 5 implementation, the following limitations remain:
 2. **Zone Edge Detection:** Players can only trigger zone transitions when they're in the
    same zone as the world's current zone. This prevents stranded players in other zones
    from transitioning further until someone else triggers a world zone change.
-
-3. **Legacy NPC Cache:** The `world-zone-npc-cache` is still used alongside zone-states.
-   Phase 6 will consolidate these caches.

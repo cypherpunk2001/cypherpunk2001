@@ -48,8 +48,8 @@ For production multi-player with true per-player zones, run separate server proc
 - `collect-transition-npcs` - Collect NPCs that should carry across zones.
 - `npc-transition-candidate-p` - Return true when NPC should follow across edge.
 - `reposition-transition-npcs` - Reposition carried NPCs around player's new spawn.
-- `cache-zone-npcs` - Cache NPCs for zone, excluding carried ones.
-- `cached-zone-npcs` - Return cached NPCs for zone.
+- `cache-zone-npcs` - Cache NPCs in zone-state, excluding carried ones.
+- `cached-zone-npcs` - Return cached NPCs from zone-state.
 - `merge-npc-vectors` - Append extras to base NPC array.
 
 **Minimap:**

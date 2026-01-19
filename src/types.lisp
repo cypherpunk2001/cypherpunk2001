@@ -81,7 +81,7 @@
 (defstruct (world (:constructor %make-world))
   ;; World state including tiles, collision, and derived bounds.
   tile-size-f tile-dest-size floor-index zone zone-label world-graph
-  zone-npc-cache zone-preview-cache
+  zone-preview-cache
   minimap-spawns minimap-collisions
   wall-map wall-map-width wall-map-height
   collision-half-width collision-half-height
