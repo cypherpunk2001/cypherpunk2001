@@ -138,6 +138,7 @@ Useful for:
 - **Snapshots, UI updates, best-effort operations** → No retry (fail silently acceptable)
 
 ### 3. Logging Added?
+**CRITICAL: Any logging we develop that helps us solve problems together should always remain in verbose mode to help us again in the future.**
 - **Critical failures** → `(warn "...")` always
 - **Tier-1 save failures** → `(warn "CRITICAL: ...")` + fallback
 - **State transitions** → `(log-verbose "...")` when `*verbose*` enabled

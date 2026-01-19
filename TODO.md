@@ -37,6 +37,8 @@ Fixed compact serialization enum tables using wrong keywords (`:walking`/`:attac
 ---
 
 ### Code Quality Standards (MANDATORY FOR ALL CHANGES)
+*CRITICAL* - Any logging we develop that helps us solve problems
+should always belong and stay in verbose mode to help us again in the future.
 
 **Check EVERY change before claiming complete:**
 1. **Tests?** Persistent state → write test | Visual only → skip
