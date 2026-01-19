@@ -610,6 +610,7 @@ Key design docs:
 
 ## Important Reminders
 
+- **GIT: READ-ONLY**: Never run git commands that modify state (commit, stash, reset, checkout, push, add, etc.) without explicit user permission. Read-only commands (status, log, diff, show) are fine. The user manages version control.
 - **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke`. No exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
