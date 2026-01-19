@@ -134,7 +134,8 @@
                     :hit-timer (player-hit-timer player)
                     :run-stamina (player-run-stamina player)
                     :attack-target-id (player-attack-target-id player)
-                    :follow-target-id (player-follow-target-id player))
+                    :follow-target-id (player-follow-target-id player)
+                    :last-sequence (player-last-sequence player))
               ;; FULL: Complete durable state for DB saves
               (list :id (player-id player)
                     :x (player-x player)
@@ -191,6 +192,7 @@
           (player-run-stamina player) (getf plist :run-stamina 1.0)
           (player-attack-target-id player) (getf plist :attack-target-id 0)
           (player-follow-target-id player) (getf plist :follow-target-id 0)
+          (player-last-sequence player) (getf plist :last-sequence 0)
           (player-dx player) (getf plist :dx 0.0)
           (player-dy player) (getf plist :dy 0.0)
           (player-anim-state player) (getf plist :anim-state :idle)
@@ -250,7 +252,8 @@
             (player-hit-frame player) (getf plist :hit-frame 0)
             (player-hit-facing player) (getf plist :hit-facing :down)
             (player-hit-facing-sign player) (getf plist :hit-facing-sign 1.0)
-            (player-running player) (getf plist :running nil))
+            (player-running player) (getf plist :running nil)
+            (player-last-sequence player) (getf plist :last-sequence (player-last-sequence player)))
       ;; Only update heavy fields if present (network-only snapshots exclude these)
       (when has-stats
         (setf (player-stats player) (deserialize-stat-block has-stats)))
@@ -268,6 +271,31 @@
             (player-auto-left player) saved-auto-left
             (player-auto-down player) saved-auto-down
             (player-auto-up player) saved-auto-up)))
+  player)
+
+(defun serialize-player-private (player)
+  ;; Serialize private player state (inventory/equipment/stats) for owner-only updates.
+  (when player
+    (list :stats (serialize-stat-block (player-stats player))
+          :inventory (serialize-inventory (player-inventory player))
+          :equipment (serialize-equipment (player-equipment player)))))
+
+(defun apply-player-private-plist (player plist)
+  ;; Apply private player state from PLIST onto PLAYER (owner-only data).
+  (when (and player plist)
+    (let ((stats (getf plist :stats))
+          (inventory (getf plist :inventory))
+          (equipment (getf plist :equipment)))
+      (when stats
+        (setf (player-stats player) (deserialize-stat-block stats))
+        (mark-player-hud-stats-dirty player))
+      (when inventory
+        (setf (player-inventory player) (deserialize-inventory inventory *inventory-size*))
+        (mark-player-inventory-dirty player))
+      (when equipment
+        (setf (player-equipment player)
+              (deserialize-equipment equipment (length *equipment-slot-ids*)))
+        (mark-player-inventory-dirty player))))
   player)
 
 (defun serialize-npc (npc &key (include-visuals nil))
@@ -462,22 +490,19 @@
           (logbitp 2 flags)))
 
 ;;; Compact Player Serialization
-;;; Vector format (19 elements):
+;;; Vector format (21 elements):
 ;;; [0] id           [1] x*10        [2] y*10        [3] hp
 ;;; [4] dx*10        [5] dy*10       [6] anim-code   [7] facing-code
 ;;; [8] facing-sign  [9] frame-idx   [10] frame-timer*100
 ;;; [11] flags       [12] attack-timer*100  [13] hit-timer*100
 ;;; [14] hit-frame   [15] hit-facing-code   [16] hit-facing-sign
-;;; [17] attack-target-id  [18] follow-target-id  [19] inventory (plist)
+;;; [17] attack-target-id  [18] follow-target-id  [19] run-stamina*100
+;;; [20] last-sequence
 
 (defun serialize-player-compact (player)
   "Serialize player to compact vector for network transmission.
-   Includes inventory for synchronization."
-  (let ((inv (serialize-inventory (player-inventory player))))
-    (log-verbose "SERIALIZE-COMPACT: player=~a inv-slots=~a"
-                 (player-id player)
-                 (length (getf inv :slots)))
-    (vector (player-id player)
+   Excludes inventory (private to owning client)."
+  (vector (player-id player)
           (quantize-coord (player-x player))
           (quantize-coord (player-y player))
           (or (player-hp player) 0)
@@ -496,7 +521,8 @@
           (round (or (player-hit-facing-sign player) 1.0))
           (or (player-attack-target-id player) 0)
           (or (player-follow-target-id player) 0)
-          inv)))
+          (quantize-timer (player-run-stamina player))
+          (or (player-last-sequence player) 0)))
 
 (defun deserialize-player-compact (vec)
   "Deserialize compact vector to player plist for apply-player-plist.
@@ -525,15 +551,13 @@
                          :hit-facing (decode-facing (aref vec 15))
                          :hit-facing-sign (float (aref vec 16))
                          :attack-target-id (aref vec 17)
-                         :follow-target-id (aref vec 18))))
-        ;; Add inventory if present (element 19)
-        (when (>= (length vec) 20)
-          (let ((inv (aref vec 19)))
-            (log-verbose "DESERIALIZE-COMPACT: player=~a inv=~a slots=~a"
-                         (getf plist :id) (not (null inv))
-                         (and inv (length (getf inv :slots))))
-            (when inv
-              (setf plist (append plist (list :inventory inv))))))
+                         :follow-target-id (aref vec 18)
+                         :run-stamina (if (>= (length vec) 20)
+                                          (dequantize-timer (aref vec 19))
+                                          1.0)
+                         :last-sequence (if (>= (length vec) 21)
+                                            (aref vec 20)
+                                            0))))
         plist))))
 
 ;;; Compact NPC Serialization
@@ -599,7 +623,7 @@
 
 (defun serialize-game-state-compact (game)
   "Serialize game state using compact format for network transmission.
-   Returns plist with :format :compact-v1 and vector-based entity data."
+   Returns plist with :format :compact-v3 and vector-based entity data."
   (let* ((players (game-players game))
          (npcs (game-npcs game))
          (world (game-world game))
@@ -623,7 +647,7 @@
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build compact snapshot
-    (list :format :compact-v1
+    (list :format :compact-v3
           :zone-id (and zone (zone-id zone))
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
@@ -695,7 +719,7 @@
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build delta snapshot
-    (list :format :delta-v1
+    (list :format :delta-v3
           :seq seq
           :baseline-seq baseline-seq
           :zone-id (and zone (zone-id zone))
@@ -828,7 +852,8 @@
         :y (getf plist :y)
         :count (getf plist :count 1)
         :respawn (getf plist :respawn 0.0)
-        :respawnable (getf plist :respawnable t)))
+        :respawnable (getf plist :respawnable t)
+        :snapshot-dirty nil))
 
 (defun serialize-game-state (game &key (include-visuals nil) (network-only nil))
   ;; Serialize authoritative game state to plist (server snapshot).
@@ -868,17 +893,21 @@
 
 (defun deserialize-game-state (plist game)
   ;; Restore authoritative game state from plist into existing GAME.
-  ;; Supports legacy plist, compact-v1, and delta-v1 formats.
+  ;; Supports legacy plist, compact-v1/v2/v3, and delta-v1/v2/v3 formats.
   ;; Returns: (values zone-id delta-positions-or-nil)
   ;; delta-positions is non-nil only for delta-v1 format, for interpolation fix.
   (let ((format (getf plist :format)))
     (cond
       ;; Delta format (incremental updates, see docs/net.md Prong 2)
-      ((eq format :delta-v1)
+      ((or (eq format :delta-v1)
+           (eq format :delta-v2)
+           (eq format :delta-v3))
        (let ((delta-positions (deserialize-game-state-delta plist game)))
          (values (getf plist :zone-id) delta-positions)))
       ;; Compact format (network-optimized, see docs/net.md 4-Prong)
-      ((eq format :compact-v1)
+      ((or (eq format :compact-v1)
+           (eq format :compact-v2)
+           (eq format :compact-v3))
        (deserialize-game-state-compact plist game)
        (values (getf plist :zone-id) nil))
       ;; Legacy plist format (DB saves, compatibility)

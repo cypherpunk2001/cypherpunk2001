@@ -32,6 +32,8 @@ Key functions
 - `apply-player-plist` - Apply plist fields onto existing player, preserving client-only state.
 - `apply-player-plists` - Apply multiple player plists to game, preserving local player state.
 - `players-match-order-p` - Return true when players and plists share same ID ordering.
+- `serialize-player-private` - Serialize owner-only state (inventory/equipment/stats).
+- `apply-player-private-plist` - Apply owner-only state onto the local player.
 
 **CRITICAL - Multi-Client Player ID Lookup:**
 When applying snapshots with multiple connected clients, `apply-player-plists` uses `game-net-player-id` to find the local player by ID. **Never falls back to the first player** if lookup fails - this prevents teleporting to other clients' positions. Logs a warning if player not found and keeps current player to maintain correct view.
@@ -88,6 +90,7 @@ Design note
 - Intent is NOT saved (it's ephemeral per-frame input).
 - Save files omit visual fields; network snapshots can opt in to visuals via `:include-visuals`.
 - This format becomes the future snapshot sync format for networking.
+- Network-only fields (e.g., `:last-sequence` for prediction) live only in compact snapshots.
 
 Client/Server Preparation
 - Save state is the "server-shaped core" - authoritative game state only
@@ -95,6 +98,7 @@ Client/Server Preparation
 - Deterministic: same save file should produce same game state
 - Ready to become snapshot format for future client/server split
 - Version tag enables seamless protocol migrations
+- Compact snapshots exclude private state (inventory/equipment/stats); those sync via private messages.
 
 Relationship to db.md (Database Architecture)
 -----------------------------------------------

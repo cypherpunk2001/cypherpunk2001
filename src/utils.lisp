@@ -94,6 +94,15 @@
          (trimmed (string-trim "-" clean)))
     (intern (string-upcase trimmed) package)))
 
+(defun plist-put (plist key value)
+  ;; Return PLIST with KEY set to VALUE (adds key if missing).
+  (let ((pos (position key plist :test #'eq)))
+    (if pos
+        (progn
+          (setf (nth (1+ pos) plist) value)
+          plist)
+        (append plist (list key value)))))
+
 (defun relative-path-from-root (path root)
   ;; Return PATH as a relative string from ROOT, if possible.
   (let* ((root-str (namestring (uiop:ensure-directory-pathname root)))

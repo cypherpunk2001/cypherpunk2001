@@ -676,8 +676,6 @@
                         (let ((leftover (grant-inventory-item player item-id count)))
                           (log-verbose "PICKUP-TILE: granted! leftover=~d respawn=~a" leftover respawn)
                           (setf picked t)
-                          ;; Mark player snapshot-dirty so inventory syncs via delta
-                          (setf (player-snapshot-dirty player) t)
                           (cond
                             ((zerop leftover)
                              (if (> respawn 0.0)
@@ -769,8 +767,6 @@
                     (let ((dropped (- amount leftover)))
                       (log-verbose "DROP-INV: consumed, leftover=~d dropped=~d" leftover dropped)
                       (when (> dropped 0)
-                        ;; Mark player snapshot-dirty so inventory syncs via delta
-                        (setf (player-snapshot-dirty player) t)
                         (cond
                           ((and existing (not existing-respawnable))
                            (log-verbose "DROP-INV: adding to existing non-respawnable")
@@ -817,7 +813,6 @@
           (setf (aref slots slot-a) b
                 (aref slots slot-b) a)
           ;; Mark player as dirty so inventory order persists
-          (setf (player-snapshot-dirty player) t)
           (mark-player-dirty (player-id player))
           (log-verbose "SWAP-INV: swapped slot ~a <-> slot ~a" slot-a slot-b)
           t)))))

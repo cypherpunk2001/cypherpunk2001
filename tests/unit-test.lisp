@@ -20,6 +20,7 @@
                 test-basename
                 test-basename-edge-cases
                 test-sanitize-identifier
+                test-plist-put
                 test-player-direction
                 test-player-state
                 test-u32-hash
@@ -183,6 +184,15 @@
   (assert (eq (sanitize-identifier "hello world") :HELLO-WORLD) () "sanitize-identifier: space")
   (assert (eq (sanitize-identifier "test_123") :TEST-123) () "sanitize-identifier: underscore")
   (assert (eq (sanitize-identifier "---hello---") :HELLO) () "sanitize-identifier: trim dashes"))
+
+(defun test-plist-put ()
+  "Test plist-put updates existing keys and adds new keys."
+  (let ((plist (list :a 1 :b 2)))
+    (let ((updated (plist-put plist :a 9)))
+      (assert (equal updated '(:a 9 :b 2)) () "plist-put: update existing")
+      (assert (equal plist '(:a 9 :b 2)) () "plist-put: modifies original on update"))
+    (let ((extended (plist-put plist :c 3)))
+      (assert (equal extended '(:a 9 :b 2 :c 3)) () "plist-put: add new key"))))
 
 (defun test-player-direction ()
   "Test player-direction returns correct facing."

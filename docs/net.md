@@ -23,10 +23,12 @@ Message format (plist, printed with `prin1`)
 **Server -> Client:**
 - `(:type :auth-ok :player-id <id>)` -> authentication successful
 - `(:type :auth-fail :reason <keyword>)` -> authentication failed
-  - Reasons: `:missing-credentials`, `:username-taken`, `:bad-credentials`, `:already-logged-in`
+  - Reasons: `:missing-credentials`, `:username-taken`, `:bad-credentials`, `:already-logged-in`, `:wrong-zone`
+  - When `:wrong-zone`, the server includes `:zone-id` with the player's saved zone.
 - `(:type :snapshot :format <format> :state <game-state> ...)` -> server snapshot
-  - Formats: `:compact-v1` (full state), `:delta-v1` (changed entities only)
+  - Formats: `:compact-v3` (full state), `:delta-v3` (changed entities only)
 - `(:type :snapshot-chunk :seq <n> :chunk <i> :total <n> :data <str>)` -> fragmented snapshot piece
+- `(:type :private-state :player-id <id> :payload <plist>)` -> owner-only inventory/equipment/stats update
 
 **Encrypted auth (optional):**
 - When `*auth-encryption-enabled*` is true, auth messages use `:encrypted-payload` instead of plaintext credentials
@@ -40,10 +42,11 @@ Key functions
 
 **Message Handling:**
 - `send-net-message` / `receive-net-message`: ASCII message helpers with UDP buffers; malformed packets dropped.
-- `send-net-message-with-retry`: Send critical messages (auth responses) with exponential retry.
+- `send-net-message-with-retry`: Send critical messages (auth responses) with linear retry.
 - `send-auth-message`: Send login/register with optional encryption.
 - `intent->plist` / `apply-intent-plist`: serialize/deserialize intent payloads.
 - `apply-snapshot`: apply game state, update player id, queue events; clears interpolation buffer on zone change.
+- `apply-private-state`: apply owner-only inventory/equipment/stats updates to the local player.
 
 **Authentication:**
 - `handle-register-request`: Create account, spawn character, register session. (Legacy, replaced by async)
@@ -71,9 +74,10 @@ Key functions
 Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.
 - `*read-eval*` is disabled during message parsing for safety.
-- Snapshots include visual fields by calling `serialize-game-state` with `:include-visuals`.
+- Snapshots use `serialize-game-state-compact` / `serialize-game-state-delta`; compact vectors always include visual fields.
 - Server uses non-blocking UDP receive via `usocket:wait-for-input` with `:timeout 0`.
 - Fatal runtime errors log context (and a backtrace in verbose mode) before exiting.
+- Private state (inventory/equipment/stats) is sent via `:private-state` messages to the owning client only.
 
 Security: Input Validation
 - Server validates ALL client input before processing (untrusted client principle).
@@ -106,7 +110,7 @@ Client-Side Prediction (Optional)
 - When enabled:
   - Client applies local movement immediately using same physics as server
   - Intent messages include `:sequence` number for tracking
-  - Server snapshots include `:last-sequence` for reconciliation
+  - Player compact vectors include `:last-sequence` (server's last processed input)
   - Mispredictions beyond `*prediction-error-threshold*` (default 5.0 pixels) snap to server position
 - Key functions:
   - `make-prediction-state` - Create prediction state for local player
@@ -182,6 +186,12 @@ Replaces verbose plist serialization with compact vector format:
 - `pack-player-flags` / `unpack-player-flags` - Boolean packing
 - `encode-anim-state` / `decode-anim-state` - Enum encoding
 
+**Private state:** Inventory, equipment, and stats are excluded from compact snapshots and sent
+to the owning client via `:private-state` messages.
+
+**Player vector fields:** The compact player vector includes `run-stamina` at index 19 and
+`last-sequence` at index 20 (server's last processed input sequence for prediction).
+
 **Optimizations applied:**
 1. **Positional encoding**: Fixed-position vector instead of keyword plists
 2. **Float quantization**: Coordinates scaled by 10, timers by 100
@@ -207,7 +217,7 @@ Only transmits entities that changed since last acknowledged snapshot.
   needs-full-resync)    ; T after zone change or reconnect
 
 ;; Delta snapshot format
-(:format :delta-v1
+(:format :delta-v3
  :seq 12345
  :baseline-seq 12340
  :changed-players #(...)    ; Only dirty players
@@ -231,6 +241,9 @@ Only transmits entities that changed since last acknowledged snapshot.
 ;; Each frame, server partitions clients:
 resync-clients  → Get full compact snapshot (new connections, zone changes)
 delta-clients   → Get delta snapshot (synced clients)
+
+Resync triggers when the client's last ack is missing or the gap exceeds `*max-delta-gap*`
+(or `*max-delta-age*` for long stalls).
 
 ;; Encode-once optimization preserved: each group gets single encoded message
 ```
@@ -322,28 +335,15 @@ See `docs/PLIST_SETF_GETF_PITFALL.md` for why this initialization is critical.
 
 ---
 
-### Inventory Sync
+### Private State Sync
 
-**Player inventory syncs via compact snapshots.**
+**Inventory, equipment, and stats are owner-only.** Compact snapshots omit them entirely.
 
-**Serialization:**
-```lisp
-;; Element [19] of player compact vector is serialized inventory
-(defun serialize-player-compact (player)
-  (let ((inv (serialize-inventory (player-inventory player))))
-    (vector ... inv)))
-```
+**Server-side:** When `player-inventory-dirty` or `player-hud-stats-dirty` is set, the server
+queues a `:private-state` message for that client (see `send-private-states`).
 
-**Client-side:**
-```lisp
-;; In deserialize-player-compact:
-(when (>= (length vec) 20)
-  (let ((inv (aref vec 19)))
-    (when inv
-      (setf plist (append plist (list :inventory inv))))))
-```
-
-**Dirty marking:** Player marked `snapshot-dirty` after successful pickup so inventory syncs in next delta.
+**Client-side:** `apply-private-state` routes the payload to `apply-player-private-plist`,
+refreshing inventory/HUD caches locally.
 
 ---
 
@@ -377,4 +377,5 @@ STRESS_CLIENTS=100 make stress
 | `*delta-compression-enabled*` | `t` | Enable Prong 2 delta compression |
 | `*net-buffer-size*` | 65507 | UDP datagram limit |
 | `*chunk-timeout*` | 1.0 | Seconds before discarding incomplete chunks |
-| `*max-delta-age*` | 100 | Max sequence gap before forcing resync |
+| `*max-delta-age*` | 60 | Max snapshots behind before forcing resync |
+| `*max-delta-gap*` | 5 | Max snapshot gap tolerated before forcing resync |

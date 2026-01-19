@@ -12,7 +12,7 @@
 (defun migrate-player-v1->v2 (data)
   "v1->v2: Add lifetime-xp field, defaulting to 0."
   (unless (getf data :lifetime-xp)
-    (setf (getf data :lifetime-xp) 0))
+    (setf data (plist-put data :lifetime-xp 0)))
   data)
 
 (defun migrate-player-v2->v3 (data)
@@ -20,9 +20,9 @@
    playtime defaults to 0 (seconds played).
    created-at defaults to current time for existing players."
   (unless (getf data :playtime)
-    (setf (getf data :playtime) 0))
+    (setf data (plist-put data :playtime 0)))
   (unless (getf data :created-at)
-    (setf (getf data :created-at) (get-universal-time)))
+    (setf data (plist-put data :created-at (get-universal-time))))
   data)
 
 (defparameter *player-migrations*
@@ -52,7 +52,7 @@
                    (warn "No migrator found for version ~d to ~d"
                          version (1+ version)))
                (incf version)))
-    (setf (getf data :version) *player-schema-version*)
+    (setf data (plist-put data :version *player-schema-version*))
     data))
 
 ;;;; Exports

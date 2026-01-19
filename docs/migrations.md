@@ -15,14 +15,15 @@ Key concepts
 
 **Schema Version**
 ```lisp
-(defparameter *player-schema-version* 2
+(defparameter *player-schema-version* 3
   "Current player schema version. Increment when changing player format.")
 ```
 
 **Migration Registry**
 ```lisp
 (defparameter *player-migrations*
-  '((2 . migrate-player-v1->v2))
+  '((2 . migrate-player-v1->v2)
+    (3 . migrate-player-v2->v3))
   "Alist of (version . migration-function) for player data.")
 ```
 
@@ -73,7 +74,7 @@ Writing a new migration
 (defun migrate-player-v2->v3 (data)
   "v2->v3: Add new-field, defaulting to some-value."
   (unless (getf data :new-field)
-    (setf (getf data :new-field) some-default-value))
+    (setf data (plist-put data :new-field some-default-value)))
   data)
 ```
 

@@ -17,6 +17,7 @@
   mouse-hold-timer
   inventory-lines inventory-count inventory-dirty
   hud-stats-lines hud-stats-count hud-stats-dirty
+  last-sequence
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
   snapshot-dirty)
 
@@ -376,6 +377,7 @@
                   :hud-stats-lines hud-lines
                   :hud-stats-count 0
                   :hud-stats-dirty t
+                  :last-sequence 0
                   :snapshot-dirty t)))
 
 (defun make-npc (start-x start-y &key archetype id)

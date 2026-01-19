@@ -374,7 +374,7 @@
            ;; Use serialize-player from save.lisp (no visuals for DB, include zone-id)
            (data (serialize-player player :include-visuals nil :zone-id zone-id)))
       ;; Add version to serialized data
-      (setf (getf data :version) *player-schema-version*)
+      (setf data (plist-put data :version *player-schema-version*))
       (storage-save *storage* key data)
       (when (boundp '*server-total-saves*)
         (incf *server-total-saves*))
@@ -391,12 +391,13 @@
         ;; Run migrations
         (setf data (migrate-player-data data))
         ;; Deserialize using save.lisp functions
-        (let ((player (deserialize-player data
-                                          *inventory-size*
-                                          (length *equipment-slot-ids*))))
+        (let* ((player (deserialize-player data
+                                           *inventory-size*
+                                           (length *equipment-slot-ids*)))
+               (zone-id (getf data :zone-id)))
           (log-verbose "Loaded player ~a from storage (version ~a)"
                        player-id (getf data :version))
-          player)))))
+          (values player zone-id))))))
 
 (defun db-delete-player (player-id)
   "Delete player from storage."
@@ -518,7 +519,7 @@
              (let* ((zone-id (player-session-zone-id session))
                     (key (player-key player-id))
                     (data (serialize-player player :include-visuals nil :zone-id zone-id)))
-               (setf (getf data :version) *player-schema-version*)
+               (setf data (plist-put data :version *player-schema-version*))
                (push (cons key data) key-data-pairs)))))
        *player-sessions*))
     ;; Execute batch save outside lock (IO can be slow)
@@ -794,6 +795,14 @@
   (when (and *storage* username)
     (let ((key (account-key username)))
       (storage-load *storage* key))))
+
+(defun db-delete-account (username)
+  "Delete account from storage. Returns T if deleted."
+  (when (and *storage* username)
+    (let ((key (account-key username)))
+      (when (storage-delete *storage* key)
+        (log-verbose "Deleted account ~a from storage" username)
+        t))))
 
 (defun db-account-exists-p (username)
   "Return T if account USERNAME exists in storage."

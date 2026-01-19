@@ -14,6 +14,8 @@
   "Default UDP port for client/server.")
 (defparameter *net-buffer-size* usocket:+max-datagram-packet-size+
   "Max UDP payload size for snapshot messages.")
+(defparameter *private-state-retries* 3
+  "Frames to resend private state updates to the owning client.")
 
 ;;; Delta Compression - See docs/net.md Prong 2
 (defparameter *delta-compression-enabled* t
@@ -23,6 +25,9 @@
 (defparameter *max-delta-age* 60
   "Max snapshots a client can be behind before forcing full resync.
    At 20 Hz, 60 = 3 seconds of missed packets.")
+(defparameter *max-delta-gap* 5
+  "Max snapshot gap tolerated before forcing full resync.
+   Keeps delta updates safe without per-client delta history tracking.")
 
 ;;; UDP Fragmentation - See docs/net.md Prong 3
 (defparameter *chunk-overhead* 100

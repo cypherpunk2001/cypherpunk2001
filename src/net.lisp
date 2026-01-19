@@ -101,7 +101,10 @@
   account-username      ; Username of logged-in account
   ;; Delta compression (see docs/net.md Prong 2)
   last-acked-seq        ; Sequence number client confirmed receiving
-  needs-full-resync)    ; T after zone change or reconnect
+  needs-full-resync     ; T after zone change or reconnect
+  ;; Private state (inventory/equipment/stats) owner-only updates
+  private-state
+  private-retries)
 
 ;;; UDP Fragmentation - See docs/net.md Prong 3
 (defstruct chunk-buffer
@@ -432,22 +435,43 @@
                    (zone (world-zone world))
                    (zone-id (and zone (zone-id zone))))
               ;; Link account to character (with retry)
-              (with-retry-exponential (set-result (lambda () (db-set-character-id username player-id))
-                                        :max-retries 3
-                                        :initial-delay 50
-                                        :max-delay 200
-                                        :on-final-fail (lambda (e)
-                                                         (warn "Failed to set character-id for ~a: ~a" username e))))
-              ;; Return success result
-              (make-auth-result :type :register
-                                :success t
-                                :host host
-                                :port port
-                                :username username
-                                :client client
-                                :player player
-                                :player-id player-id
-                                :zone-id zone-id))
+              (let ((linked (with-retry-exponential
+                                (set-result (lambda () (db-set-character-id username player-id))
+                                 :max-retries 3
+                                 :initial-delay 50
+                                 :max-delay 200
+                                 :on-final-fail (lambda (e)
+                                                  (warn "Failed to set character-id for ~a: ~a" username e)))
+                              set-result)))
+                (if linked
+                    ;; Return success result
+                    (make-auth-result :type :register
+                                      :success t
+                                      :host host
+                                      :port port
+                                      :username username
+                                      :client client
+                                      :player player
+                                      :player-id player-id
+                                      :zone-id zone-id)
+                    (progn
+                      (warn "Registration rollback: unable to link character for ~a" username)
+                      (with-retry-exponential
+                          (deleted (lambda () (db-delete-account username))
+                           :max-retries 3
+                           :initial-delay 50
+                           :max-delay 200
+                           :on-final-fail (lambda (e)
+                                            (warn "CRITICAL: Failed to delete account ~a after link failure: ~a"
+                                                  username e)))
+                        deleted)
+                      (make-auth-result :type :register
+                                        :success nil
+                                        :host host
+                                        :port port
+                                        :username username
+                                        :client client
+                                        :error-reason :internal-error)))))
             ;; Username taken
             (progn
               (log-verbose "Registration failed from ~a:~d - username ~a already taken" host port username)
@@ -529,46 +553,77 @@
              (cond
                ;; Existing character - load from DB
                (character-id
-                (setf player (with-retry-exponential (loaded (lambda () (db-load-player character-id))
-                                                       :max-retries 3
-                                                       :initial-delay 100
-                                                       :max-delay 300)
-                               loaded))
-                (if player
-                    (log-verbose "Loaded existing character ~d for account ~a" character-id username)
-                    (progn
-                      ;; Failed to load - unregister session and return error
-                      (session-unregister username)
+                (let* ((loaded-info
+                         (with-retry-exponential
+                             (loaded (lambda ()
+                                       (multiple-value-bind (loaded-player loaded-zone-id)
+                                           (db-load-player character-id)
+                                         (list loaded-player loaded-zone-id)))
+                              :max-retries 3
+                              :initial-delay 100
+                              :max-delay 300)
+                           loaded))
+                       (loaded-player (and loaded-info (first loaded-info)))
+                       (saved-zone-id (and loaded-info (second loaded-info))))
+                  (unless loaded-player
+                  ;; Failed to load - unregister session and return error
+                    (session-unregister username)
+                    (return-from process-login-async
                       (make-auth-result :type :login
                                         :success nil
                                         :host host
                                         :port port
                                         :username username
                                         :client client
-                                        :error-reason :load-failed))))
+                                        :error-reason :load-failed)))
+                  (when (and saved-zone-id (not (eq saved-zone-id zone-id)))
+                    (log-verbose "Login rejected for ~a:~d - zone mismatch (~a vs ~a)"
+                                 host port saved-zone-id zone-id)
+                    (session-unregister username)
+                    (return-from process-login-async
+                      (make-auth-result :type :login
+                                        :success nil
+                                        :host host
+                                        :port port
+                                        :username username
+                                        :client client
+                                        :error-reason :wrong-zone
+                                        :zone-id saved-zone-id)))
+                  (setf player loaded-player)
+                  (log-verbose "Loaded existing character ~d for account ~a" character-id username)))
                ;; No character yet - spawn new one
                (t
                 (setf player (spawn-player-at-world world id-source))
-                (with-retry-exponential (set-result (lambda () (db-set-character-id username (player-id player)))
-                                          :max-retries 3
-                                          :initial-delay 50
-                                          :max-delay 200
-                                          :on-final-fail (lambda (e)
-                                                           (warn "Failed to set character-id for ~a: ~a" username e))))
-                (log-verbose "Created new character ~d for account ~a" (player-id player) username)))
+                (let ((linked (with-retry-exponential
+                                  (set-result (lambda () (db-set-character-id username (player-id player)))
+                                   :max-retries 3
+                                   :initial-delay 50
+                                   :max-delay 200
+                                   :on-final-fail (lambda (e)
+                                                    (warn "Failed to set character-id for ~a: ~a" username e)))
+                                set-result)))
+                  (unless linked
+                    (warn "Login rollback: unable to link character for ~a" username)
+                    (session-unregister username)
+                    (return-from process-login-async
+                      (make-auth-result :type :login
+                                        :success nil
+                                        :host host
+                                        :port port
+                                        :username username
+                                        :client client
+                                        :error-reason :internal-error)))
+                  (log-verbose "Created new character ~d for account ~a" (player-id player) username))))
              ;; Return success if we have a player
-             (if player
-                 (make-auth-result :type :login
-                                   :success t
-                                   :host host
-                                   :port port
-                                   :username username
-                                   :client client
-                                   :player player
-                                   :player-id (player-id player)
-                                   :zone-id zone-id)
-                 ;; Already returned error above for load-failed case
-                 nil))))
+             (make-auth-result :type :login
+                               :success t
+                               :host host
+                               :port port
+                               :username username
+                               :client client
+                               :player player
+                               :player-id (player-id player)
+                               :zone-id zone-id))))
       (error (e)
         (warn "Login error for ~a: ~a" username e)
         ;; Clean up session registration on error
@@ -671,6 +726,9 @@
              (when (eq (auth-result-type result) :register)
                (session-try-register username client))
              (register-player-session player :zone-id zone-id)
+             (queue-private-state client player)
+             (setf (player-inventory-dirty player) nil
+                   (player-hud-stats-dirty player) nil)
              ;; Clear rate limit on success
              (auth-rate-record-success host)
              ;; Send success response
@@ -691,11 +749,14 @@
              ;; Session was registered in worker before DB operations failed
              (session-unregister username))
            ;; Send failure response
-           (send-net-message-with-retry socket
-                                        (list :type :auth-fail :reason error-reason)
-                                        :host host :port port
-                                        :max-retries 3
-                                        :delay 50)
+           (let ((fail-message (list :type :auth-fail :reason error-reason)))
+             (when (and (eq error-reason :wrong-zone) zone-id)
+               (setf fail-message (append fail-message (list :zone-id zone-id))))
+             (send-net-message-with-retry socket
+                                          fail-message
+                                          :host host :port port
+                                          :max-retries 3
+                                          :delay 50))
            (log-verbose "~a failed from ~a:~d - ~a"
                        (if (eq (auth-result-type result) :register) "Registration" "Login")
                        host port error-reason)))))))
@@ -714,7 +775,9 @@
                     :authenticated-p nil
                     :account-username nil
                     :last-acked-seq nil
-                    :needs-full-resync t))
+                    :needs-full-resync t
+                    :private-state nil
+                    :private-retries 0))
 
 (defun find-net-client (clients host port)
   ;; Return the matching CLIENT for HOST/PORT, if any.
@@ -1025,10 +1088,12 @@
 
 (defun client-needs-full-resync-p (client current-seq)
   "Return T if CLIENT needs a full snapshot instead of delta.
-   Checks: needs-full-resync flag, missing ack, or ack too old."
-  (or (net-client-needs-full-resync client)
-      (null (net-client-last-acked-seq client))
-      (> (- current-seq (net-client-last-acked-seq client)) *max-delta-age*)))
+   Checks: needs-full-resync flag, missing ack, ack gap, or ack too old."
+  (let ((last-ack (net-client-last-acked-seq client)))
+    (or (net-client-needs-full-resync client)
+        (null last-ack)
+        (> (- current-seq last-ack) *max-delta-gap*)
+        (> (- current-seq last-ack) *max-delta-age*))))
 
 (defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
   "Send snapshots to clients with delta compression (Prong 2).
@@ -1052,7 +1117,7 @@
     (when resync-clients
       (let ((full-state (serialize-game-state-compact game)))
         ;; Add sequence number for client to ack
-        (setf (getf full-state :seq) current-seq)
+        (setf full-state (plist-put full-state :seq current-seq))
         (log-verbose "Sending full resync to ~d clients (seq ~d, ~d players, ~d npcs)"
                      (length resync-clients) current-seq
                      (length (getf full-state :players))
@@ -1117,6 +1182,45 @@
                (send-fragmented-snapshot socket state event-plists seq
                                          (net-client-host client)
                                          (net-client-port client))))))))))
+
+(defun queue-private-state (client player &key (retries *private-state-retries*))
+  ;; Queue owner-only state updates (inventory/equipment/stats) for CLIENT.
+  (when (and client player)
+    (setf (net-client-private-state client) (serialize-player-private player)
+          (net-client-private-retries client) (max 1 retries))))
+
+(defun send-private-states (socket clients)
+  ;; Send queued private state updates to owning clients.
+  (dolist (client clients)
+    (when (and (net-client-authenticated-p client)
+               (net-client-player client))
+      (let ((player (net-client-player client)))
+        (when (or (player-inventory-dirty player)
+                  (player-hud-stats-dirty player))
+          (queue-private-state client player)
+          (setf (player-inventory-dirty player) nil
+                (player-hud-stats-dirty player) nil)))
+      (let ((payload (net-client-private-state client)))
+        (when payload
+          (send-net-message socket
+                            (list :type :private-state
+                                  :player-id (player-id (net-client-player client))
+                                  :payload payload)
+                            :host (net-client-host client)
+                            :port (net-client-port client))
+          (decf (net-client-private-retries client))
+          (when (<= (net-client-private-retries client) 0)
+            (setf (net-client-private-state client) nil)))))))
+
+(defun apply-private-state (game payload &key player-id)
+  ;; Apply owner-only state updates (inventory/equipment/stats) to the local player.
+  (when (and game payload)
+    (let* ((players (game-players game))
+           (id (or player-id (game-net-player-id game)))
+           (player (and id players (find-player-by-id players id))))
+      (if player
+          (apply-player-private-plist player payload)
+          (log-verbose "Private state ignored (player ~a not found)" id)))))
 
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
@@ -1532,34 +1636,56 @@
               (player (spawn-player-at-world world (game-id-source game)))
               (player-id (player-id player)))
          ;; Link account to new character (with retry)
-         (with-retry-exponential (set-result (lambda () (db-set-character-id username player-id))
-                                  :max-retries 3
-                                  :initial-delay 50
-                                  :max-delay 200
-                                  :on-final-fail (lambda (e)
-                                                   (warn "Failed to set character-id for ~a: ~a" username e))))
-         ;; Add player to game
-         (add-player-to-game game player)
-         ;; Mark client as authenticated
-         (setf (net-client-player client) player)
-         (setf (net-client-authenticated-p client) t)
-         (setf (net-client-account-username client) (string-downcase username))
-         ;; Register session for persistence
-         (let* ((zone (world-zone world))
-                (zone-id (and zone (zone-id zone))))
-           (register-player-session player :zone-id zone-id))
-         ;; Track active session (atomic, should always succeed for new account)
-         (session-try-register username client)
-         ;; Clear rate limit on success
-         (auth-rate-record-success host)
-         ;; Send success response (with retry - critical auth message)
-         (send-net-message-with-retry socket
-                                      (list :type :auth-ok :player-id player-id)
-                                      :host host :port port
-                                      :max-retries 3
-                                      :delay 50)
-         (log-verbose "Registration successful: ~a (~a:~d) -> player-id=~d"
-                     username host port player-id)))
+         (let ((linked (with-retry-exponential
+                           (set-result (lambda () (db-set-character-id username player-id))
+                            :max-retries 3
+                            :initial-delay 50
+                            :max-delay 200
+                            :on-final-fail (lambda (e)
+                                             (warn "Failed to set character-id for ~a: ~a" username e)))
+                         set-result)))
+           (if linked
+               (progn
+                 ;; Add player to game
+                 (add-player-to-game game player)
+                 ;; Mark client as authenticated
+                 (setf (net-client-player client) player)
+                 (setf (net-client-authenticated-p client) t)
+                 (setf (net-client-account-username client) (string-downcase username))
+                 ;; Register session for persistence
+                 (let* ((zone (world-zone world))
+                        (zone-id (and zone (zone-id zone))))
+                   (register-player-session player :zone-id zone-id))
+                 ;; Track active session (atomic, should always succeed for new account)
+                 (session-try-register username client)
+                 ;; Clear rate limit on success
+                 (auth-rate-record-success host)
+                 ;; Send success response (with retry - critical auth message)
+                 (send-net-message-with-retry socket
+                                              (list :type :auth-ok :player-id player-id)
+                                              :host host :port port
+                                              :max-retries 3
+                                              :delay 50)
+                 (log-verbose "Registration successful: ~a (~a:~d) -> player-id=~d"
+                             username host port player-id))
+               (progn
+                 (warn "Registration rollback: unable to link character for ~a" username)
+                 (with-retry-exponential
+                     (deleted (lambda () (db-delete-account username))
+                      :max-retries 3
+                      :initial-delay 50
+                      :max-delay 200
+                      :on-final-fail (lambda (e)
+                                       (warn "CRITICAL: Failed to delete account ~a after link failure: ~a"
+                                             username e)))
+                   deleted)
+                 (send-net-message-with-retry socket
+                                              (list :type :auth-fail :reason :internal-error)
+                                              :host host :port port
+                                              :max-retries 3
+                                              :delay 50)
+                 (log-verbose "Registration failed from ~a:~d - internal error (link failure)"
+                              host port))))))
       (t
        ;; Username already exists - don't count as rate limit failure (could be probing)
        (send-net-message-with-retry socket
@@ -1632,35 +1758,82 @@
          (cond
            ;; Existing character - load from DB
            (character-id
-            (setf player (with-retry-exponential (loaded (lambda () (db-load-player character-id))
+            (let* ((loaded-info
+                     (with-retry-exponential
+                         (loaded (lambda ()
+                                   (multiple-value-bind (loaded-player loaded-zone-id)
+                                       (db-load-player character-id)
+                                     (list loaded-player loaded-zone-id)))
+                          :max-retries 3
+                          :initial-delay 100
+                          :max-delay 300)
+                       loaded))
+                   (loaded-player (and loaded-info (first loaded-info)))
+                   (saved-zone-id (and loaded-info (second loaded-info))))
+              (if loaded-player
+                  (progn
+                    (when (and saved-zone-id (not (eq saved-zone-id zone-id)))
+                      (session-unregister username)
+                      (send-net-message-with-retry socket
+                                                   (list :type :auth-fail
+                                                         :reason :wrong-zone
+                                                         :zone-id saved-zone-id)
+                                                   :host host :port port
                                                    :max-retries 3
-                                                   :initial-delay 100
-                                                   :max-delay 300)
-                           loaded))
-            (when player
-              ;; Remove any existing player with same ID (from stale session)
-              (let ((existing (find (player-id player) (game-players game)
-                                   :key #'player-id)))
-                (when existing
-                  (remove-player-from-game game existing)
-                  (log-verbose "Removed stale player ~d before re-adding"
-                              (player-id player))))
-              ;; Add loaded player to game
-              (add-player-to-game game player)
-              (log-verbose "Loaded existing character ~d for account ~a"
-                          character-id username)))
+                                                   :delay 50)
+                      (log-verbose "Login rejected for ~a:~d - zone mismatch (~a vs ~a)"
+                                  host port saved-zone-id zone-id)
+                      (return-from handle-login-request nil))
+                    (setf player loaded-player)
+                    ;; Remove any existing player with same ID (from stale session)
+                    (let ((existing (find (player-id player) (game-players game)
+                                         :key #'player-id)))
+                      (when existing
+                        (remove-player-from-game game existing)
+                        (log-verbose "Removed stale player ~d before re-adding"
+                                    (player-id player))))
+                    ;; Add loaded player to game
+                    (add-player-to-game game player)
+                    (log-verbose "Loaded existing character ~d for account ~a"
+                                character-id username))
+                  (progn
+                    ;; Failed to load - unregister session and return error
+                    (session-unregister username)
+                    (send-net-message-with-retry socket
+                                                 (list :type :auth-fail :reason :load-failed)
+                                                 :host host :port port
+                                                 :max-retries 3
+                                                 :delay 50)
+                    (log-verbose "Login failed from ~a:~d - load failed for ~a"
+                                host port username)
+                    (return-from handle-login-request nil)))))
            ;; No character yet - spawn new one (shouldn't happen after registration)
            (t
             (setf player (spawn-player-at-world world (game-id-source game)))
-            (with-retry-exponential (set-result (lambda () (db-set-character-id username (player-id player)))
-                                     :max-retries 3
-                                     :initial-delay 50
-                                     :max-delay 200
-                                     :on-final-fail (lambda (e)
-                                                      (warn "Failed to set character-id for ~a: ~a" username e))))
-            (add-player-to-game game player)
-            (log-verbose "Created new character ~d for account ~a"
-                        (player-id player) username)))
+            (let ((linked (with-retry-exponential
+                              (set-result (lambda () (db-set-character-id username (player-id player)))
+                               :max-retries 3
+                               :initial-delay 50
+                               :max-delay 200
+                               :on-final-fail (lambda (e)
+                                                (warn "Failed to set character-id for ~a: ~a" username e)))
+                            set-result)))
+              (if linked
+                  (progn
+                    (add-player-to-game game player)
+                    (log-verbose "Created new character ~d for account ~a"
+                                (player-id player) username))
+                  (progn
+                    (warn "Login rollback: unable to link character for ~a" username)
+                    (session-unregister username)
+                    (send-net-message-with-retry socket
+                                                 (list :type :auth-fail :reason :internal-error)
+                                                 :host host :port port
+                                                 :max-retries 3
+                                                 :delay 50)
+                    (log-verbose "Login failed from ~a:~d - internal error (link failure)"
+                                host port)
+                    (return-from handle-login-request nil))))))
 
          (when player
            ;; Mark client as authenticated
@@ -1880,9 +2053,14 @@
                                       (when ack
                                         (setf (net-client-last-acked-seq client) ack)
                                         (setf (net-client-needs-full-resync client) nil)))
-                                    (apply-intent-plist
-                                     (net-client-intent client)
-                                     (getf message :payload))))
+                                    (let* ((payload (getf message :payload))
+                                           (seq (and payload (getf payload :sequence)))
+                                           (player (net-client-player client)))
+                                      (when (and player (integerp seq))
+                                        (setf (player-last-sequence player) seq))
+                                      (apply-intent-plist
+                                       (net-client-intent client)
+                                       payload))))
                                  (t
                                   (log-verbose "Unknown message type from ~a:~d -> ~s"
                                                host port (getf message :type)))))))
@@ -1920,11 +2098,15 @@
                                                                      current-seq event-plists)
                                      ;; Prong 1: Full snapshots - all entities every frame
                                      (let ((state (serialize-game-state-compact game)))
+                                       (setf state (plist-put state :seq current-seq))
                                        (send-snapshots-parallel socket clients state event-plists
                                                                 worker-threads))))
                              (error (e)
                                (warn "Failed to serialize/send snapshot (frame ~d): ~a" frames e)
                                (log-verbose "Snapshot error, skipping frame: ~a" e))))
+                         ;; 4b. Send private state updates (inventory/equipment/stats)
+                         (when clients
+                           (send-private-states socket clients))
                          ;; 5. Sleep for remaining tick time (accounts for processing duration)
                          ;; This ensures consistent tick rate regardless of frame complexity.
                          (let* ((frame-end (get-internal-real-time))
@@ -2040,8 +2222,16 @@
                                              (:username-taken "Username already taken")
                                              (:already-logged-in "Account already logged in")
                                              (:missing-credentials "Missing username or password")
+                                             (:wrong-zone (let ((zone-id (getf message :zone-id)))
+                                                            (if zone-id
+                                                                (format nil "Wrong server for this character (zone: ~a)" zone-id)
+                                                                "Wrong server for this character")))
                                              (t "Authentication failed")))
                                      (log-verbose "Authentication failed: ~a" reason)))
+                                  (:private-state
+                                   (apply-private-state game
+                                                        (getf message :payload)
+                                                        :player-id (getf message :player-id)))
                                   (t
                                    (log-verbose "Unexpected message during login: ~s"
                                                (getf message :type))))))
@@ -2096,7 +2286,9 @@
                                   (latest-events nil)
                                   (latest-player-id nil)
                                   (latest-sequence 0)
-                                  (latest-snapshot-seq nil))  ; Delta compression seq
+                                  (latest-snapshot-seq nil)  ; Delta compression seq
+                                  (latest-private nil)
+                                  (latest-private-player-id nil))
                               (loop
                                 (multiple-value-bind (message _host _port)
                                     (receive-net-message socket recv-buffer)
@@ -2128,6 +2320,9 @@
                                              (setf latest-snapshot-seq state-seq)))
                                          (dolist (event reassembled-events)
                                            (push event latest-events)))))
+                                    (:private-state
+                                     (setf latest-private (getf message :payload)
+                                           latest-private-player-id (getf message :player-id)))
                                     (t
                                      (log-verbose "Unknown message type from server: ~s"
                                                   (getf message :type)))))
@@ -2165,19 +2360,23 @@
                                             (game-client-time game))))
                                   ;; Reconcile prediction if enabled
                                   (when (and *client-prediction-enabled*
-                                             (game-prediction-state game)
-                                             (> latest-sequence 0))
-                                    (let ((player (game-player game)))
-                                      (when player
+                                             (game-prediction-state game))
+                                    (let* ((player (game-player game))
+                                           (server-seq (or (and (> latest-sequence 0) latest-sequence)
+                                                           (and player (player-last-sequence player))))))
+                                      (when (and player (integerp server-seq) (> server-seq 0))
                                         (reconcile-prediction game
                                                              (player-x player)
                                                              (player-y player)
-                                                             latest-sequence)))))))
+                                                             server-seq))))))))
+                              (when latest-private
+                                (apply-private-state game latest-private
+                                                     :player-id latest-private-player-id)))
 
                             ;; Interpolate remote entities before drawing
                             (interpolate-remote-entities game)
                             (process-combat-events game)
-                            (draw-game game))))))
+                            (draw-game game)))
           (shutdown-game game)
           (usocket:socket-close socket)
           (raylib:close-audio-device))))))

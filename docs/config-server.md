@@ -23,8 +23,16 @@ How it connects
 | `*net-default-host*` | `"127.0.0.1"` | Default UDP host for client/server |
 | `*net-default-port*` | `1337` | Default UDP port for client/server |
 | `*net-buffer-size*` | `65507` | Max UDP payload size for snapshot messages |
+| `*private-state-retries*` | `3` | Frames to resend private state updates to the owning client |
 
 *Why restart:* UDP receive buffer created once per socket. Changing this doesn't resize existing buffers.
+
+### Delta Compression
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*delta-compression-enabled*` | `t` | Enable delta compression (dirty entities only) |
+| `*max-delta-age*` | `60` | Max snapshots behind before forcing full resync |
+| `*max-delta-gap*` | `5` | Max snapshot gap tolerated before forcing full resync |
 
 ### Auth Encryption
 | Parameter | Default | Description |

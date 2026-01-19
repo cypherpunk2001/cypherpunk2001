@@ -50,6 +50,7 @@
                 #'test-migration-v1-to-v3-chain
                 #'test-playtime-roundtrip
                 #'test-created-at-roundtrip
+                #'test-private-player-roundtrip
                 ;; Compact Serialization Tests (Network Optimization)
                 #'test-compact-player-roundtrip
                 #'test-compact-npc-roundtrip
@@ -740,6 +741,29 @@
       (assert-equal original-created-at (player-created-at restored) "created-at not preserved"))
     t))
 
+(defun test-private-player-roundtrip ()
+  "Test: Private state serialization updates inventory/equipment/stats."
+  (let* ((source (make-test-player))
+         (target (make-player 0.0 0.0 :id 99)))
+    (equip-item source :rusty-sword)
+    (setf (skill-level (stat-block-attack (player-stats source))) 5
+          (player-inventory-dirty target) nil
+          (player-hud-stats-dirty target) nil)
+    (let ((payload (serialize-player-private source)))
+      (apply-player-private-plist target payload)
+      (assert-equal (count-inventory-item (player-inventory source) :health-potion)
+                    (count-inventory-item (player-inventory target) :health-potion)
+                    "Private inventory not applied")
+      (assert-equal (equipment-slot-item (player-equipment source) :weapon)
+                    (equipment-slot-item (player-equipment target) :weapon)
+                    "Private equipment not applied")
+      (assert-equal (skill-level (stat-block-attack (player-stats source)))
+                    (skill-level (stat-block-attack (player-stats target)))
+                    "Private stats not applied")
+      (assert-true (player-inventory-dirty target) "Inventory dirty not flagged")
+      (assert-true (player-hud-stats-dirty target) "HUD stats dirty not flagged"))
+    t))
+
 ;;;; ========================================================================
 ;;;; COMPACT SERIALIZATION TESTS (Network Optimization)
 ;;;; Tests for the 4-Prong snapshot size optimization (see docs/net.md)
@@ -767,7 +791,9 @@
           (player-hit-facing player) :side
           (player-hit-facing-sign player) -1.0
           (player-attack-target-id player) 99
-          (player-follow-target-id player) 101)
+          (player-follow-target-id player) 101
+          (player-run-stamina player) 6.5
+          (player-last-sequence player) 123)
     ;; Serialize to compact vector
     (let* ((vec (serialize-player-compact player))
            (plist (deserialize-player-compact vec)))
@@ -782,7 +808,10 @@
       (assert (getf plist :hit-active) nil "hit-active flag not preserved")
       (assert (getf plist :running) nil "running flag not preserved")
       (assert-equal 99 (getf plist :attack-target-id) "attack-target-id not preserved")
-      (assert-equal 101 (getf plist :follow-target-id) "follow-target-id not preserved")))
+      (assert-equal 101 (getf plist :follow-target-id) "follow-target-id not preserved")
+      (assert (< (abs (- 6.5 (getf plist :run-stamina))) 0.05) nil
+              "run-stamina not preserved within tolerance")
+      (assert-equal 123 (getf plist :last-sequence) "last-sequence not preserved")))
   t)
 
 (defun test-compact-npc-roundtrip ()
@@ -827,9 +856,7 @@
     (setf (player-hp player) 100
           (player-attacking player) t
           (player-anim-state player) :walk
-          (player-facing player) :side
-          ;; Clear inventory for fair comparison (compact includes inv, network-only excludes)
-          (player-inventory player) nil)
+          (player-facing player) :side)
     ;; Compare sizes
     (let* ((compact-vec (serialize-player-compact player))
            (compact-str (prin1-to-string compact-vec))

@@ -98,28 +98,6 @@ Key design docs:
 
 ## Current Tasks / TODO
 
-- Analyze image long-vertical-lines-while-player-moves.png until you see the what I might personally call "artifact" or "pixelglyph" or what would you describe it as, they are found in the image within the blue river and they are maybe 1-2 px thin long white vertical lines. They occur occasionally, but often when walking around in the game, and sometimes additionally more during zoom out, but usually they occur at any given time. They may flicker in and out a little bit. This even occurs in 'make local'. This has honestly occured pretty much day one i noticed it since we added visual sprite tiles to the black floor. I have my doubts that it's platform or hardware specific as I have a very good graphics card that has very good driver support. I'm hoping you've seen this type of thing before and might be able to try some things to see if we can eliminate it. If you can take this bug report here, and generate a plan below it, I'll approve, and each step of your plan you can try modifying code and then let me know when to test, i'll test and report back until we hopefully pin it down.
-
-### Tile Seam Fix Plan
-
-**Diagnosis:** Classic "tile seam" or "tile bleeding" artifact. The white lines appear when sub-pixel camera positioning causes fractional offsets in tile rendering, creating hairline gaps where the background shows through.
-
-**Evidence:**
-- Occurs during movement (camera follows player's floating-point position)
-- Worse during zoom-out (fractional positions amplified at smaller scale)
-- Flickering (seams appear/disappear as position crosses pixel boundaries)
-
-**Fix Plan (try in order, test after each step):**
-
-| Step | Fix | File | What it does |
-|------|-----|------|--------------|
-| 1 | **Snap camera to pixels** | rendering.lisp:1494 | Round camera target X/Y to integers before passing to raylib. Most likely fix. |
-| 2 | **Set NEAREST texture filter** | rendering.lisp (after load) | Disable bilinear filtering on tileset. Prevents edge sampling artifacts. |
-| 3 | **Snap tile positions** | rendering.lisp:set-rectangle | Round dest-x/dest-y to integers in tile drawing. Belt-and-suspenders. |
-| 4 | **Inset source rects** | rendering.lisp:set-tile-source-rect | Sample 0.5px inside tile edges to avoid bleeding neighbor pixels. Last resort. |
-
-**Status:** Awaiting approval to begin Step 1.
-
 ---
 
 ## Future Tasks / Roadmap

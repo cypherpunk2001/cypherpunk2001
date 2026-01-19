@@ -16,6 +16,7 @@ Key helpers
 - `minimap-view-bounds`: compute a player-centered minimap view box.
 - `basename`: derive a short filename label for UI overlays.
 - `sanitize-identifier`: turn filenames into keyword-safe IDs.
+- `plist-put`: set or add a key in a plist without relying on `setf getf`.
 - `relative-path-from-root`: normalize asset paths relative to a root folder.
 - `player-direction`, `player-state`, `player-animation-params`: animation logic helpers.
 - `u32-hash`: deterministic variation for wall tile selection.

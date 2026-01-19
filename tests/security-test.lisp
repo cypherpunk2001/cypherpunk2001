@@ -49,7 +49,7 @@
 
 (defun extract-first-player-from-snapshot (state)
   "Extract first player's position from snapshot state.
-   Handles compact-v1, delta-v1, and legacy (plist) formats.
+   Handles compact-v1/v2/v3, delta-v1/v2/v3, and legacy (plist) formats.
    Returns (values x y) or (values nil nil) if not found."
   (let* ((format (getf state :format))
          ;; Delta format uses :changed-players, compact/legacy use :players
@@ -58,7 +58,8 @@
     (when players
       (cond
         ;; Compact or delta format: players is a vector of vectors
-        ((or (eq format :compact-v1) (eq format :delta-v1))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3))
          (when (and (vectorp players) (> (length players) 0))
            (let ((vec (aref players 0)))
              (when (and (vectorp vec) (>= (length vec) 3))
@@ -75,7 +76,7 @@
 
 (defun extract-players-as-plists (state)
   "Extract all players from snapshot state as a list of plists.
-   Handles compact-v1, delta-v1, and legacy (plist) formats."
+   Handles compact-v1/v2/v3, delta-v1/v2/v3, and legacy (plist) formats."
   (let* ((format (getf state :format))
          ;; Delta format uses :changed-players, compact/legacy use :players
          (players (or (getf state :changed-players)
@@ -83,7 +84,8 @@
     (when players
       (cond
         ;; Compact or delta format: convert vectors to plists
-        ((or (eq format :compact-v1) (eq format :delta-v1))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3))
          (when (vectorp players)
            (loop :for vec :across players
                  :collect (deserialize-player-compact vec))))

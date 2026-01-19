@@ -491,16 +491,16 @@ Migrations are **append-only** and **chained**:
 (defun migrate-player-v1->v2 (data)
   "v1->v2: Add lifetime-xp field, defaulting to 0."
   (unless (getf data :lifetime-xp)
-    (setf (getf data :lifetime-xp) 0))
+    (setf data (plist-put data :lifetime-xp 0)))
   data)
 
 ;; v2->v3: Add playtime and created-at fields
 (defun migrate-player-v2->v3 (data)
   "v2->v3: Add playtime (seconds played) and created-at (unix timestamp)."
   (unless (getf data :playtime)
-    (setf (getf data :playtime) 0))
+    (setf data (plist-put data :playtime 0)))
   (unless (getf data :created-at)
-    (setf (getf data :created-at) (get-universal-time)))
+    (setf data (plist-put data :created-at (get-universal-time))))
   data)
 ```
 

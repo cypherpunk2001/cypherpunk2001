@@ -352,23 +352,26 @@
 
 (defun update-running-state (player dt moving toggle-run)
   ;; Update stamina and return the current speed multiplier.
-  (when toggle-run
+  (let ((old-stamina (player-run-stamina player)))
+    (when toggle-run
     (if (> (player-run-stamina player) 0.0)
         (setf (player-running player) (not (player-running player)))
         (setf (player-running player) nil)))
-  (if (and (player-running player) moving (> (player-run-stamina player) 0.0))
-      (progn
-        (decf (player-run-stamina player) dt)
-        (when (<= (player-run-stamina player) 0.0)
-          (setf (player-run-stamina player) 0.0
-                (player-running player) nil)))
-      (when (< (player-run-stamina player) *run-stamina-max*)
-        (incf (player-run-stamina player) dt)
-        (when (>= (player-run-stamina player) *run-stamina-max*)
-          (setf (player-run-stamina player) *run-stamina-max*))))
-  (if (and (player-running player) (> (player-run-stamina player) 0.0))
-      *run-speed-mult*
-      1.0))
+    (if (and (player-running player) moving (> (player-run-stamina player) 0.0))
+        (progn
+          (decf (player-run-stamina player) dt)
+          (when (<= (player-run-stamina player) 0.0)
+            (setf (player-run-stamina player) 0.0
+                  (player-running player) nil)))
+        (when (< (player-run-stamina player) *run-stamina-max*)
+          (incf (player-run-stamina player) dt)
+          (when (>= (player-run-stamina player) *run-stamina-max*)
+            (setf (player-run-stamina player) *run-stamina-max*))))
+    (when (/= old-stamina (player-run-stamina player))
+      (setf (player-snapshot-dirty player) t))
+    (if (and (player-running player) (> (player-run-stamina player) 0.0))
+        *run-speed-mult*
+        1.0)))
 
 (defun update-player-position (player intent world speed-mult dt)
   ;; Move the player with collision and target logic.

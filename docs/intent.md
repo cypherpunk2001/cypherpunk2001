@@ -24,6 +24,8 @@ What an intent contains
   - `requested-chat-message`: pending chat message for the server to broadcast
 - Utility requests:
   - `requested-unstuck`: flag indicating player wants to use the unstuck teleport feature
+- Client prediction:
+  - `:sequence`: optional per-input sequence number for server reconciliation
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
