@@ -168,7 +168,7 @@
               :server-selector-index 0
               :server-status :connecting
               :server-last-heard 0.0
-              :server-next-ping 0.0
+              :server-next-ping (random 3.0)  ; Stagger initial pings to avoid thundering herd
               :menu-padding menu-padding
               :menu-panel-width menu-panel-width
               :menu-panel-height menu-panel-height

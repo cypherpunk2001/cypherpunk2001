@@ -113,7 +113,7 @@ Walkthrough: server status indicator
 2. Periodically sends `:hello` ping to server (every 3-7 seconds, randomized).
 3. Server responds with `:hello-ack` if online.
 4. If any message received: status = `:online`, update `server-last-heard` timestamp.
-5. If no message for 5+ seconds: status = `:offline`.
+5. If no message for 10+ seconds: status = `:offline` (timeout > max ping interval to avoid flicker).
 6. Login screen displays colored indicator: green (online), red (offline), yellow (connecting).
 7. Login attempts blocked when offline (shows "Server is offline" error).
 8. Only runs on login screen - gameplay uses snapshot stream for connectivity.

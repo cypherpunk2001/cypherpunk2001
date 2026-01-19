@@ -2180,7 +2180,7 @@
                                 (error ()
                                   ;; Send failed - server unreachable
                                   (setf (ui-server-status ui) :offline)))
-                              ;; Schedule next ping: random 3-7s, capped at 60s total interval
+                              ;; Schedule next ping: random 3-7s
                               (setf (ui-server-next-ping ui)
                                     (+ elapsed (+ 3.0 (random 4.0)))))
                             ;; Auto-login: Try register first, then login if taken
@@ -2270,10 +2270,11 @@
                                    (log-verbose "Unexpected message during login: ~s"
                                                (getf message :type))))))
                               ;; Update server status based on whether we got a message
+                              ;; Timeout (10s) must exceed max ping interval (7s) to avoid false offline
                               (if got-message
                                   (setf (ui-server-status ui) :online
                                         (ui-server-last-heard ui) elapsed)
-                                  (when (> (- elapsed (ui-server-last-heard ui)) 5.0)
+                                  (when (> (- elapsed (ui-server-last-heard ui)) 10.0)
                                     (setf (ui-server-status ui) :offline))))
                             ;; Draw login screen and handle button clicks
                             (raylib:begin-drawing)
