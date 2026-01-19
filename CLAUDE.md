@@ -606,7 +606,6 @@ Key design docs:
 - `docs/migrations.md` - Schema versioning, migration functions, admin commands
 - `docs/save.md` - Serialization format, durable vs ephemeral classification
 - `docs/net.md` - UDP protocol, message format, snapshot streaming
-- `docs/SERVER_PERFORMANCE.md` - Scaling strategies, bottleneck analysis
 - `docs/movement.md` - Physics, collision, zone transitions
 
 ## Important Reminders
