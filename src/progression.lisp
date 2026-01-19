@@ -406,20 +406,45 @@
                     (decf remaining add))))
     remaining))
 
-(defun inventory-remove (inventory item-id count)
+(defun inventory-remove (inventory item-id count &optional slot-index)
   ;; Remove COUNT of ITEM-ID from INVENTORY, returning leftover count.
+  ;; If SLOT-INDEX is provided, only remove from that specific slot.
   (let* ((remaining (max 0 (truncate count)))
          (slots (and inventory (inventory-slots inventory))))
+    (log-verbose "INV-REMOVE: item=~a count=~a slot-index=~a inv=~a slots=~a"
+                 item-id count slot-index inventory (and slots (length slots)))
     (when (and slots (> remaining 0))
-      (loop :for slot :across slots
-            :while (> remaining 0)
-            :when (eq (inventory-slot-item-id slot) item-id)
-              :do (let ((take (min remaining (inventory-slot-count slot))))
-                    (decf (inventory-slot-count slot) take)
-                    (decf remaining take)
-                    (when (inventory-slot-empty-p slot)
-                      (setf (inventory-slot-item-id slot) nil
-                            (inventory-slot-count slot) 0)))))
+      (if slot-index
+          ;; Remove from specific slot only
+          (when (< slot-index (length slots))
+            (let ((slot (aref slots slot-index)))
+              (when (eq (inventory-slot-item-id slot) item-id)
+                (let ((before (inventory-slot-count slot))
+                      (take (min remaining (inventory-slot-count slot))))
+                  (log-verbose "INV-REMOVE: slot[~d] item=~a before=~d take=~d"
+                               slot-index (inventory-slot-item-id slot) before take)
+                  (decf (inventory-slot-count slot) take)
+                  (log-verbose "INV-REMOVE: slot[~d] after=~d" slot-index (inventory-slot-count slot))
+                  (decf remaining take)
+                  (when (inventory-slot-empty-p slot)
+                    (setf (inventory-slot-item-id slot) nil
+                          (inventory-slot-count slot) 0))))))
+          ;; Remove from any matching slot (legacy behavior)
+          (loop :for slot :across slots
+                :for idx :from 0
+                :while (> remaining 0)
+                :when (eq (inventory-slot-item-id slot) item-id)
+                  :do (let ((before (inventory-slot-count slot))
+                            (take (min remaining (inventory-slot-count slot))))
+                        (log-verbose "INV-REMOVE: slot[~d] item=~a before=~d take=~d"
+                                     idx (inventory-slot-item-id slot) before take)
+                        (decf (inventory-slot-count slot) take)
+                        (log-verbose "INV-REMOVE: slot[~d] after=~d" idx (inventory-slot-count slot))
+                        (decf remaining take)
+                        (when (inventory-slot-empty-p slot)
+                          (setf (inventory-slot-item-id slot) nil
+                                (inventory-slot-count slot) 0))))))
+    (log-verbose "INV-REMOVE: leftover=~d" remaining)
     remaining))
 
 (defun grant-inventory-item (player item-id count)
@@ -435,12 +460,13 @@
           leftover)
         amount)))
 
-(defun consume-inventory-item (player item-id count)
+(defun consume-inventory-item (player item-id count &optional slot-index)
   ;; Authoritatively remove items from PLAYER's inventory.
+  ;; If SLOT-INDEX is provided, only remove from that specific slot.
   (let* ((inventory (and player (player-inventory player)))
          (amount (max 0 (truncate count))))
     (if inventory
-        (let ((leftover (inventory-remove inventory item-id amount)))
+        (let ((leftover (inventory-remove inventory item-id amount slot-index)))
           (when (< leftover amount)
             (mark-player-inventory-dirty player)
             ;; Tier-2 write: inventory changes should be marked dirty for batched saves
@@ -683,13 +709,28 @@
           (setf (player-pickup-target-active player) nil
                 (player-pickup-target-id player) nil))))))
 
-(defun drop-inventory-item (player world item-id count)
+(defun process-player-drop-request (player intent world)
+  ;; Process a drop request from the client intent (server authority).
+  (let ((item-id (intent-requested-drop-item-id intent))
+        (count (intent-requested-drop-count intent))
+        (slot-index (intent-requested-drop-slot-index intent)))
+    (log-verbose "PROCESS-DROP: player=~a item=~a count=~a slot=~a"
+                 (and player (player-id player)) item-id count slot-index)
+    (when (and item-id (> count 0))
+      (let ((dropped (drop-inventory-item player world item-id count slot-index)))
+        (log-verbose "PROCESS-DROP: result=~a" dropped)
+        dropped))))
+
+(defun drop-inventory-item (player world item-id count &optional slot-index)
   ;; Drop COUNT of ITEM-ID onto the player's current tile.
+  ;; If SLOT-INDEX is provided, only remove from that specific slot.
+  (log-verbose "DROP-INV: item=~a count=~a slot=~a" item-id count slot-index)
   (let* ((zone (world-zone world))
          (amount (max 0 (truncate count))))
     (when (and player zone item-id (> amount 0))
       (let* ((archetype (find-object-archetype-by-item item-id))
              (object-id (and archetype (object-archetype-id archetype))))
+        (log-verbose "DROP-INV: archetype=~a obj-id=~a" (not (null archetype)) object-id)
         (when object-id
           (multiple-value-bind (tx ty)
               (player-tile-coords player world)
@@ -701,16 +742,23 @@
                                            objects)))
                    (existing-id (and existing (getf existing :id)))
                    (existing-respawnable (and existing (object-respawnable-p existing))))
+              (log-verbose "DROP-INV: tile=~d,~d existing=~a existing-id=~a object-id=~a"
+                           tx ty (not (null existing)) existing-id object-id)
               (when (or (null existing)
                         (eq existing-id object-id))
-                (let ((leftover (consume-inventory-item player item-id amount)))
+                (let ((leftover (consume-inventory-item player item-id amount slot-index)))
                   (let ((dropped (- amount leftover)))
+                    (log-verbose "DROP-INV: consumed, leftover=~d dropped=~d" leftover dropped)
                     (when (> dropped 0)
+                      ;; Mark player snapshot-dirty so inventory syncs via delta
+                      (setf (player-snapshot-dirty player) t)
                       (cond
                         ((and existing (not existing-respawnable))
+                         (log-verbose "DROP-INV: adding to existing non-respawnable")
                          (let ((base-count (object-entry-count existing archetype)))
                            (setf (getf existing :count) (+ base-count dropped))))
                         ((and existing existing-respawnable)
+                         (log-verbose "DROP-INV: creating new object (existing is respawnable)")
                          (zone-add-object zone (list :id object-id
                                                      :x tx
                                                      :y ty
@@ -719,6 +767,7 @@
                                                      :respawnable nil
                                                      :snapshot-dirty nil)))
                         (t
+                         (log-verbose "DROP-INV: creating new object at ~d,~d" tx ty)
                          (zone-add-object zone (list :id object-id
                                                      :x tx
                                                      :y ty

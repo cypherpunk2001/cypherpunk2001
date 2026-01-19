@@ -618,19 +618,10 @@
       (loop :for npc :across npcs
             :when npc
             :do (push (serialize-npc-compact npc) npc-vectors)))
-    ;; Serialize zone objects (only respawning ones to minimize size)
-    ;; DEBUG: Log object count and respawn states
-    (when (and objects (> (length objects) 0))
-      (let ((first-obj (first objects)))
-        (when (and first-obj (> (or (getf first-obj :respawn) 0.0) 0.0))
-          (log-verbose "SERIALIZE-OBJECTS: count=~a first-id=~a first-respawn=~a"
-                       (length objects) (getf first-obj :id) (getf first-obj :respawn)))))
+    ;; Serialize zone objects (all objects - dropped items and respawning pickups)
     (when objects
       (dolist (object objects)
-        (let ((respawn (or (getf object :respawn) 0.0)))
-          (when (> respawn 0.0)
-            (log-verbose "SERIALIZE-OBJECT: id=~a respawn=~a" (getf object :id) respawn)
-            (push (serialize-object object) object-list)))))
+        (push (serialize-object object) object-list)))
     ;; Build compact snapshot
     (list :format :compact-v1
           :zone-id (and zone (zone-id zone))
@@ -655,29 +646,22 @@
               :for index :from 0
               :for plist = (deserialize-npc-compact vec)
               :do (deserialize-npc plist npcs index))))
-    ;; Apply object states (respawning objects from server)
+    ;; Apply object states from server (authoritative - replaces client objects)
     (when object-plists
-      (log-verbose "DESERIALIZE-OBJECTS: received ~a objects" (length object-plists))
       (let* ((world (game-world game))
-             (zone (and world (world-zone world)))
-             (objects (and zone (zone-objects zone))))
-        (when objects
-          ;; Update matching objects with server state
-          (dolist (server-obj object-plists)
-            (let ((server-id (getf server-obj :id))
-                  (server-x (getf server-obj :x))
-                  (server-y (getf server-obj :y))
-                  (server-respawn (getf server-obj :respawn 0.0)))
-              (log-verbose "DESERIALIZE-OBJECTS: looking for id=~a x=~a y=~a respawn=~a"
-                           server-id server-x server-y server-respawn)
-              (dolist (local-obj objects)
-                (when (and (eq (getf local-obj :id) server-id)
-                           (eql (getf local-obj :x) server-x)
-                           (eql (getf local-obj :y) server-y))
-                  (log-verbose "DESERIALIZE-OBJECTS: MATCHED! setting respawn=~a" server-respawn)
-                  ;; Update respawn state from server
-                  (setf (getf local-obj :count) (getf server-obj :count 0)
-                        (getf local-obj :respawn) server-respawn))))))))))
+             (zone (and world (world-zone world))))
+        (when zone
+          ;; Replace client zone objects with server state
+          ;; This ensures dropped items appear and picked up items disappear
+          (setf (zone-objects zone)
+                (loop :for server-obj :in object-plists
+                      :collect (list :id (getf server-obj :id)
+                                     :x (getf server-obj :x)
+                                     :y (getf server-obj :y)
+                                     :count (getf server-obj :count 0)
+                                     :respawn (getf server-obj :respawn 0.0)
+                                     :respawnable (getf server-obj :respawnable)
+                                     :snapshot-dirty nil))))))))
 
 ;;;; ========================================================================
 ;;;; DELTA COMPRESSION - See docs/net.md Prong 2
@@ -706,17 +690,10 @@
       (loop :for npc :across npcs
             :when (and npc (npc-snapshot-dirty npc))
             :do (push (serialize-npc-compact npc) changed-npcs)))
-    ;; Collect respawning objects (these need to sync to client)
-    ;; Include objects with respawn > 0 (respawning) OR snapshot-dirty (just respawned)
-    ;; This ensures client sees both "hide" and "show" transitions
+    ;; Collect all zone objects (dropped items + respawning pickups)
     (when objects
       (dolist (object objects)
-        (let ((respawn (or (getf object :respawn) 0.0))
-              (dirty (getf object :snapshot-dirty)))
-          ;; Send if respawning OR marked dirty (respawn just finished)
-          (when (or (> respawn 0.0) dirty)
-            (log-verbose "DELTA-OBJECT: id=~a respawn=~a dirty=~a" (getf object :id) respawn dirty)
-            (push (serialize-object object) object-list)))))
+        (push (serialize-object object) object-list)))
     ;; Build delta snapshot
     (list :format :delta-v1
           :seq seq
@@ -810,30 +787,24 @@
                       ;; Track NPC position (use negative ID like capture-entity-positions)
                       (setf (gethash (- id) updated-positions) (list x y))
                       (deserialize-npc plist npcs index))))))
-    ;; Apply object states (respawning objects from server)
+    ;; Apply object states from server (authoritative - replaces client objects)
+    ;; This ensures dropped items appear and picked up items disappear
     (let ((object-plists (getf delta :objects)))
       (when object-plists
         (log-verbose "DELTA-DESER: received ~a objects" (length object-plists))
         (let* ((world (game-world game))
-               (zone (and world (world-zone world)))
-               (objects (and zone (zone-objects zone))))
-          (log-verbose "DELTA-DESER: world=~a zone=~a local-objects=~a"
-                       (not (null world)) (not (null zone)) (and objects (length objects)))
-          (when objects
-            ;; Update matching objects with server state
-            (dolist (server-obj object-plists)
-              (let ((server-id (getf server-obj :id))
-                    (server-x (getf server-obj :x))
-                    (server-y (getf server-obj :y))
-                    (server-respawn (getf server-obj :respawn 0.0)))
-                (dolist (local-obj objects)
-                  (when (and (eq (getf local-obj :id) server-id)
-                             (eql (getf local-obj :x) server-x)
-                             (eql (getf local-obj :y) server-y))
-                    (log-verbose "DELTA-DESER: MATCHED id=~a setting respawn=~a" server-id server-respawn)
-                    ;; Update respawn state from server
-                    (setf (getf local-obj :count) (getf server-obj :count 0)
-                          (getf local-obj :respawn) server-respawn)))))))))
+               (zone (and world (world-zone world))))
+          (when zone
+            ;; Replace client zone objects with server state
+            (setf (zone-objects zone)
+                  (loop :for server-obj :in object-plists
+                        :collect (list :id (getf server-obj :id)
+                                       :x (getf server-obj :x)
+                                       :y (getf server-obj :y)
+                                       :count (getf server-obj :count 0)
+                                       :respawn (getf server-obj :respawn 0.0)
+                                       :respawnable (getf server-obj :respawnable)
+                                       :snapshot-dirty nil)))))))
     ;; Return updated positions for interpolation buffer
     updated-positions))
 

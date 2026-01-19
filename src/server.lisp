@@ -89,6 +89,10 @@
 (defun apply-client-intent (server-intent client-intent)
   ;; Copy the client intent payload into the server intent for this frame.
   (when (and server-intent client-intent)
+    (when (intent-requested-drop-item-id client-intent)
+      (log-verbose "APPLY-CLIENT-INTENT: drop item=~a count=~a"
+                   (intent-requested-drop-item-id client-intent)
+                   (intent-requested-drop-count client-intent)))
     (setf (intent-move-dx server-intent) (intent-move-dx client-intent)
           (intent-move-dy server-intent) (intent-move-dy client-intent)
           (intent-face-dx server-intent) (intent-face-dx client-intent)
@@ -108,6 +112,12 @@
           (intent-requested-pickup-tx client-intent)
           (intent-requested-pickup-ty server-intent)
           (intent-requested-pickup-ty client-intent)
+          (intent-requested-drop-item-id server-intent)
+          (intent-requested-drop-item-id client-intent)
+          (intent-requested-drop-count server-intent)
+          (intent-requested-drop-count client-intent)
+          (intent-requested-drop-slot-index server-intent)
+          (intent-requested-drop-slot-index client-intent)
           (intent-requested-chat-message server-intent)
           (intent-requested-chat-message client-intent)
           (intent-requested-unstuck server-intent)

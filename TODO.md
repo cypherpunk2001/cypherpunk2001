@@ -1,27 +1,38 @@
-## CRITICAL: Player Animation Regression (2026-01-18)
+## Inventory Drop - Client/Server Fix (2026-01-18)
 
 **Status: FIXED - Ready for testing/commit**
 
 **Symptoms (now fixed):**
-1. Idle animation broken - no slow moving pace when idle
-2. Attack/spacebar staff animation broken
-3. Walking sprite arm stays "outward" (Heisman pose) instead of relaxing back
+1. Dropping items from inventory showed them on ground but didn't remove from inventory
+2. Dropped items couldn't be picked back up
 
-**Root Cause:** Compact serialization enum tables in `src/config.lisp` used wrong keywords:
-- `*anim-state-to-code*` used `:walking`/`:attacking` but game uses `:walk`/`:attack`
-- This was introduced in commit 9b21fd5 (Prong 1: Compact Serialization)
-- Same class of bug as the `:left`/`:right` vs `:side` facing direction issue (fixed in 3edbb2c)
+**Root Cause:** Drop action was client-side only - not sent to server via intent.
+- Client called `drop-inventory-item` directly instead of via server intent
+- Server never knew about drops, sent snapshots with original inventory
+- Client's local drop was overwritten by snapshot
 
 **Fix Applied:**
-1. Changed `*anim-state-to-code*` to: `((:idle . 0) (:walk . 1) (:attack . 2))`
-2. Changed `*code-to-anim-state*` to: `((0 . :idle) (1 . :walk) (2 . :attack))`
-3. Updated tests in `tests/persistence-test.lisp` to use correct keywords
-4. All tests pass: checkparens, ci, test-persistence, test-security, smoke
+1. Added `requested-drop-item-id` and `requested-drop-count` to intent struct
+2. Added intent serialization/deserialization in net.lisp
+3. Added `process-player-drop-request` server-side handler in progression.lisp
+4. Changed client to use `request-drop-item` intent instead of direct call
+5. Server clears drop request after processing
+6. Updated docs/intent.md with new fields
 
 **Files changed (not yet committed):**
-- `src/config.lisp` - fixed anim-state enum tables
-- `tests/persistence-test.lisp` - updated test values
-- `TODO.md` - documented issue and fix
+- `src/intent.lisp` - added drop intent fields and helpers
+- `src/net.lisp` - added drop intent serialization
+- `src/progression.lisp` - added server-side drop handler
+- `src/main.lisp` - changed client drop to use intent, added server processing
+- `docs/intent.md` - documented new fields
+
+---
+
+## Player Animation Regression (2026-01-18) - RESOLVED
+
+**Status: COMMITTED by user**
+
+Fixed compact serialization enum tables using wrong keywords (`:walking`/`:attacking` vs `:walk`/`:attack`).
 
 ---
 

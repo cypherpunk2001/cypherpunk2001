@@ -14,6 +14,9 @@
   requested-pickup-target-id
   requested-pickup-tx
   requested-pickup-ty
+  requested-drop-item-id
+  requested-drop-count
+  requested-drop-slot-index
   requested-chat-message
   requested-unstuck)
 
@@ -33,6 +36,9 @@
                 :requested-pickup-target-id nil
                 :requested-pickup-tx nil
                 :requested-pickup-ty nil
+                :requested-drop-item-id nil
+                :requested-drop-count 0
+                :requested-drop-slot-index nil
                 :requested-chat-message nil
                 :requested-unstuck nil))
 
@@ -108,6 +114,18 @@
   (setf (intent-requested-pickup-target-id intent) nil
         (intent-requested-pickup-tx intent) nil
         (intent-requested-pickup-ty intent) nil))
+
+(defun request-drop-item (intent item-id count slot-index)
+  ;; Request to drop items from inventory (client sends, server validates).
+  (setf (intent-requested-drop-item-id intent) item-id
+        (intent-requested-drop-count intent) (or count 0)
+        (intent-requested-drop-slot-index intent) slot-index))
+
+(defun clear-requested-drop-item (intent)
+  ;; Clear the requested drop item.
+  (setf (intent-requested-drop-item-id intent) nil
+        (intent-requested-drop-count intent) 0
+        (intent-requested-drop-slot-index intent) nil))
 
 (defun request-chat-message (intent message)
   ;; Request a chat message to broadcast.

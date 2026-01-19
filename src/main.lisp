@@ -205,13 +205,15 @@
                                        (< slot-index (length slots))
                                        (aref slots slot-index)))
                             (count (and slot (inventory-slot-count slot))))
+                        (log-verbose "DROP-ACTION: item-id=~a slot-index=~a count=~a"
+                                     item-id slot-index count)
                         (when (and item-id count (> count 0))
-                         (let ((dropped (drop-inventory-item player world item-id count)))
-                           (when (and dropped (> dropped 0))
-                             (emit-hud-message-event event-queue
-                                              (format nil "Dropped ~a x~d."
-                                                      (item-display-name item-id)
-                                                      dropped)))))))))))))
+                          ;; Request drop via intent (server will process authoritatively)
+                          (log-verbose "DROP-ACTION: requesting drop item=~a count=~a slot=~a" item-id count slot-index)
+                          (request-drop-item client-intent item-id count slot-index)
+                          (log-verbose "DROP-ACTION: AFTER request, intent drop-id=~a drop-count=~a"
+                                       (intent-requested-drop-item-id client-intent)
+                                       (intent-requested-drop-count client-intent)))))))))))
         (when (and (not click-consumed)
                    inventory-open
                    mouse-right-clicked)
@@ -339,6 +341,14 @@
             :do (sync-player-follow-target current-player current-intent npcs world)
                 (sync-player-attack-target current-player current-intent npcs world)
                 (sync-player-pickup-target current-player current-intent world)
+                (when (intent-requested-drop-item-id current-intent)
+                  (log-verbose "UPDATE-SIM: processing drop for player=~a (obj ~a) item=~a count=~a"
+                               (player-id current-player)
+                               current-player
+                               (intent-requested-drop-item-id current-intent)
+                               (intent-requested-drop-count current-intent))
+                  (process-player-drop-request current-player current-intent world)
+                  (clear-requested-drop-item current-intent))
                 (process-player-unstuck current-player current-intent world
                                         (and (world-zone world)
                                              (zone-id (world-zone world)))

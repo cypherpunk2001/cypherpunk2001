@@ -796,13 +796,18 @@
     (let* ((player (net-client-player client))
            (server-intent (and player (player-intent player)))
            (client-intent (net-client-intent client)))
+      (when (and client-intent (intent-requested-drop-item-id client-intent))
+        (log-verbose "APPLY-CLIENT-INTENTS: client-player=~a (obj ~a)"
+                     (and player (player-id player)) player))
       (apply-client-intent server-intent client-intent)
       (when client-intent
         ;; Clear one-shot requests after processing
         (when (intent-requested-chat-message client-intent)
           (clear-requested-chat-message client-intent))
         (when (intent-requested-pickup-target-id client-intent)
-          (clear-requested-pickup-target client-intent))))))
+          (clear-requested-pickup-target client-intent))
+        (when (intent-requested-drop-item-id client-intent)
+          (clear-requested-drop-item client-intent))))))
 
 (defun reconcile-net-clients (game clients)
   ;; Rebind clients to players that exist in the current game state.
@@ -843,6 +848,9 @@
           :requested-pickup-target-id (intent-requested-pickup-target-id intent)
           :requested-pickup-tx (intent-requested-pickup-tx intent)
           :requested-pickup-ty (intent-requested-pickup-ty intent)
+          :requested-drop-item-id (intent-requested-drop-item-id intent)
+          :requested-drop-count (intent-requested-drop-count intent)
+          :requested-drop-slot-index (intent-requested-drop-slot-index intent)
           :requested-chat-message (intent-requested-chat-message intent)
           :requested-unstuck (intent-requested-unstuck intent))))
 
@@ -882,6 +890,11 @@
                    pickup-id
                    (getf plist :requested-pickup-tx)
                    (getf plist :requested-pickup-ty))))
+  (let ((drop-id (getf plist :requested-drop-item-id)))
+    (when drop-id
+      (log-verbose "RECV-INTENT: drop item=~a count=~a"
+                   drop-id
+                   (getf plist :requested-drop-count))))
   (when (and intent plist)
     (setf (intent-move-dx intent) (%clamp-direction (getf plist :move-dx))
           (intent-move-dy intent) (%clamp-direction (getf plist :move-dy))
@@ -902,6 +915,12 @@
           (getf plist :requested-pickup-tx nil)
           (intent-requested-pickup-ty intent)
           (getf plist :requested-pickup-ty nil)
+          (intent-requested-drop-item-id intent)
+          (getf plist :requested-drop-item-id nil)
+          (intent-requested-drop-count intent)
+          (%int-or (getf plist :requested-drop-count) 0)
+          (intent-requested-drop-slot-index intent)
+          (getf plist :requested-drop-slot-index nil)
           (intent-requested-chat-message intent)
           (%sanitize-chat-message (getf plist :requested-chat-message))
           (intent-requested-unstuck intent)
@@ -1355,6 +1374,11 @@
                    pickup-id
                    (intent-requested-pickup-tx intent)
                    (intent-requested-pickup-ty intent))))
+  (let ((drop-id (intent-requested-drop-item-id intent)))
+    (when drop-id
+      (log-verbose "SEND-INTENT: drop item=~a count=~a"
+                   drop-id
+                   (intent-requested-drop-count intent))))
   (let ((payload (intent->plist intent))
         (message (list :type :intent)))
     (when sequence
@@ -2046,6 +2070,7 @@
                             ;; Clear one-shot intent fields after sending
                             (clear-requested-chat-message (game-client-intent game))
                             (clear-requested-pickup-target (game-client-intent game))
+                            (clear-requested-drop-item (game-client-intent game))
 
                             ;; Receive and apply snapshots
                             (let ((latest-state nil)
