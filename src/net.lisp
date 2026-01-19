@@ -1397,10 +1397,10 @@
       (setf message (append message (list :ack ack))))
     (send-net-message socket message :host host :port port)
     ;; Clear one-shot intent fields after sending to prevent repeat
+    ;; NOTE: Do NOT clear pickup intent here - it needs to persist until player
+    ;; reaches the target. Server handles clearing via sync-player-pickup-target.
     (when (intent-requested-swap-slot-a intent)
       (clear-requested-inventory-swap intent))
-    (when (intent-requested-pickup-target-id intent)
-      (clear-requested-pickup-target intent))
     (when (intent-requested-drop-item-id intent)
       (clear-requested-drop-item intent))
     (when (intent-requested-chat-message intent)
@@ -2085,8 +2085,10 @@
                                   ;; No prediction: just send intent normally (with ack for delta)
                                   (send-intent-message socket intent :ack last-snapshot-seq)))
                             ;; Clear one-shot intent fields after sending
+                            ;; NOTE: Do NOT clear pickup target here - it needs to persist
+                            ;; until player walks to target and picks up. Server handles
+                            ;; clearing via sync-player-pickup-target when pickup completes.
                             (clear-requested-chat-message (game-client-intent game))
-                            (clear-requested-pickup-target (game-client-intent game))
                             (clear-requested-drop-item (game-client-intent game))
 
                             ;; Receive and apply snapshots

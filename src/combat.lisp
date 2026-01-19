@@ -369,7 +369,6 @@
          (requested-tx (intent-requested-pickup-tx intent))
          (requested-ty (intent-requested-pickup-ty intent))
          (current-id (player-pickup-target-id player)))
-    ;; Debug: log what we received
     (when requested-id
       (log-verbose "SYNC-PICKUP: req-id=~a req-tx=~a req-ty=~a cur-id=~a"
                    requested-id requested-tx requested-ty current-id))

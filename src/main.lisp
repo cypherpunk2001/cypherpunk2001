@@ -320,10 +320,6 @@
                         (mouse-npc
                          (set-player-attack-target player client-intent mouse-npc t))
                         (mouse-object
-                         (log-verbose "LEFT-CLICK-PICKUP: obj-id=~a tx=~d ty=~d"
-                                      (getf mouse-object :id)
-                                      (getf mouse-object :x)
-                                      (getf mouse-object :y))
                          (set-player-pickup-target player client-intent world
                                                    (getf mouse-object :id)
                                                    (getf mouse-object :x)

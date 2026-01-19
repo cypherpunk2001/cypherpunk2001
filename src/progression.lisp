@@ -699,8 +699,15 @@
                          (and (zone-objects zone) (getf (first (zone-objects zone)) :respawn))))
           picked)))))
 
+(defun player-adjacent-to-tile-p (player-tx player-ty target-tx target-ty)
+  "Return true if player tile is on or adjacent to target tile (within 1 tile)."
+  (and (<= (abs (- player-tx target-tx)) 1)
+       (<= (abs (- player-ty target-ty)) 1)))
+
 (defun update-player-pickup-target (player world)
-  ;; Resolve explicit pickup targets once the player reaches the tile.
+  ;; Resolve explicit pickup targets once the player is adjacent to the tile.
+  ;; Allows pickup from the object's tile OR any adjacent tile (8-way adjacency).
+  ;; This prevents telekinetic grabbing while making pickup feel responsive.
   (when (and player (player-pickup-target-active player))
     (multiple-value-bind (tx ty)
         (player-tile-coords player world)
@@ -709,8 +716,8 @@
             (target-id (player-pickup-target-id player)))
         (log-verbose "UPDATE-PICKUP: player at (~d,~d) target at (~d,~d) id=~a"
                      tx ty target-x target-y target-id)
-        (when (and (eql tx target-x) (eql ty target-y))
-          (log-verbose "UPDATE-PICKUP: Executing pickup!")
+        (when (player-adjacent-to-tile-p tx ty target-x target-y)
+          (log-verbose "UPDATE-PICKUP: Executing pickup (adjacent)!")
           (pickup-object-at-tile player world target-x target-y target-id)
           (setf (player-pickup-target-active player) nil
                 (player-pickup-target-id player) nil))))))

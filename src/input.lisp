@@ -119,10 +119,14 @@
 
 (defun set-player-walk-target (player intent world-x world-y &optional (mark-p t))
   ;; Request a walk target via intent (server validates and clears conflicting targets).
+  ;; Note: We do NOT clear pickup target here - if player has an active pickup,
+  ;; clicking on ground shouldn't cancel it. Let them finish the pickup first.
   (set-intent-target intent world-x world-y)
   (clear-requested-attack-target intent)
   (clear-requested-follow-target intent)
-  (clear-requested-pickup-target intent)
+  ;; Only clear pickup if no active pickup target (don't interrupt walk-to-pickup)
+  (unless (intent-requested-pickup-target-id intent)
+    (clear-requested-pickup-target intent))
   (when mark-p
     (trigger-click-marker player world-x world-y :walk)))
 
