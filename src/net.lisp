@@ -2360,15 +2360,14 @@
                                             (game-client-time game))))
                                   ;; Reconcile prediction if enabled
                                   (when (and *client-prediction-enabled*
-                                             (game-prediction-state game))
-                                    (let* ((player (game-player game))
-                                           (server-seq (or (and (> latest-sequence 0) latest-sequence)
-                                                           (and player (player-last-sequence player)))))
-                                      (when (and player (integerp server-seq) (> server-seq 0))
+                                             (game-prediction-state game)
+                                             (> latest-sequence 0))
+                                    (let ((player (game-player game)))
+                                      (when player
                                         (reconcile-prediction game
                                                              (player-x player)
                                                              (player-y player)
-                                                             server-seq))))))
+                                                             latest-sequence))))))
                               (when latest-private
                                 (apply-private-state game latest-private
                                                      :player-id latest-private-player-id)))
