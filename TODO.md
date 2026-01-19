@@ -97,6 +97,14 @@ Key design docs:
 ---
 
 ## Current Tasks / TODO
+adding ping hud
+investigating if 81a730d origin/master Add advanced client toggles caused tile seam glitches
+
+DONE - we made server hz and client FPS knobs more obvious in config and removed hardcodes there
+
+THINKING - about windowed mode resize options
+im thinking client-settings.lisp should be in data/ or something which hopefully is more compatible than ~/.mmorpg
+on OS like windows. then offer common window sizes in the same scale that we are developing with actively 1280x720 variants that scale clean all the way up to 1080p, 1440p, and 4k.
 
 ---
 
@@ -121,7 +129,7 @@ Key design docs:
 
 ---
 
-We might want to try 30hz while aiming to keep messages under 1200 bytes?
+
 
 ---
 

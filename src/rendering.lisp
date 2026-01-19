@@ -326,6 +326,9 @@
 
 (defun draw-world (world render assets camera player npcs ui editor)
   ;; Render floor, map layers, and debug overlays.
+  ;; Apply tile filter based on user setting (0=POINT, 1=BILINEAR)
+  (raylib:set-texture-filter (assets-tileset assets)
+                             (if *tile-point-filter* 0 1))
   (let* ((tile-dest-size (world-tile-dest-size world))
          (tile-size-f (world-tile-size-f world))
          (floor-index (world-floor-index world))
@@ -896,13 +899,16 @@
     (raylib:draw-rectangle 122 6 zone-width 24 (ui-hud-bg-color ui))
     (raylib:draw-text "Zone" 128 hud-y 20 raylib:+white+)
     (raylib:draw-text zone-label 176 hud-y 20 raylib:+white+)
-    ;; FPS display (top-right corner)
+    ;; FPS and Ping display (top-right corner)
     (let* ((fps (raylib:get-fps))
-           (fps-text (format nil "~d FPS" fps))
-           (fps-width (+ 20 (* 10 (length fps-text))))
-           (fps-x (- *window-width* fps-width 6)))
-      (raylib:draw-rectangle fps-x 6 fps-width 24 (ui-hud-bg-color ui))
-      (raylib:draw-text fps-text (+ fps-x 10) hud-y 20 raylib:+white+))
+           (ping-ms (ui-ping-rtt-ms ui))
+           (stats-text (if ping-ms
+                           (format nil "~dms | ~d FPS" ping-ms fps)
+                           (format nil "~d FPS" fps)))
+           (stats-width (+ 20 (* 10 (length stats-text))))
+           (stats-x (- *window-width* stats-width 6)))
+      (raylib:draw-rectangle stats-x 6 stats-width 24 (ui-hud-bg-color ui))
+      (raylib:draw-text stats-text (+ stats-x 10) hud-y 20 raylib:+white+))
     (let ((hover-name (ui-hover-npc-name ui)))
       (when hover-name
         (let* ((text-size 20)

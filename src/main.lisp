@@ -466,7 +466,7 @@
   (with-fatal-error-log ("Local game runtime")
     (log-verbose "Local game starting")
     (raylib:with-window ("Hello MMO (Local)" (*window-width* *window-height*))
-      (raylib:set-target-fps 60)
+      (raylib:set-target-fps *client-target-fps*)
       (raylib:set-exit-key 0)
       (raylib:init-audio-device)
       (let ((game (make-game)))

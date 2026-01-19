@@ -9,9 +9,18 @@
 
 ;;; Window Size - Read once at raylib:init-window
 (defparameter *window-width* 1280
-  "Window width in pixels.")
+  "Window width in pixels. Requires restart to change.")
 (defparameter *window-height* 720
-  "Window height in pixels.")
+  "Window height in pixels. Requires restart to change.")
+
+;;; Frame Rate Target - Read once at startup, but CAN be changed at runtime
+;;; NOTE: This is CLIENT-SIDE ONLY. Does not affect server tick rate or other players.
+;;; Server tick rate is controlled by *sim-tick-seconds* in config-server.lisp.
+;;; Common values: 30 (battery saver), 60 (standard), 0 (unlimited/vsync)
+(defparameter *client-target-fps* 60
+  "Target frames per second for client rendering. 0 = unlimited (vsync).
+   This is purely visual - does not affect server simulation or network rate.
+   Lower values save CPU/GPU but feel less smooth.")
 
 ;;; Asset Paths - Textures/audio loaded once at startup
 ;; FIXME: Asset paths are currently hardcoded. Future: move to data-driven asset manifest system.

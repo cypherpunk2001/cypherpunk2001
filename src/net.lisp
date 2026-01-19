@@ -2145,7 +2145,7 @@
   (with-fatal-error-log ((format nil "Client runtime (~a:~d)" host port))
     (log-verbose "Client starting: connecting to ~a:~d" host port)
     (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
-      (raylib:set-target-fps 60)
+      (raylib:set-target-fps *client-target-fps*)
       (raylib:set-exit-key 0)
       (raylib:init-audio-device)
       (let* ((socket (usocket:socket-connect host port :protocol :datagram))
@@ -2173,10 +2173,12 @@
                          ;; Login screen phase
                          (cond
                            ((and (ui-login-active ui) (not (ui-auth-complete ui)))
-                            ;; Periodic ping to detect server availability
+                            ;; Periodic ping to detect server availability and measure RTT
                             (when (>= elapsed (ui-server-next-ping ui))
                               (handler-case
-                                  (send-net-message socket (list :type :hello))
+                                  (progn
+                                    (setf (ui-ping-send-time ui) elapsed)
+                                    (send-net-message socket (list :type :hello)))
                                 (error ()
                                   ;; Send failed - server unreachable
                                   (setf (ui-server-status ui) :offline)))
@@ -2264,8 +2266,10 @@
                                                         (getf message :payload)
                                                         :player-id (getf message :player-id)))
                                   (:hello-ack
-                                   ;; Server responded to ping - it's online
-                                   (log-verbose "Server responded to ping"))
+                                   ;; Server responded to ping - calculate RTT
+                                   (let ((rtt-ms (round (* 1000.0 (- elapsed (ui-ping-send-time ui))))))
+                                     (setf (ui-ping-rtt-ms ui) rtt-ms)
+                                     (log-verbose "Server ping: ~dms" rtt-ms)))
                                   (t
                                    (log-verbose "Unexpected message during login: ~s"
                                                (getf message :type))))))
@@ -2305,6 +2309,16 @@
                             ;; Update client time for interpolation
                             (when (game-interpolation-buffer game)
                               (incf (game-client-time game) dt))
+
+                            ;; Periodic ping to measure RTT (every 5-8 seconds)
+                            (when (>= elapsed (ui-server-next-ping ui))
+                              (handler-case
+                                  (progn
+                                    (setf (ui-ping-send-time ui) elapsed)
+                                    (send-net-message socket (list :type :hello)))
+                                (error () nil))
+                              (setf (ui-server-next-ping ui)
+                                    (+ elapsed (+ 5.0 (random 3.0)))))
 
                             (update-client-input game dt)
                             (dolist (request (drain-net-requests game))
@@ -2370,6 +2384,10 @@
                                     (:private-state
                                      (setf latest-private (getf message :payload)
                                            latest-private-player-id (getf message :player-id)))
+                                    (:hello-ack
+                                     ;; Server responded to ping - calculate RTT
+                                     (let ((rtt-ms (round (* 1000.0 (- elapsed (ui-ping-send-time ui))))))
+                                       (setf (ui-ping-rtt-ms ui) rtt-ms)))
                                     (t
                                      (log-verbose "Unknown message type from server: ~s"
                                                   (getf message :type)))))

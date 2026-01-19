@@ -70,8 +70,13 @@
 ;;;; ========================================================================
 
 ;;; Simulation Timing
+;;; NOTE: This is SERVER-SIDE ONLY. Affects ALL connected players.
+;;; This controls how often the server processes game logic (physics, combat, AI).
+;;; Client FPS is controlled separately by *client-target-fps* in config-client.lisp.
+;;; Common values: 1/60 (60Hz, responsive), 1/30 (30Hz, lower CPU, larger delta)
 (defparameter *sim-tick-seconds* (/ 1.0 60.0)
-  "Fixed simulation tick length in seconds.")
+  "Fixed simulation tick length in seconds. Server processes game logic at this rate.
+   1/60 = 60Hz tick rate. Changing this affects ALL players connected to the server.")
 (defparameter *sim-max-steps-per-frame* 5
   "Max sim ticks per frame to avoid spiral of death.")
 
