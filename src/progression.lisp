@@ -619,27 +619,32 @@
   ;; Return true when OBJECT is waiting to respawn.
   (> (object-respawn-timer object) 0.0))
 
-(defun update-object-respawns (world dt)
-  ;; Tick down respawn timers and restore object counts when ready.
-  ;; Thread-safe: protects zone-objects modification from concurrent pickup.
+(defun update-zone-objects-respawns (objects dt)
+  "Tick down respawn timers for a list of zone objects.
+   Thread-safe: protects zone-objects modification from concurrent pickup."
   (with-zone-objects-lock
-    (let* ((zone (world-zone world))
-           (objects (and zone (zone-objects zone))))
-      (when objects
-        (dolist (object objects)
-          (when (object-respawnable-p object)
-            (let* ((timer (object-respawn-timer object)))
-              (when (> timer 0.0)
-                (setf timer (max 0.0 (- timer dt))
-                      (getf object :respawn) timer)
-                (when (<= timer 0.0)
-                  (let* ((object-id (getf object :id))
-                         (archetype (and object-id (find-object-archetype object-id))))
-                    (when archetype
-                      (setf (getf object :count) (object-archetype-count archetype)
-                            (getf object :respawn) 0.0
-                            ;; Mark dirty so delta snapshot includes respawn
-                            (getf object :snapshot-dirty) t))))))))))))
+    (when objects
+      (dolist (object objects)
+        (when (object-respawnable-p object)
+          (let* ((timer (object-respawn-timer object)))
+            (when (> timer 0.0)
+              (setf timer (max 0.0 (- timer dt))
+                    (getf object :respawn) timer)
+              (when (<= timer 0.0)
+                (let* ((object-id (getf object :id))
+                       (archetype (and object-id (find-object-archetype object-id))))
+                  (when archetype
+                    (setf (getf object :count) (object-archetype-count archetype)
+                          (getf object :respawn) 0.0
+                          ;; Mark dirty so delta snapshot includes respawn
+                          (getf object :snapshot-dirty) t)))))))))))
+
+(defun update-object-respawns (world dt)
+  ;; Tick down respawn timers for world's current zone.
+  ;; For multi-zone, use update-zone-objects-respawns directly.
+  (let* ((zone (world-zone world))
+         (objects (and zone (zone-objects zone))))
+    (update-zone-objects-respawns objects dt)))
 
 (defun pickup-object-at-tile (player world tx ty object-id)
   ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.

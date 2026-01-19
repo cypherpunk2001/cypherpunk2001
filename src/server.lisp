@@ -3,13 +3,16 @@
 
 (defun spawn-player-at-world (world id-source)
   ;; Spawn a player at the world spawn center on a valid open tile.
-  (multiple-value-bind (center-x center-y)
-      (world-spawn-center world)
-    (multiple-value-bind (spawn-x spawn-y)
-        (world-open-position world center-x center-y)
-      (make-player spawn-x spawn-y
-                   :id (when id-source
-                         (allocate-entity-id id-source))))))
+  ;; Sets player's zone-id to the world's current zone.
+  (let ((zone (world-zone world)))
+    (multiple-value-bind (center-x center-y)
+        (world-spawn-center world)
+      (multiple-value-bind (spawn-x spawn-y)
+          (world-open-position world center-x center-y)
+        (make-player spawn-x spawn-y
+                     :id (when id-source
+                           (allocate-entity-id id-source))
+                     :zone-id (and zone (zone-id zone)))))))
 
 (defun make-sim-state (&key (server-mode nil))
   ;; Build authoritative simulation state without client-only subsystems.
@@ -43,6 +46,12 @@
         (setf (world-minimap-spawns world)
               (build-adjacent-minimap-spawns world player)))
     (ensure-npcs-open-spawn npcs world)
+    ;; Update initial zone-state with created NPCs for zone-filtered snapshots
+    (let* ((zone (world-zone world))
+           (zone-id (and zone (zone-id zone)))
+           (zone-state (and zone-id (get-zone-state zone-id))))
+      (when zone-state
+        (setf (zone-state-npcs zone-state) npcs)))
     (if player
         (log-verbose "Sim state initialized: player-id=~d npcs=~d zone=~a"
                      (player-id player)

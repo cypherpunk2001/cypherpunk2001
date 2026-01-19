@@ -1,6 +1,81 @@
 ;; NOTE: If you change behavior here, update docs/movement.md :)
 (in-package #:mmorpg)
 
+;;;; ========================================================================
+;;;; Zone State Management
+;;;; Tracks loaded zones with their NPCs and collision data.
+;;;; Enables multiple zones to be active simultaneously.
+;;;; ========================================================================
+
+(defparameter *zone-states* (make-hash-table :test 'eq)
+  "Cache of zone-id -> zone-state for all loaded zones.
+   Zones stay loaded once any player enters them.")
+
+(defun get-zone-state (zone-id)
+  "Get the zone-state for ZONE-ID, or NIL if not loaded."
+  (gethash zone-id *zone-states*))
+
+(defun get-or-create-zone-state (zone-id zone-path &key npcs)
+  "Get existing zone-state or create a new one by loading the zone.
+   NPCS is an optional NPC vector to associate with the zone."
+  (or (gethash zone-id *zone-states*)
+      (let ((zone (when zone-path (load-zone zone-path))))
+        (when zone
+          (let ((state (make-zone-state
+                        :zone-id zone-id
+                        :zone zone
+                        :npcs (or npcs (vector))
+                        :wall-map (derive-wall-map-from-zone zone)
+                        :objects (zone-objects zone))))
+            (setf (gethash zone-id *zone-states*) state)
+            (log-verbose "Created zone-state for ~a" zone-id)
+            state)))))
+
+(defun zone-state-player-count (zone-id players)
+  "Count how many players are in ZONE-ID."
+  (count-if (lambda (p) (eq (player-zone-id p) zone-id)) players))
+
+(defun players-in-zone (zone-id players)
+  "Return vector of players in ZONE-ID. Returns nil if zone-id is nil."
+  (when zone-id
+    (let ((result nil))
+      (loop :for p :across players
+            :when (eq (player-zone-id p) zone-id)
+              :do (push p result))
+      (coerce (nreverse result) 'vector))))
+
+(defun occupied-zone-ids (players)
+  "Return list of zone-ids that have at least one player."
+  (let ((ids nil))
+    (loop for p across players
+          for zid = (player-zone-id p)
+          when (and zid (not (member zid ids)))
+            do (push zid ids))
+    ids))
+
+(defun clear-zone-states ()
+  "Clear all cached zone states. Used for testing or server restart."
+  (clrhash *zone-states*))
+
+(defun derive-wall-map-from-zone (zone)
+  "Create a wall map from zone collision data.
+   Returns a 2D array where 1 = blocked, 0 = passable."
+  (when zone
+    (let* ((width (zone-width zone))
+           (height (zone-height zone))
+           (map (make-array (list height width) :initial-element 0))
+           (collision-tiles (zone-collision-tiles zone)))
+      (when collision-tiles
+        (maphash (lambda (key _val)
+                   (declare (ignore _val))
+                   (let ((tx (car key))
+                         (ty (cdr key)))
+                     (when (and (>= tx 0) (< tx width)
+                                (>= ty 0) (< ty height))
+                       (setf (aref map ty tx) 1))))
+                 collision-tiles))
+      map)))
+
 (defun build-wall-map ()
   ;; Create a test wall map array with a solid border.
   (let* ((width *wall-map-width*)
@@ -784,6 +859,7 @@
 
 (defun transition-zone (game player exit edge)
   ;; Apply a zone transition using EXIT metadata for the given PLAYER.
+  ;; Updates player's zone-id and position. Also updates zone-state cache.
   (let* ((world (game-world game))
          (intent (player-intent player))
          (current-zone (world-zone world))
@@ -801,6 +877,11 @@
          (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
       (cache-zone-npcs world current-zone-id current-npcs carry-table)
+      ;; Also cache current zone's NPCs in zone-state for zone-filtered snapshots
+      (when current-zone-id
+        (let ((current-state (get-zone-state current-zone-id)))
+          (when current-state
+            (setf (zone-state-npcs current-state) current-npcs))))
       (let* ((zone (with-retry-exponential (loaded (lambda () (load-zone target-path))
                                              :max-retries 2
                                              :initial-delay 100
@@ -841,6 +922,7 @@
                     (player-y player) spawn-y
                     (player-dx player) 0.0
                     (player-dy player) 0.0
+                    (player-zone-id player) (zone-id zone)
                     (player-snapshot-dirty player) t)
               ;; Tier-1 write: zone transition saves immediately (prevents position loss on crash)
               (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
@@ -874,29 +956,36 @@
             (ensure-npcs-open-spawn npcs world)
             (let ((merged (merge-npc-vectors npcs carried)))
               (setf (game-npcs game) merged
-                    (game-entities game) (make-entities players merged))))
+                    (game-entities game) (make-entities players merged))
+              ;; Update zone-state cache with NPCs for zone-filtered snapshots
+              (when target-zone-id
+                (let ((target-state (or (get-zone-state target-zone-id)
+                                        (make-zone-state
+                                         :zone-id target-zone-id
+                                         :zone zone
+                                         :wall-map (zone-wall-map zone)
+                                         :objects (zone-objects zone)))))
+                  (setf (zone-state-npcs target-state) merged)
+                  (setf (gethash target-zone-id *zone-states*) target-state)))))
           t)))))
 
 (defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for the first player only.
-  ;; NOTE: Returns nil if no players.
-  ;; LIMITATION: Only the first player (lowest index, typically first connected) can
-  ;; transition zones. Other players are locked to current zone to prevent the shared
-  ;; world zone from teleporting all clients together. For true multi-zone support,
-  ;; run separate server processes per zone.
+  ;; Handle edge-based world graph transitions for ALL players.
+  ;; Each player can independently transition to different zones.
+  ;; Returns count of players that transitioned this frame.
   (let* ((world (game-world game))
          (players (game-players game))
-         (transitioned nil))
+         (transition-count 0))
     (when (and players (> (length players) 0))
-      ;; Only check zone transition for first player (index 0)
-      ;; This player "owns" zone transitions; others stay in current zone
-      (let* ((player (aref players 0))
-             (edge (and world (world-exit-edge world player)))
-             (exit (and edge (world-edge-exit world edge))))
-        (when exit
-          (transition-zone game player exit edge)
-          (setf transitioned t))))
-    transitioned))
+      ;; Check all players for zone transition
+      (loop :for player :across players
+            :when player
+            :do (let* ((edge (world-exit-edge world player))
+                       (exit (and edge (world-edge-exit world edge))))
+                  (when exit
+                    (transition-zone game player exit edge)
+                    (incf transition-count)))))
+    transition-count))
 
 (defun log-player-position (player world)
   ;; Emit verbose position and tile diagnostics for debugging.
@@ -1025,6 +1114,17 @@
             (build-adjacent-minimap-spawns world))
       (setf (world-minimap-collisions world)
             (build-minimap-collisions world))
+      ;; Register initial zone in zone-state cache for zone-filtered snapshots
+      (when zone
+        (let ((initial-zone-id (zone-id zone)))
+          (when initial-zone-id
+            (setf (gethash initial-zone-id *zone-states*)
+                  (make-zone-state
+                   :zone-id initial-zone-id
+                   :zone zone
+                   :wall-map wall-map
+                   :objects (zone-objects zone)
+                   :npcs (vector))))))  ; NPCs populated later by make-npcs
       world)))
 
 (defun apply-zone-to-world (world zone)

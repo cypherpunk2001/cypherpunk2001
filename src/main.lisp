@@ -353,6 +353,24 @@
   (loop :for npc :across npcs
         :do (reset-frame-intent (npc-intent npc))))
 
+(defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue)
+  "Run NPC AI for NPCs in a specific zone with that zone's players.
+   ZONE-NPCS: vector of NPCs in the zone
+   ZONE-PLAYERS: vector of players in the same zone
+   Returns number of NPCs updated."
+  (let ((count 0))
+    (when (and zone-npcs (> (length zone-npcs) 0)
+               zone-players (> (length zone-players) 0))
+      (loop :for npc :across zone-npcs
+            :for target-player = (closest-player zone-players npc)
+            :do (when target-player
+                  (update-npc-behavior npc target-player world)
+                  (update-npc-intent npc target-player world dt)
+                  (update-npc-movement npc world dt)
+                  (update-npc-attack npc target-player world dt event-queue)
+                  (incf count))))
+    count))
+
 (defun handle-zone-transition (game)
   ;; Sync client-facing state after a zone change.
   (let ((ui (game-ui game))
@@ -403,7 +421,23 @@
                                                          (intent-run-toggle current-intent))))
                   (update-player-position current-player current-intent world speed-mult dt)
                   (update-player-pickup-target current-player world))))
-    (update-object-respawns world dt)
+    ;; Object and NPC respawns - run for all occupied zones
+    (let ((zone-ids (occupied-zone-ids players)))
+      (if zone-ids
+          ;; Multi-zone: update respawns for all occupied zone-states
+          (dolist (zone-id zone-ids)
+            (let ((zone-state (get-zone-state zone-id)))
+              (when zone-state
+                ;; Object respawns for this zone
+                (let ((zone-objects (zone-state-objects zone-state)))
+                  (when zone-objects
+                    (update-zone-objects-respawns zone-objects dt)))
+                ;; NPC respawns for this zone
+                (update-npc-respawns (zone-state-npcs zone-state) dt))))
+          ;; Fallback: use world's zone
+          (progn
+            (update-object-respawns world dt)
+            (update-npc-respawns npcs dt))))
     (let ((transitioned (and allow-player-control
                              (update-zone-transition game))))
       (when transitioned
@@ -413,7 +447,6 @@
               :do (setf (player-attack-target-id current-player) 0
                         (player-follow-target-id current-player) 0))
         (reset-npc-frame-intents npcs))
-      (update-npc-respawns npcs dt)
       (when allow-player-control
         (loop :for current-player :across players
               :do (update-player-attack-intent current-player npcs world)))
@@ -427,16 +460,36 @@
         (log-player-position player world))
       (loop :for entity :across entities
             :do (update-entity-animation entity dt))
-      (loop :for current-player :across players
-            :do (loop :for npc :across npcs
-                      :do (apply-melee-hit current-player npc world event-queue)))
-      (loop :for npc :across npcs
-            :for target-player = (closest-player players npc)
-            :do (when target-player
-                  (update-npc-behavior npc target-player world)
-                  (update-npc-intent npc target-player world dt)
-                  (update-npc-movement npc world dt)
-                  (update-npc-attack npc target-player world dt event-queue)))
+      ;; Per-zone melee combat and NPC simulation
+      ;; For each occupied zone, run combat and NPC AI with that zone's players
+      (let ((zone-ids (occupied-zone-ids players)))
+        (if zone-ids
+            ;; Multi-zone mode: simulate each zone separately
+            (dolist (zone-id zone-ids)
+              (let* ((zone-state (get-zone-state zone-id))
+                     (zone-npcs (if zone-state
+                                    (zone-state-npcs zone-state)
+                                    npcs))  ; fallback to game-npcs
+                     (zone-players (players-in-zone zone-id players)))
+                ;; Melee combat for this zone
+                (when (and zone-npcs zone-players)
+                  (loop :for current-player :across zone-players
+                        :do (loop :for npc :across zone-npcs
+                                  :do (apply-melee-hit current-player npc world event-queue))))
+                ;; NPC AI for this zone
+                (simulate-zone-npcs zone-npcs zone-players world dt event-queue)))
+            ;; Fallback: no zone-ids means use legacy behavior (local mode, nil zone-ids)
+            (progn
+              (loop :for current-player :across players
+                    :do (loop :for npc :across npcs
+                              :do (apply-melee-hit current-player npc world event-queue)))
+              (loop :for npc :across npcs
+                    :for target-player = (closest-player players npc)
+                    :do (when target-player
+                          (update-npc-behavior npc target-player world)
+                          (update-npc-intent npc target-player world dt)
+                          (update-npc-movement npc world dt)
+                          (update-npc-attack npc target-player world dt event-queue))))))
       (loop :for entity :across entities
             :do (combatant-update-hit-effect entity dt))
       (loop :for current-player :across players

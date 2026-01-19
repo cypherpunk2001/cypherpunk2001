@@ -3,7 +3,7 @@
 
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
-  id x y dx dy intent stats inventory equipment
+  id x y dx dy zone-id intent stats inventory equipment
   attack-target-id follow-target-id
   pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
   click-marker-x click-marker-y click-marker-timer click-marker-kind
@@ -34,6 +34,15 @@
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
   snapshot-dirty)
+
+(defstruct zone-state
+  "State for a single zone: zone data, NPCs, and derived collision data.
+   Used by *zone-states* cache to support multiple simultaneous zones."
+  (zone-id nil :type (or null symbol))
+  (zone nil)           ; Zone struct (tiles, collision, objects, spawns)
+  (npcs (vector))      ; Vector of NPCs in this zone
+  (wall-map nil)       ; 2D array for collision detection
+  (objects nil))       ; Respawning objects list
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
   ;; Skill state tracking level and xp.
@@ -326,7 +335,7 @@
   (let ((items (make-array (length slot-ids) :initial-element nil)))
     (%make-equipment :items items)))
 
-(defun make-player (start-x start-y &key (class *wizard-class*) id)
+(defun make-player (start-x start-y &key (class *wizard-class*) id zone-id)
   ;; Construct a player state struct at the given start position.
   (let* ((intent (make-intent :target-x start-x :target-y start-y))
          (stats (make-player-stats))
@@ -340,6 +349,7 @@
                   :y start-y
                   :dx 0.0
                   :dy 0.0
+                  :zone-id zone-id
                   :intent intent
                   :stats stats
                   :inventory (make-inventory)

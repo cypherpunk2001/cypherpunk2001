@@ -148,8 +148,10 @@
                     :inventory (serialize-inventory (player-inventory player))
                     :equipment (serialize-equipment (player-equipment player))))))
     ;; Add zone-id to durable state (for DB saves)
-    (when (and zone-id (not network-only))
-      (setf payload (append payload (list :zone-id zone-id))))
+    ;; Use player's zone-id if available, otherwise use keyword argument
+    (let ((effective-zone-id (or (player-zone-id player) zone-id)))
+      (when (and effective-zone-id (not network-only))
+        (setf payload (append payload (list :zone-id effective-zone-id)))))
     ;; Add visual fields if requested (for full snapshots, not network-only which already has them)
     (when (and include-visuals (not network-only))
       (setf payload (append payload
@@ -179,8 +181,10 @@
   ;; Restore player from plist.
   (let ((player (make-player (getf plist :x 0.0)
                              (getf plist :y 0.0)
-                             :id (getf plist :id 1))))
+                             :id (getf plist :id 1)
+                             :zone-id (getf plist :zone-id))))
     (setf (player-hp player) (getf plist :hp 10)
+          (player-zone-id player) (getf plist :zone-id)  ; Also set explicitly for clarity
           (player-lifetime-xp player) (getf plist :lifetime-xp 0)
           (player-playtime player) (getf plist :playtime 0)
           (player-created-at player) (getf plist :created-at (get-universal-time))
@@ -649,6 +653,42 @@
     ;; Build compact snapshot
     (list :format :compact-v3
           :zone-id (and zone (zone-id zone))
+          :players (coerce (nreverse player-vectors) 'vector)
+          :npcs (coerce (nreverse npc-vectors) 'vector)
+          :objects (nreverse object-list))))
+
+(defun serialize-game-state-for-zone (game zone-id zone-state)
+  "Serialize game state filtered to a specific zone.
+   Only includes players in ZONE-ID and NPCs from ZONE-STATE.
+   Used for per-player snapshots when players are in different zones."
+  (let* ((players (game-players game))
+         (npcs (if zone-state
+                   (zone-state-npcs zone-state)
+                   (game-npcs game)))  ; Fallback to game NPCs
+         (zone (if zone-state
+                   (zone-state-zone zone-state)
+                   (world-zone (game-world game))))
+         (objects (and zone (zone-objects zone)))
+         (player-vectors nil)
+         (npc-vectors nil)
+         (object-list nil))
+    ;; Serialize only players in this zone
+    (when players
+      (loop :for player :across players
+            :when (and player (eq (player-zone-id player) zone-id))
+            :do (push (serialize-player-compact player) player-vectors)))
+    ;; Serialize NPCs for this zone
+    (when npcs
+      (loop :for npc :across npcs
+            :when npc
+            :do (push (serialize-npc-compact npc) npc-vectors)))
+    ;; Serialize zone objects
+    (when objects
+      (dolist (object objects)
+        (push (serialize-object object) object-list)))
+    ;; Build compact snapshot
+    (list :format :compact-v3
+          :zone-id zone-id
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
           :objects (nreverse object-list))))

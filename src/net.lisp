@@ -1088,49 +1088,67 @@
         (> (- current-seq last-ack) *max-delta-gap*)
         (> (- current-seq last-ack) *max-delta-age*))))
 
-(defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
-  "Send snapshots to clients with delta compression (Prong 2).
-
-   Clients needing resync get full compact snapshot.
-   Synced clients get delta snapshot (only dirty entities).
-
-   This maintains the 'encode once, send to many' optimization by
-   partitioning clients into two groups and encoding once per group."
-  (let ((resync-clients nil)
-        (delta-clients nil))
-    ;; Partition authenticated clients
+(defun group-clients-by-zone (clients)
+  "Group authenticated clients by their player's zone-id.
+   Returns hash table: zone-id -> list of clients."
+  (let ((groups (make-hash-table :test 'eq)))
     (dolist (c clients)
       (when (and (net-client-authenticated-p c)
                  (net-client-player c))
-        (if (client-needs-full-resync-p c current-seq)
-            (push c resync-clients)
-            (push c delta-clients))))
+        (let* ((player (net-client-player c))
+               (zone-id (player-zone-id player)))
+          (push c (gethash zone-id groups)))))
+    groups))
 
-    ;; Send full snapshot to clients needing resync
-    (when resync-clients
-      (let ((full-state (serialize-game-state-compact game)))
-        ;; Add sequence number for client to ack
-        (setf full-state (plist-put full-state :seq current-seq))
-        (log-verbose "Sending full resync to ~d clients (seq ~d, ~d players, ~d npcs)"
-                     (length resync-clients) current-seq
-                     (length (getf full-state :players))
-                     (length (getf full-state :npcs)))
-        (send-snapshots-parallel socket resync-clients full-state event-plists 1)
-        ;; Mark these clients as no longer needing resync
-        (dolist (c resync-clients)
-          (setf (net-client-needs-full-resync c) nil))))
+(defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
+  "Send zone-filtered snapshots to clients with delta compression.
 
-    ;; Send delta snapshot to synced clients
-    (when delta-clients
-      (let ((delta-state (serialize-game-state-delta game current-seq nil)))
-        (log-verbose "Sending delta to ~d clients (seq ~d, ~d players, ~d npcs)"
-                     (length delta-clients) current-seq
-                     (length (getf delta-state :changed-players))
-                     (length (getf delta-state :changed-npcs)))
-        (send-snapshots-parallel socket delta-clients delta-state event-plists 1)))
+   Players in different zones receive different snapshots containing only
+   players/NPCs in their zone. This enables true multi-zone gameplay.
+
+   For efficiency, clients are grouped by zone and snapshots are encoded
+   once per zone (maintaining the 'encode once, send to many' optimization)."
+  (let ((zone-groups (group-clients-by-zone clients))
+        (any-sent nil))
+    ;; Process each zone group
+    (maphash
+     (lambda (zone-id zone-clients)
+       (let ((resync-clients nil)
+             (delta-clients nil)
+             ;; Get zone-state for this zone (may be nil for legacy/current zone)
+             (zone-state (get-zone-state zone-id)))
+         ;; Partition by resync vs delta
+         (dolist (c zone-clients)
+           (if (client-needs-full-resync-p c current-seq)
+               (push c resync-clients)
+               (push c delta-clients)))
+
+         ;; Send full snapshot to clients needing resync in this zone
+         (when resync-clients
+           (let ((full-state (if zone-state
+                                 (serialize-game-state-for-zone game zone-id zone-state)
+                                 (serialize-game-state-compact game))))
+             (setf full-state (plist-put full-state :seq current-seq))
+             (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
+                          zone-id (length resync-clients) current-seq
+                          (length (getf full-state :players)))
+             (send-snapshots-parallel socket resync-clients full-state event-plists 1)
+             (dolist (c resync-clients)
+               (setf (net-client-needs-full-resync c) nil))
+             (setf any-sent t)))
+
+         ;; Send delta snapshot to synced clients in this zone
+         ;; NOTE: Delta compression currently uses full game state - future optimization
+         ;; could filter deltas by zone as well
+         (when delta-clients
+           (let ((delta-state (serialize-game-state-delta game current-seq nil)))
+             (log-verbose "Zone ~a: delta ~d clients" zone-id (length delta-clients))
+             (send-snapshots-parallel socket delta-clients delta-state event-plists 1)
+             (setf any-sent t)))))
+     zone-groups)
 
     ;; Clear dirty flags after ALL sends complete
-    (when (or resync-clients delta-clients)
+    (when any-sent
       (clear-snapshot-dirty-flags game))))
 
 (defun send-snapshots-parallel (socket clients state event-plists worker-threads)
