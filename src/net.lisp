@@ -581,19 +581,7 @@
                                         :username username
                                         :client client
                                         :error-reason :load-failed)))
-                  (when (and saved-zone-id (not (eq saved-zone-id zone-id)))
-                    (log-verbose "Login rejected for ~a:~d - zone mismatch (~a vs ~a)"
-                                 host port saved-zone-id zone-id)
-                    (session-unregister username)
-                    (return-from process-login-async
-                      (make-auth-result :type :login
-                                        :success nil
-                                        :host host
-                                        :port port
-                                        :username username
-                                        :client client
-                                        :error-reason :wrong-zone
-                                        :zone-id saved-zone-id)))
+                  ;; Player loaded - use their saved zone (zones are map regions, not servers)
                   (setf player loaded-player)
                   (log-verbose "Loaded existing character ~d for account ~a" character-id username)))
                ;; No character yet - spawn new one
@@ -1777,18 +1765,7 @@
                    (saved-zone-id (and loaded-info (second loaded-info))))
               (if loaded-player
                   (progn
-                    (when (and saved-zone-id (not (eq saved-zone-id zone-id)))
-                      (session-unregister username)
-                      (send-net-message-with-retry socket
-                                                   (list :type :auth-fail
-                                                         :reason :wrong-zone
-                                                         :zone-id saved-zone-id)
-                                                   :host host :port port
-                                                   :max-retries 3
-                                                   :delay 50)
-                      (log-verbose "Login rejected for ~a:~d - zone mismatch (~a vs ~a)"
-                                  host port saved-zone-id zone-id)
-                      (return-from handle-login-request nil))
+                    ;; Player loaded - use their saved zone (zones are map regions, not servers)
                     (setf player loaded-player)
                     ;; Remove any existing player with same ID (from stale session)
                     (let ((existing (find (player-id player) (game-players game)
