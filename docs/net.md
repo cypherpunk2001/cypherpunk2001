@@ -21,6 +21,7 @@ Message format (plist, printed with `prin1`)
 - `(:type :load)` -> request server load
 
 **Server -> Client:**
+- `(:type :hello-ack)` -> server is online (response to :hello ping)
 - `(:type :auth-ok :player-id <id>)` -> authentication successful
 - `(:type :auth-fail :reason <keyword>)` -> authentication failed
   - Reasons: `:missing-credentials`, `:username-taken`, `:bad-credentials`, `:already-logged-in`, `:wrong-zone`

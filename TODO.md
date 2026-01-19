@@ -100,12 +100,19 @@ Key design docs:
 
 ---
 
+if server is killed unexpectedly, client crashes instead of returning to the login screen
+CLIENT FAILED: Condition USOCKET:CONNECTION-REFUSED-ERROR was signalled.
+you can test this until fixed by opening make client with no server to connect to
+these should be more robust. the game should not just crash if server offline. the game should tell the player the server is offline.
+
+---
+
+---
+
 ## Future Tasks / Roadmap
 
 **Potential optimizations to investigate:**
-
 - Entity removal tracking in delta (`:removed-ids` for logged-out players)
-
 - Entity culling in snapshots (skip distant players)
 - Batch intent processing
 
@@ -137,10 +144,7 @@ WARNING:
 ^CSERVER: shutdown requested (interrupt).
 SERVER: ok
 
----
 
-if server is killed unexpectedly, client crashes instead of returning to the login screen
-CLIENT FAILED: Condition USOCKET:CONNECTION-REFUSED-ERROR was signalled.
 
 ---
 
@@ -148,7 +152,6 @@ CLIENT FAILED: Condition USOCKET:CONNECTION-REFUSED-ERROR was signalled.
 **Tier B** (requires new infrastructure):
 **Tier C** (nice to have):
 See [docs/admin.md](docs/admin.md) for full spec.
-
 ---
 
 ### More security unit tests - TODO
@@ -158,25 +161,3 @@ Not Tested (features don't exist yet):
 - Shop exploits (no vendors)
 
 ---
-
-### Unit Test Coverage (2026-01-18) - DONE
-
-**Status: 68 unit tests implemented** covering pure functions across 13 modules.
-
-| Module | Coverage |
-|--------|----------|
-| utils.lisp | clamp, normalize-direction/vector, point-in-rect-p, basename, sanitize-identifier, player-direction/state, u32-hash, exponential-backoff-delay |
-| combat.lisp | aabb-overlap-p, melee-hit-chance, melee-max-hit |
-| progression.lisp | xp->level, level->xp, training modes, split-combat-xp, inventory ops |
-| movement.lisp | wall-blocked-p, tile-center-position, edge-opposite, edge-offset-ratio |
-| ai.lisp | npc-should-flee-p, npc-perception-range-sq |
-| data.lisp | plist-form-p, data-section-header-p, data-section-entry-p, normalize-pairs |
-| zone.lisp | zone-chunk-key, tile-key roundtrip, zone-tile-in-bounds-p |
-| intent.lisp | set-intent-move, set-intent-face |
-| save.lisp | quantize/encode roundtrips, pack-flags, serialize-skill/stat-block/inventory-slot |
-| migrations.lisp | v1->v2, v2->v3, full migration chain |
-| world-graph.lisp | world-graph-data-plist, normalize-world-graph-edges |
-| chat.lisp | trim-chat-message |
-| types.lisp | skill-xp-for-level, allocate-entity-id, find-player-by-id |
-
-**Policy going forward**: If a unit test CAN be written, it SHOULD be written. See "When to Write Tests" above.

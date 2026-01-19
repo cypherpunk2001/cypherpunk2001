@@ -91,6 +91,8 @@
   ;; Login screen state
   login-active auth-complete username-buffer password-buffer
   auth-error-message server-selector-index
+  ;; Server connection status (:online :offline :connecting)
+  server-status server-last-heard server-next-ping
   menu-padding menu-panel-width menu-panel-height menu-panel-x menu-panel-y
   menu-title menu-hint menu-track-title menu-prev-label menu-next-label
   menu-vol-down-label menu-vol-up-label

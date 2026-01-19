@@ -166,6 +166,9 @@
               :password-buffer ""
               :auth-error-message nil
               :server-selector-index 0
+              :server-status :connecting
+              :server-last-heard 0.0
+              :server-next-ping 0.0
               :menu-padding menu-padding
               :menu-panel-width menu-panel-width
               :menu-panel-height menu-panel-height
@@ -634,6 +637,22 @@
              (title-x (truncate (/ (- screen-width title-width) 2)))
              (title-y (+ panel-y padding)))
         (raylib:draw-text title-text title-x title-y title-size text-color))
+
+      ;; Server status indicator
+      (let* ((status (ui-server-status ui))
+             (status-y (+ panel-y padding 50))
+             (status-text (case status
+                           (:online "Server Online")
+                           (:offline "Server Offline")
+                           (t "Connecting...")))
+             (status-color (case status
+                            (:online (raylib:make-color :r 60 :g 200 :b 60 :a 255))
+                            (:offline (raylib:make-color :r 200 :g 60 :b 60 :a 255))
+                            (t (raylib:make-color :r 200 :g 200 :b 60 :a 255))))
+             (status-text-width (raylib:measure-text status-text 16))
+             (status-x (truncate (/ (- screen-width (+ status-text-width 20)) 2))))
+        (raylib:draw-circle (+ status-x 6) (+ status-y 8) 6.0 status-color)
+        (raylib:draw-text status-text (+ status-x 20) status-y 16 status-color))
 
       ;; Username label
       (let ((username-label-y (+ panel-y padding 80)))

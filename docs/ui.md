@@ -75,6 +75,9 @@ UI state fields (login-related)
 | `password-buffer` | Current password input text |
 | `auth-error-message` | Error message to display (e.g., "Username taken") |
 | `server-selector-index` | Selected server index (for future multi-server support) |
+| `server-status` | Connection status: `:online`, `:offline`, or `:connecting` |
+| `server-last-heard` | Elapsed time when last message was received from server |
+| `server-next-ping` | Elapsed time when next ping should be sent |
 
 Walkthrough: login flow
 1. Client starts with `(ui-login-active ui)` = t.
@@ -104,6 +107,16 @@ Walkthrough: unstuck feature
 4. Server's `process-player-unstuck` validates player is actually stuck (can't move in any cardinal direction).
 5. If stuck: teleport to a random position within zone bounds (if still stuck, click again).
 6. If not stuck: request denied (prevents exploit as free teleport).
+
+Walkthrough: server status indicator
+1. Client starts with `(ui-server-status ui)` = `:connecting`.
+2. Periodically sends `:hello` ping to server (every 3-7 seconds, randomized).
+3. Server responds with `:hello-ack` if online.
+4. If any message received: status = `:online`, update `server-last-heard` timestamp.
+5. If no message for 5+ seconds: status = `:offline`.
+6. Login screen displays colored indicator: green (online), red (offline), yellow (connecting).
+7. Login attempts blocked when offline (shows "Server is offline" error).
+8. Only runs on login screen - gameplay uses snapshot stream for connectivity.
 
 Design note
 - UI toggles debug overlays without touching the rendering logic directly.

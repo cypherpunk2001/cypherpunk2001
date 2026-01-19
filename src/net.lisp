@@ -80,19 +80,24 @@
 
 (defun receive-net-message (socket buffer)
   ;; Receive a single UDP message if ready; returns message and sender.
-  (when (usocket:wait-for-input socket :timeout 0 :ready-only t)
-    (multiple-value-bind (recv size host port)
-        (usocket:socket-receive socket buffer (length buffer))
-      (declare (ignore recv))
-      (when (and size (> size 0))
-        (let* ((text (octets-to-string buffer size))
-               (message (decode-net-message text)))
-          (unless message
-            (log-verbose "Dropped malformed packet from ~a:~d (~d bytes)"
-                         (host-to-string host)
-                         port
-                         size))
-          (values message (host-to-string host) port))))))
+  ;; Returns NIL gracefully if server unreachable (CONNECTION-REFUSED-ERROR).
+  (handler-case
+      (when (usocket:wait-for-input socket :timeout 0 :ready-only t)
+        (multiple-value-bind (recv size host port)
+            (usocket:socket-receive socket buffer (length buffer))
+          (declare (ignore recv))
+          (when (and size (> size 0))
+            (let* ((text (octets-to-string buffer size))
+                   (message (decode-net-message text)))
+              (unless message
+                (log-verbose "Dropped malformed packet from ~a:~d (~d bytes)"
+                             (host-to-string host)
+                             port
+                             size))
+              (values message (host-to-string host) port)))))
+    (usocket:connection-refused-error ()
+      ;; Server unreachable - return nil gracefully
+      nil)))
 
 (defstruct (net-client (:constructor %make-net-client))
   ;; Server-side view of a connected client.
@@ -1999,7 +2004,10 @@
                                (setf *server-clients* next-clients)
                                (case (getf message :type)
                                  (:hello
-                                  (log-verbose "Handshake received from ~a:~d" host port))
+                                  (log-verbose "Handshake received from ~a:~d" host port)
+                                  ;; Respond so client knows server is online
+                                  (send-net-message socket (list :type :hello-ack)
+                                                    :host host :port port))
                                  (:register
                                   ;; Queue for async processing - main loop continues
                                   (if (auth-rate-check host elapsed)
@@ -2165,35 +2173,58 @@
                          ;; Login screen phase
                          (cond
                            ((and (ui-login-active ui) (not (ui-auth-complete ui)))
+                            ;; Periodic ping to detect server availability
+                            (when (>= elapsed (ui-server-next-ping ui))
+                              (handler-case
+                                  (send-net-message socket (list :type :hello))
+                                (error ()
+                                  ;; Send failed - server unreachable
+                                  (setf (ui-server-status ui) :offline)))
+                              ;; Schedule next ping: random 3-7s, capped at 60s total interval
+                              (setf (ui-server-next-ping ui)
+                                    (+ elapsed (+ 3.0 (random 4.0)))))
                             ;; Auto-login: Try register first, then login if taken
                             (when (and auto-login-username auto-login-password
                                       (not auto-login-attempted))
-                              (send-auth-message socket :register
-                                                 auto-login-username auto-login-password)
-                              (setf auto-login-attempted t)
-                              (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
+                              (handler-case
+                                  (progn
+                                    (send-auth-message socket :register
+                                                       auto-login-username auto-login-password)
+                                    (setf auto-login-attempted t)
+                                    (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
+                                (error ()
+                                  (setf (ui-server-status ui) :offline))))
                             ;; Update login input
                             (update-login-input ui)
                             ;; F11 toggles fullscreen on login screen
                             (when (raylib:is-key-pressed +key-f11+)
                               (raylib:toggle-fullscreen))
-                            ;; Enter key triggers login
+                            ;; Enter key triggers login (only if server online)
                             (when (and (raylib:is-key-pressed +key-enter+)
                                       (ui-username-buffer ui)
                                       (plusp (length (ui-username-buffer ui))))
-                              (send-auth-message socket :login
-                                                 (ui-username-buffer ui)
-                                                 (ui-username-buffer ui))
-                              (setf (ui-auth-error-message ui) nil)
-                              (log-verbose "Sending login request for ~a (Enter key)" (ui-username-buffer ui)))
+                              (if (eq (ui-server-status ui) :offline)
+                                  (setf (ui-auth-error-message ui) "Server is offline")
+                                  (handler-case
+                                      (progn
+                                        (send-auth-message socket :login
+                                                           (ui-username-buffer ui)
+                                                           (ui-username-buffer ui))
+                                        (setf (ui-auth-error-message ui) nil)
+                                        (log-verbose "Sending login request for ~a (Enter key)" (ui-username-buffer ui)))
+                                    (error ()
+                                      (setf (ui-server-status ui) :offline
+                                            (ui-auth-error-message ui) "Server is offline")))))
                             ;; Check for login messages from server
-                            (loop
-                              (multiple-value-bind (message _host _port)
-                                  (receive-net-message socket recv-buffer)
-                                (declare (ignore _host _port))
-                                (unless message
-                                  (return))
-                                (case (getf message :type)
+                            (let ((got-message nil))
+                              (loop
+                                (multiple-value-bind (message _host _port)
+                                    (receive-net-message socket recv-buffer)
+                                  (declare (ignore _host _port))
+                                  (unless message
+                                    (return))
+                                  (setf got-message t)
+                                  (case (getf message :type)
                                   (:auth-ok
                                    ;; Store player-id from auth-ok (used to find local player in snapshots)
                                    ;; Critical since network-only snapshots don't include per-client player-id
@@ -2232,25 +2263,40 @@
                                    (apply-private-state game
                                                         (getf message :payload)
                                                         :player-id (getf message :player-id)))
+                                  (:hello-ack
+                                   ;; Server responded to ping - it's online
+                                   (log-verbose "Server responded to ping"))
                                   (t
                                    (log-verbose "Unexpected message during login: ~s"
                                                (getf message :type))))))
+                              ;; Update server status based on whether we got a message
+                              (if got-message
+                                  (setf (ui-server-status ui) :online
+                                        (ui-server-last-heard ui) elapsed)
+                                  (when (> (- elapsed (ui-server-last-heard ui)) 5.0)
+                                    (setf (ui-server-status ui) :offline))))
                             ;; Draw login screen and handle button clicks
                             (raylib:begin-drawing)
                             (let ((action (draw-login-screen ui)))
                               (when action
                                 (let ((username (ui-username-buffer ui)))
                                   (when (and username (plusp (length username)))
-                                    ;; For MVP: password = username
-                                    (case action
-                                      (:login
-                                       (send-auth-message socket :login username username)
-                                       (setf (ui-auth-error-message ui) nil)
-                                       (log-verbose "Sending login request for ~a" username))
-                                      (:register
-                                       (send-auth-message socket :register username username)
-                                       (setf (ui-auth-error-message ui) nil)
-                                       (log-verbose "Sending register request for ~a" username)))))))
+                                    (if (eq (ui-server-status ui) :offline)
+                                        (setf (ui-auth-error-message ui) "Server is offline")
+                                        ;; For MVP: password = username
+                                        (handler-case
+                                            (case action
+                                              (:login
+                                               (send-auth-message socket :login username username)
+                                               (setf (ui-auth-error-message ui) nil)
+                                               (log-verbose "Sending login request for ~a" username))
+                                              (:register
+                                               (send-auth-message socket :register username username)
+                                               (setf (ui-auth-error-message ui) nil)
+                                               (log-verbose "Sending register request for ~a" username)))
+                                          (error ()
+                                            (setf (ui-server-status ui) :offline
+                                                  (ui-auth-error-message ui) "Server is offline"))))))))
                             (raylib:end-drawing))
 
                            ;; Gameplay phase (after authentication)
