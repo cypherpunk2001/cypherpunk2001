@@ -2363,12 +2363,12 @@
                                              (game-prediction-state game))
                                     (let* ((player (game-player game))
                                            (server-seq (or (and (> latest-sequence 0) latest-sequence)
-                                                           (and player (player-last-sequence player))))))
+                                                           (and player (player-last-sequence player)))))
                                       (when (and player (integerp server-seq) (> server-seq 0))
                                         (reconcile-prediction game
                                                              (player-x player)
                                                              (player-y player)
-                                                             server-seq))))))))
+                                                             server-seq))))))
                               (when latest-private
                                 (apply-private-state game latest-private
                                                      :player-id latest-private-player-id)))
@@ -2376,7 +2376,7 @@
                             ;; Interpolate remote entities before drawing
                             (interpolate-remote-entities game)
                             (process-combat-events game)
-                            (draw-game game)))
+                            (draw-game game))))))
           (shutdown-game game)
           (usocket:socket-close socket)
           (raylib:close-audio-device))))))
