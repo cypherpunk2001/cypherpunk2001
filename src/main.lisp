@@ -235,6 +235,50 @@
                                      :slot-index slot-index
                                      :item-id slot-item)
                   (setf click-consumed t))))))
+        ;; Inventory drag-and-drop: start drag on left-click
+        (when (and (not click-consumed)
+                   inventory-open
+                   mouse-clicked
+                   (not (ui-drag-active ui)))
+          (let* ((inventory (player-inventory player))
+                 (slots (and inventory (inventory-slots inventory)))
+                 (slot-count (if slots (length slots) 0))
+                 (slot-index (and (> slot-count 0)
+                                  (inventory-slot-at-screen ui mouse-x mouse-y
+                                                            slot-count))))
+            (when (and slot-index slots (< slot-index (length slots)))
+              (let* ((slot (aref slots slot-index))
+                     (slot-item (inventory-slot-item-id slot))
+                     (item-count (inventory-slot-count slot)))
+                (when (and slot-item (> item-count 0))
+                  (ui-start-inventory-drag ui slot-index slot-item mouse-x mouse-y)
+                  (log-verbose "DRAG-START: slot=~a item=~a" slot-index slot-item)
+                  (setf click-consumed t))))))
+        ;; Inventory drag-and-drop: complete swap on mouse release
+        (when (and inventory-open
+                   (ui-drag-active ui)
+                   (not mouse-down))
+          (let* ((source-slot (ui-drag-slot-index ui))
+                 (inventory (player-inventory player))
+                 (slots (and inventory (inventory-slots inventory)))
+                 (slot-count (if slots (length slots) 0))
+                 (dest-slot (and (> slot-count 0)
+                                 (inventory-slot-at-screen ui mouse-x mouse-y
+                                                           slot-count))))
+            (log-verbose "DRAG-END: source=~a dest=~a" source-slot dest-slot)
+            (ui-end-inventory-drag ui)
+            (when (and dest-slot source-slot
+                       (/= dest-slot source-slot)
+                       (< dest-slot slot-count))
+              ;; Request swap via intent (server will process authoritatively)
+              (request-inventory-swap client-intent source-slot dest-slot)
+              (log-verbose "DRAG-SWAP: requesting swap ~a <-> ~a" source-slot dest-slot))))
+        ;; Cancel drag if inventory closes or escape pressed
+        (when (and (ui-drag-active ui)
+                   (or (not inventory-open)
+                       (raylib:is-key-pressed +key-escape+)))
+          (ui-cancel-inventory-drag ui)
+          (log-verbose "DRAG-CANCEL: inventory closed or escape pressed"))
         (when (and (not click-consumed)
                    (not input-blocked)
                    mouse-right-clicked)
@@ -349,6 +393,9 @@
                                (intent-requested-drop-count current-intent))
                   (process-player-drop-request current-player current-intent world)
                   (clear-requested-drop-item current-intent))
+                ;; Process inventory swap requests
+                (when (intent-requested-swap-slot-a current-intent)
+                  (process-player-inventory-swap current-player current-intent))
                 (process-player-unstuck current-player current-intent world
                                         (and (world-zone world)
                                              (zone-id (world-zone world)))

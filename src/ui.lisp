@@ -529,6 +529,31 @@
                      (< index slot-count))
             index))))))
 
+;;;; Inventory Drag-and-Drop
+
+(defun ui-start-inventory-drag (ui slot-index item-id x y)
+  ;; Start dragging an inventory item from SLOT-INDEX.
+  (setf (ui-drag-active ui) t
+        (ui-drag-slot-index ui) slot-index
+        (ui-drag-item-id ui) item-id
+        (ui-drag-start-x ui) x
+        (ui-drag-start-y ui) y))
+
+(defun ui-end-inventory-drag (ui)
+  ;; End the current drag operation and return the source slot index.
+  (let ((slot-index (ui-drag-slot-index ui)))
+    (setf (ui-drag-active ui) nil
+          (ui-drag-slot-index ui) nil
+          (ui-drag-item-id ui) nil
+          (ui-drag-start-x ui) nil
+          (ui-drag-start-y ui) nil)
+    slot-index))
+
+(defun ui-cancel-inventory-drag (ui)
+  ;; Cancel the drag operation without performing any action.
+  (ui-end-inventory-drag ui)
+  nil)
+
 (defun ui-trigger-loading (ui &optional (seconds *zone-loading-seconds*))
   ;; Ensure the loading overlay stays visible for at least SECONDS.
   (when (and seconds (> seconds 0.0))

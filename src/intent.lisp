@@ -17,6 +17,8 @@
   requested-drop-item-id
   requested-drop-count
   requested-drop-slot-index
+  requested-swap-slot-a
+  requested-swap-slot-b
   requested-chat-message
   requested-unstuck)
 
@@ -39,6 +41,8 @@
                 :requested-drop-item-id nil
                 :requested-drop-count 0
                 :requested-drop-slot-index nil
+                :requested-swap-slot-a nil
+                :requested-swap-slot-b nil
                 :requested-chat-message nil
                 :requested-unstuck nil))
 
@@ -142,3 +146,13 @@
 (defun clear-requested-unstuck (intent)
   ;; Clear the unstuck request flag.
   (setf (intent-requested-unstuck intent) nil))
+
+(defun request-inventory-swap (intent slot-a slot-b)
+  ;; Request to swap two inventory slots (client sends, server validates).
+  (setf (intent-requested-swap-slot-a intent) slot-a
+        (intent-requested-swap-slot-b intent) slot-b))
+
+(defun clear-requested-inventory-swap (intent)
+  ;; Clear the inventory swap request.
+  (setf (intent-requested-swap-slot-a intent) nil
+        (intent-requested-swap-slot-b intent) nil))

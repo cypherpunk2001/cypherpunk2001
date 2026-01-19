@@ -119,6 +119,8 @@
   context-width context-option-height context-padding context-text-size
   context-walk-label context-attack-label context-follow-label
   context-pickup-label context-examine-label context-drop-label
+  ;; Inventory drag-and-drop state
+  drag-active drag-slot-index drag-item-id drag-start-x drag-start-y
   minimap-x minimap-y minimap-width minimap-height minimap-point-size
   minimap-bg-color minimap-border-color minimap-player-color minimap-npc-color
   minimap-collision-color

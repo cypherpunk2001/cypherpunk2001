@@ -789,6 +789,43 @@
                                                        :snapshot-dirty nil))))
                         dropped))))))))))))
 
+(defun swap-inventory-slots (player slot-a slot-b)
+  ;; Swap the contents of two inventory slots.
+  ;; Returns T if swap succeeded, NIL otherwise.
+  (log-verbose "SWAP-INV: player=~a slot-a=~a slot-b=~a"
+               (and player (player-id player)) slot-a slot-b)
+  (when player
+    (let* ((inventory (player-inventory player))
+           (slots (and inventory (inventory-slots inventory)))
+           (size (and slots (length slots))))
+      (when (and slots
+                 (integerp slot-a) (integerp slot-b)
+                 (>= slot-a 0) (< slot-a size)
+                 (>= slot-b 0) (< slot-b size)
+                 (/= slot-a slot-b))
+        ;; Get both slots
+        (let ((a (aref slots slot-a))
+              (b (aref slots slot-b)))
+          ;; Swap the slot contents
+          (setf (aref slots slot-a) b
+                (aref slots slot-b) a)
+          ;; Mark player as dirty so inventory order persists
+          (setf (player-snapshot-dirty player) t)
+          (mark-player-dirty (player-id player))
+          (log-verbose "SWAP-INV: swapped slot ~a <-> slot ~a" slot-a slot-b)
+          t)))))
+
+(defun process-player-inventory-swap (player intent)
+  ;; Process an inventory swap request from the client intent.
+  (let ((slot-a (intent-requested-swap-slot-a intent))
+        (slot-b (intent-requested-swap-slot-b intent)))
+    (when (and slot-a slot-b)
+      (log-verbose "PROCESS-SWAP: player=~a slot-a=~a slot-b=~a"
+                   (and player (player-id player)) slot-a slot-b)
+      (swap-inventory-slots player slot-a slot-b)
+      ;; Clear the swap request
+      (clear-requested-inventory-swap intent))))
+
 (defun roll-loot-entry (entries)
   ;; Roll a single loot entry from ENTRIES.
   (let ((total (loop :for entry :in entries

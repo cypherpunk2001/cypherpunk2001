@@ -953,7 +953,16 @@
            (panel-color (ui-menu-panel-color ui))
            (text-color (ui-menu-text-color ui))
            (slot-color (raylib:fade (ui-menu-panel-color ui) 0.7))
-           (slot-border (ui-menu-text-color ui)))
+           (slot-border (ui-menu-text-color ui))
+           ;; Drag state
+           (dragging (ui-drag-active ui))
+           (drag-source-slot (and dragging (ui-drag-slot-index ui)))
+           (drag-item-id (and dragging (ui-drag-item-id ui)))
+           (mouse-x (raylib:get-mouse-x))
+           (mouse-y (raylib:get-mouse-y))
+           ;; Colors for drag feedback
+           (dimmed-slot-color (raylib:fade slot-color 0.3))
+           (highlight-color (raylib:make-color :r 255 :g 255 :b 100 :a 100)))
       (multiple-value-bind (grid-x grid-y slot-size gap columns rows
                             panel-x panel-y panel-width panel-height header-height padding)
           (inventory-grid-layout ui slot-count)
@@ -967,15 +976,36 @@
                           text-color)
         (let ((source (render-tile-source render))
               (dest (render-tile-dest render))
-              (origin (render-origin render)))
+              (origin (render-origin render))
+              (hover-slot nil))
+          ;; Determine which slot mouse is hovering over (for drag target highlight)
+          (when dragging
+            (dotimes (index slot-count)
+              (let* ((col (mod index columns))
+                     (row (floor index columns))
+                     (slot-x (+ grid-x (* col (+ slot-size gap))))
+                     (slot-y (+ grid-y (* row (+ slot-size gap)))))
+                (when (and (>= mouse-x slot-x) (< mouse-x (+ slot-x slot-size))
+                           (>= mouse-y slot-y) (< mouse-y (+ slot-y slot-size)))
+                  (setf hover-slot index)))))
+          ;; Draw slots
           (dotimes (index slot-count)
             (let* ((col (mod index columns))
                    (row (floor index columns))
                    (slot-x (+ grid-x (* col (+ slot-size gap))))
-                   (slot-y (+ grid-y (* row (+ slot-size gap)))))
-              (raylib:draw-rectangle slot-x slot-y slot-size slot-size slot-color)
+                   (slot-y (+ grid-y (* row (+ slot-size gap))))
+                   ;; Dim source slot, highlight hover slot
+                   (is-source (and dragging (eql index drag-source-slot)))
+                   (is-hover-target (and dragging hover-slot (eql index hover-slot)
+                                         (not is-source)))
+                   (current-slot-color (if is-source dimmed-slot-color slot-color)))
+              (raylib:draw-rectangle slot-x slot-y slot-size slot-size current-slot-color)
+              ;; Draw highlight for hover target
+              (when is-hover-target
+                (raylib:draw-rectangle slot-x slot-y slot-size slot-size highlight-color))
               (raylib:draw-rectangle-lines slot-x slot-y slot-size slot-size slot-border)
-              (when (and slots (< index (length slots)))
+              ;; Draw item (skip rendering item in source slot if dragging)
+              (when (and slots (< index (length slots)) (not is-source))
                 (let* ((slot (aref slots index))
                        (item-id (inventory-slot-item-id slot))
                        (count (inventory-slot-count slot)))
@@ -1008,7 +1038,33 @@
                                         (+ slot-x (- slot-size 18))
                                         (+ slot-y (- slot-size 16))
                                         count-size
-                                        text-color))))))))))))
+                                        text-color)))))))
+          ;; Draw dragged item at cursor position (last, so it's on top)
+          (when (and dragging drag-item-id)
+            (let* ((texture (item-texture-for assets drag-item-id))
+                   (half-size (floor slot-size 2))
+                   (drag-dest-x (float (- mouse-x half-size) 1.0))
+                   (drag-dest-y (float (- mouse-y half-size) 1.0))
+                   (drag-dest-size (float slot-size 1.0)))
+              (if texture
+                  (let ((src-w (float (raylib:texture-width texture) 1.0))
+                        (src-h (float (raylib:texture-height texture) 1.0)))
+                    (set-rectangle source 0.0 0.0 src-w src-h)
+                    (set-rectangle dest drag-dest-x drag-dest-y drag-dest-size drag-dest-size)
+                    (raylib:draw-texture-pro texture
+                                             source
+                                             dest
+                                             origin
+                                             0.0
+                                             (raylib:fade raylib:+white+ 0.8)))
+                  (let* ((item (find-item-archetype drag-item-id))
+                         (label (or (and item (item-archetype-name item))
+                                    (string-capitalize (string drag-item-id)))))
+                    (raylib:draw-text label
+                                      (truncate drag-dest-x)
+                                      (truncate drag-dest-y)
+                                      14
+                                      text-color))))))))))
 
 (defun minimap-world-to-screen (ui world player world-x world-y)
   ;; Convert world coordinates into minimap screen space.

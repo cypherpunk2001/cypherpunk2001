@@ -807,7 +807,9 @@
         (when (intent-requested-pickup-target-id client-intent)
           (clear-requested-pickup-target client-intent))
         (when (intent-requested-drop-item-id client-intent)
-          (clear-requested-drop-item client-intent))))))
+          (clear-requested-drop-item client-intent))
+        (when (intent-requested-swap-slot-a client-intent)
+          (clear-requested-inventory-swap client-intent))))))
 
 (defun reconcile-net-clients (game clients)
   ;; Rebind clients to players that exist in the current game state.
@@ -851,6 +853,8 @@
           :requested-drop-item-id (intent-requested-drop-item-id intent)
           :requested-drop-count (intent-requested-drop-count intent)
           :requested-drop-slot-index (intent-requested-drop-slot-index intent)
+          :requested-swap-slot-a (intent-requested-swap-slot-a intent)
+          :requested-swap-slot-b (intent-requested-swap-slot-b intent)
           :requested-chat-message (intent-requested-chat-message intent)
           :requested-unstuck (intent-requested-unstuck intent))))
 
@@ -921,6 +925,10 @@
           (%int-or (getf plist :requested-drop-count) 0)
           (intent-requested-drop-slot-index intent)
           (getf plist :requested-drop-slot-index nil)
+          (intent-requested-swap-slot-a intent)
+          (%int-or (getf plist :requested-swap-slot-a) nil)
+          (intent-requested-swap-slot-b intent)
+          (%int-or (getf plist :requested-swap-slot-b) nil)
           (intent-requested-chat-message intent)
           (%sanitize-chat-message (getf plist :requested-chat-message))
           (intent-requested-unstuck intent)
@@ -1387,7 +1395,16 @@
     ;; Add ack at message level (not in payload) for delta compression
     (when ack
       (setf message (append message (list :ack ack))))
-    (send-net-message socket message :host host :port port)))
+    (send-net-message socket message :host host :port port)
+    ;; Clear one-shot intent fields after sending to prevent repeat
+    (when (intent-requested-swap-slot-a intent)
+      (clear-requested-inventory-swap intent))
+    (when (intent-requested-pickup-target-id intent)
+      (clear-requested-pickup-target intent))
+    (when (intent-requested-drop-item-id intent)
+      (clear-requested-drop-item intent))
+    (when (intent-requested-chat-message intent)
+      (clear-requested-chat-message intent))))
 
 (defun send-auth-message (socket msg-type username password &key host port)
   "Send an authentication message (login or register).
