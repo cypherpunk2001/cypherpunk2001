@@ -100,12 +100,6 @@ Key design docs:
 
 ---
 
-if server is killed unexpectedly, client crashes instead of returning to the login screen
-CLIENT FAILED: Condition USOCKET:CONNECTION-REFUSED-ERROR was signalled.
-you can test this until fixed by opening make client with no server to connect to
-these should be more robust. the game should not just crash if server offline. the game should tell the player the server is offline.
-
----
 
 ---
 

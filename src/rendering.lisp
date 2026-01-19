@@ -267,6 +267,9 @@
                           tile-dest-size tile-size-f
                           offset-x offset-y)
   ;; Draw ZONE layers offset into world space.
+  ;; Apply tile filter based on user setting (0=POINT, 1=BILINEAR)
+  (raylib:set-texture-filter (assets-tileset assets)
+                             (if *tile-point-filter* 0 1))
   (let* ((zone-layers (zone-layers zone))
          (chunk-size (zone-chunk-size zone))
          (tile-source (render-tile-source render))
@@ -1281,6 +1284,29 @@
                                     (ui-menu-fullscreen-y ui)
                                     (ui-menu-fullscreen-size ui)
                                     (ui-menu-fullscreen-size ui)))
+         ;; Client-side options
+         (pred-on *client-prediction-enabled*)
+         (hover-pred (point-in-rect-p mouse-x mouse-y
+                                      (ui-menu-prediction-x ui)
+                                      (ui-menu-prediction-y ui)
+                                      (ui-menu-prediction-size ui)
+                                      (ui-menu-prediction-size ui)))
+         (tile-on *tile-point-filter*)
+         (hover-tile (point-in-rect-p mouse-x mouse-y
+                                      (ui-menu-tile-filter-x ui)
+                                      (ui-menu-tile-filter-y ui)
+                                      (ui-menu-tile-filter-size ui)
+                                      (ui-menu-tile-filter-size ui)))
+         (hover-interp (point-in-rect-p mouse-x mouse-y
+                                        (ui-menu-interp-x ui)
+                                        (ui-menu-interp-y ui)
+                                        200
+                                        (ui-menu-interp-size ui)))
+         (hover-threshold (point-in-rect-p mouse-x mouse-y
+                                           (ui-menu-threshold-x ui)
+                                           (ui-menu-threshold-y ui)
+                                           200
+                                           (ui-menu-threshold-size ui)))
          (debug-box-color (cond
                             (hover-debug (ui-menu-button-hover-color ui))
                             (debug-on (ui-menu-button-color ui))
@@ -1292,7 +1318,21 @@
          (fs-box-color (cond
                          (hover-fs (ui-menu-button-hover-color ui))
                          (fs-on (ui-menu-button-color ui))
-                         (t (ui-menu-panel-color ui)))))
+                         (t (ui-menu-panel-color ui))))
+         (pred-box-color (cond
+                           (hover-pred (ui-menu-button-hover-color ui))
+                           (pred-on (ui-menu-button-color ui))
+                           (t (ui-menu-panel-color ui))))
+         (tile-box-color (cond
+                           (hover-tile (ui-menu-button-hover-color ui))
+                           (tile-on (ui-menu-button-color ui))
+                           (t (ui-menu-panel-color ui))))
+         (interp-text-color (if hover-interp
+                                (ui-menu-button-hover-color ui)
+                                (ui-menu-text-color ui)))
+         (threshold-text-color (if hover-threshold
+                                   (ui-menu-button-hover-color ui)
+                                   (ui-menu-text-color ui))))
     (raylib:draw-rectangle 0 0 *window-width* *window-height*
                            (ui-menu-overlay-color ui))
     (raylib:draw-rectangle (ui-menu-panel-x ui) (ui-menu-panel-y ui)
@@ -1411,6 +1451,50 @@
                       (- (ui-menu-fullscreen-y ui) 2)
                       (ui-menu-volume-text-size ui)
                       (ui-menu-text-color ui))
+    ;; Client prediction toggle
+    (raylib:draw-rectangle (ui-menu-prediction-x ui)
+                           (ui-menu-prediction-y ui)
+                           (ui-menu-prediction-size ui)
+                           (ui-menu-prediction-size ui)
+                           pred-box-color)
+    (raylib:draw-rectangle-lines (ui-menu-prediction-x ui)
+                                 (ui-menu-prediction-y ui)
+                                 (ui-menu-prediction-size ui)
+                                 (ui-menu-prediction-size ui)
+                                 (ui-menu-text-color ui))
+    (raylib:draw-text (ui-menu-prediction-label ui)
+                      (+ (ui-menu-prediction-x ui) 28)
+                      (- (ui-menu-prediction-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      (ui-menu-text-color ui))
+    ;; Tile filter toggle
+    (raylib:draw-rectangle (ui-menu-tile-filter-x ui)
+                           (ui-menu-tile-filter-y ui)
+                           (ui-menu-tile-filter-size ui)
+                           (ui-menu-tile-filter-size ui)
+                           tile-box-color)
+    (raylib:draw-rectangle-lines (ui-menu-tile-filter-x ui)
+                                 (ui-menu-tile-filter-y ui)
+                                 (ui-menu-tile-filter-size ui)
+                                 (ui-menu-tile-filter-size ui)
+                                 (ui-menu-text-color ui))
+    (raylib:draw-text (ui-menu-tile-filter-label ui)
+                      (+ (ui-menu-tile-filter-x ui) 28)
+                      (- (ui-menu-tile-filter-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      (ui-menu-text-color ui))
+    ;; Interpolation delay (click to cycle)
+    (raylib:draw-text (format nil "Interp Delay: ~,2fs (click)" *interpolation-delay-seconds*)
+                      (ui-menu-interp-x ui)
+                      (- (ui-menu-interp-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      interp-text-color)
+    ;; Prediction threshold (click to cycle)
+    (raylib:draw-text (format nil "Predict Threshold: ~,1fpx (click)" *prediction-error-threshold*)
+                      (ui-menu-threshold-x ui)
+                      (- (ui-menu-threshold-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      threshold-text-color)
     ;; Unstuck button (above logout)
     (raylib:draw-rectangle (ui-menu-unstuck-x ui) (ui-menu-unstuck-y ui)
                            (ui-menu-unstuck-width ui)

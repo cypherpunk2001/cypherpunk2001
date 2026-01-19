@@ -98,6 +98,10 @@
 (defparameter *prediction-error-threshold* 5.0
   "Max prediction error in pixels before correction.")
 
+;;; Rendering - Read during draw
+(defparameter *tile-point-filter* t
+  "Use point (nearest-neighbor) filtering for tiles. Reduces seam artifacts but looks pixelated.")
+
 ;;; Camera - Read every frame for view calculations
 (defparameter *camera-zoom-default* 1.0
   "Default camera zoom level.")
