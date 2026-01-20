@@ -45,8 +45,8 @@ The game server and client MUST NOT know where data comes from or where it goes.
   (:documentation "Set KEY only if not exists, with TTL. Returns T if set."))
 (defgeneric storage-refresh-ttl (storage key ttl-seconds)
   (:documentation "Refresh TTL on KEY. Returns T if key exists."))
-(defgeneric storage-get-raw (storage key)
-  (:documentation "Get raw string value (not deserialized)."))
+(defgeneric storage-load-raw (storage key)
+  (:documentation "Get raw string value (not deserialized). For size checks before parsing."))
 
 ;; Sorted sets for leaderboards (Phase 4)
 (defgeneric storage-zadd (storage key score member))
@@ -62,32 +62,46 @@ The game server and client MUST NOT know where data comes from or where it goes.
 (defgeneric storage-scard (storage key))
 (defgeneric storage-smembers (storage key))
 
+;; Hashes for quick lookups (Phase 4)
+(defgeneric storage-hget (storage key field))
+(defgeneric storage-hset (storage key field value))
+
 ;; Lua script execution (Phase 5)
 (defgeneric storage-script-load (storage script-name script-body))
 (defgeneric storage-eval-script (storage script-name keys args))
+
+;; Validation support (Phase 6)
+(defgeneric storage-incr (storage key)
+  (:documentation "Increment counter at KEY. Returns new value."))
+(defgeneric storage-save-with-ttl (storage key data ttl-seconds)
+  (:documentation "Save DATA at KEY with TTL expiration."))
 ```
 
 ### Concrete Implementations
 
 ```lisp
 ;; Redis implementation
+;; Note: All methods internally wrap redis calls in (redis:with-connection ...)
+;; Connection params (host, port) stored in class slots, omitted here for brevity.
 (defclass redis-storage ()
-  ((connection :accessor storage-connection)))
+  ((host :initarg :host :accessor redis-storage-host)
+   (port :initarg :port :accessor redis-storage-port)))
 
 (defmethod storage-load ((storage redis-storage) key)
-  (let ((raw (redis:get key)))
-    (when raw
-      (let ((*read-eval* nil))
-        (read-from-string raw)))))
+  (redis:with-connection (:host (redis-storage-host storage)
+                          :port (redis-storage-port storage))
+    (let ((raw (red:get key)))
+      (when raw
+        (let ((*read-eval* nil))
+          (read-from-string raw))))))
 
 (defmethod storage-save ((storage redis-storage) key data)
   ;; Atomic write-then-rename pattern for crash safety
-  ;; 1. Write to temp key first
-  ;; 2. Atomically RENAME to real key
-  ;; If crash during step 1, real key is untouched
-  (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
-    (redis:set temp-key (prin1-to-string data))
-    (redis:rename temp-key key))  ; Atomic, overwrites if exists
+  (redis:with-connection (:host (redis-storage-host storage)
+                          :port (redis-storage-port storage))
+    (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
+      (red:set temp-key (prin1-to-string data))
+      (red:rename temp-key key)))  ; Atomic, overwrites if exists
   t)
 
 ;; In-memory implementation (for testing)
@@ -213,7 +227,7 @@ Every field in player/entity structs MUST be explicitly categorized:
 - Native support for serialized blobs (our Lisp s-expressions work directly)
 - Built-in persistence (RDB + AOF)
 - Simpler operations than Redis + Postgres
-- Sufficient for 10k+ concurrent users on single instance
+- Can handle many thousands of concurrent users (actual capacity depends on blob size, write rate, hardware)
 - Natural key-value model matches our access patterns (player-id -> state)
 
 ### Client Library: cl-redis
@@ -314,16 +328,15 @@ auto-aof-rewrite-min-size 64mb
 All keys follow a consistent naming pattern:
 
 ```
-player:{player-id}          -> Player durable state blob
-player:{player-id}:version  -> Schema version number
-player:{player-id}:updated  -> Last update timestamp
+player:{player-id}          -> Player durable state blob (contains :version inside)
 
 zone:{zone-id}:objects      -> Zone object state (respawns, etc.)
-zone:{zone-id}:version      -> Zone schema version
 
 server:config               -> Server configuration
 server:id-counter           -> Global ID allocation counter
 ```
+
+**Note:** Schema version and timestamps live inside the blob (`:version`, `:created-at`), not as separate keys. This keeps player data atomic.
 
 ### Data Format
 
@@ -331,7 +344,7 @@ All values are Lisp s-expressions (our existing serialization format) with a ver
 
 ```lisp
 (:version 1
- :player-id 12345
+ :id 12345                ; Player ID (canonical field name is :id, not :player-id)
  :zone-id :overworld
  :x 150.0
  :y 200.0
@@ -531,11 +544,11 @@ To prevent data corruption during crashes, all Redis saves use the **write-new-t
 
 ```lisp
 ;; Instead of directly overwriting:
-(redis:set "player:123" new-data)  ; DANGEROUS: crash mid-write corrupts key
+(red:set "player:123" new-data)  ; DANGEROUS: crash mid-write corrupts key
 
 ;; We write to a temp key first, then atomically rename:
-(redis:set "temp:player:123:12345" new-data)  ; Crash here = temp key orphaned
-(redis:rename "temp:player:123:12345" "player:123")  ; Atomic, overwrites safely
+(red:set "temp:player:123:12345" new-data)  ; Crash here = temp key orphaned
+(red:rename "temp:player:123:12345" "player:123")  ; Atomic, overwrites safely
 ```
 
 **Why this works:**
@@ -944,34 +957,38 @@ The sections below address architectural concerns for production MMO features (t
 - Item deletion (player A's item removed, crash before player B gets gold)
 - Inconsistent state requiring manual GM intervention
 
-**Solution:** Redis Lua scripts for atomic multi-entity operations.
+**Solution:** Redis Lua scripts for atomic multi-entity operations via `storage-eval-script` (defined in interface above).
 
-```lisp
-;; New storage generic for atomic multi-key operations
-(defgeneric storage-execute-atomic (storage script keys args)
-  (:documentation "Execute atomic operation across multiple keys via Lua script."))
-```
+**Lua Script Pattern (Commit-Only):**
 
-**Lua Script Pattern:**
+All validation happens server-side in Lisp. Lua scripts only provide atomic commit of pre-validated results. This keeps complex game logic in Lisp where it's testable, and Lua simple/auditable.
+
 ```lua
--- trade_complete.lua: Atomic two-player item/gold swap
+-- trade_complete.lua: Atomic commit of pre-validated trade
 -- KEYS[1] = player:A, KEYS[2] = player:B
--- ARGV[1] = item-id, ARGV[2] = gold-amount
+-- ARGV[1] = new player A data (already validated, items swapped)
+-- ARGV[2] = new player B data (already validated, items swapped)
 
-local playerA = redis.call('GET', KEYS[1])
-local playerB = redis.call('GET', KEYS[2])
-
--- Validation (decoded in Lua or pre-validated by server)
-if not playerA or not playerB then
+-- Minimal safety check (players still exist)
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return {err = "PLAYER_NOT_FOUND"}
+end
+if redis.call('EXISTS', KEYS[2]) == 0 then
   return {err = "PLAYER_NOT_FOUND"}
 end
 
--- Modify both atomically (Lua scripts are atomic in Redis)
-redis.call('SET', KEYS[1], modified_playerA)
-redis.call('SET', KEYS[2], modified_playerB)
+-- Atomic commit of both players (all-or-nothing)
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
 
 return {ok = "TRADE_COMPLETE"}
 ```
+
+**Why commit-only?**
+- Game logic stays in Lisp (testable, debuggable)
+- Lua scripts are simple and auditable
+- No Lisp s-expression parsing in Lua
+- Server computes exact post-trade state before commit
 
 **Tier-1 Operations Requiring Atomicity:**
 
@@ -1205,9 +1222,17 @@ leaderboard:deaths       -> ZADD player-id score  (score = total deaths)
 # etc.
 
 # Sets (for membership queries)
-online:players           -> SADD player-id        (with expiring members)
+online:players           -> SADD player-id        (removed on logout/disconnect)
 guild:{id}:members       -> SADD player-id
 zone:{id}:players        -> SADD player-id        (for zone population)
+
+# Note: Redis sets don't support per-member TTL. Online tracking uses:
+# - SADD on login, SREM on logout/disconnect
+# - Server boot runs cleanup pass to remove stale entries from crashed sessions:
+#     for id in SMEMBERS online:players:
+#         if EXISTS session:{id}:owner == 0:
+#             SREM online:players id
+# - Alternatively: use session ownership TTL expiry as source of truth for online count
 
 # Hashes (for quick lookups without loading full blob)
 player:{id}:summary      -> HSET name level zone-id guild-id kills deaths
@@ -1279,15 +1304,9 @@ return {ok = "SAVED_WITH_INDEXES"}
 
 **Problem:** Malformed data from corrupted saves or malicious tampering can crash server or cause exploits.
 
-**Current gaps:**
-- No type checking (`:hp "ATTACK!"` accepted)
-- No bounds checking (`:hp -999999` accepted)
-- No size limits on inventory beyond array bounds
-- Missing fields silently default
+**Solution:** Schema validation layer with type checking, bounds checking, and size limits.
 
-**Solution:** Schema validation layer before deserialization.
-
-**Validation Rules:**
+**Schema Rules:**
 ```lisp
 (defparameter *player-schema*
   '((:id        :type integer :required t :min 1)
@@ -1296,33 +1315,7 @@ return {ok = "SAVED_WITH_INDEXES"}
     (:zone-id   :type symbol  :required t)
     (:hp        :type integer :required t :min 0 :max 99999)
     (:lifetime-xp :type integer :required nil :min 0 :default 0)
-    (:version   :type integer :required t :min 1)))
-
-(defun validate-player-plist (plist)
-  "Validate PLIST against *player-schema*. Returns (values valid-p errors)."
-  (let ((errors nil))
-    (dolist (rule *player-schema*)
-      (let* ((key (first rule))
-             (value (getf plist key))
-             (props (rest rule))
-             (type-spec (getf props :type))
-             (required (getf props :required))
-             (min-val (getf props :min))
-             (max-val (getf props :max)))
-        ;; Check required
-        (when (and required (null value))
-          (push (format nil "Missing required field: ~a" key) errors))
-        ;; Check type
-        (when (and value (not (typep value type-spec)))
-          (push (format nil "Invalid type for ~a: expected ~a, got ~a"
-                        key type-spec (type-of value)) errors))
-        ;; Check bounds
-        (when (and value (numberp value))
-          (when (and min-val (< value min-val))
-            (push (format nil "~a below minimum: ~a < ~a" key value min-val) errors))
-          (when (and max-val (> value max-val))
-            (push (format nil "~a above maximum: ~a > ~a" key value max-val) errors)))))
-    (values (null errors) (nreverse errors))))
+    (:version   :type integer :required nil :min 1)))  ; nil = missing OK (treat as v0)
 ```
 
 **Size Limits:**
@@ -1330,43 +1323,19 @@ return {ok = "SAVED_WITH_INDEXES"}
 (defparameter *max-player-blob-size* (* 64 1024))  ; 64KB max per player
 (defparameter *max-inventory-slots* 100)           ; Hard cap on slots
 (defparameter *max-stack-count* 999999)            ; Max items per stack
-
-(defun validate-blob-size (data-string)
-  (when (> (length data-string) *max-player-blob-size*)
-    (error 'blob-too-large :size (length data-string) :max *max-player-blob-size*)))
 ```
 
-**Integration:**
-```lisp
-(defun db-load-player-validated (player-id)
-  "Load player with full validation."
-  (let* ((raw (storage-load *storage* (player-key player-id))))
-    (when raw
-      (validate-blob-size (prin1-to-string raw))
-      (let ((migrated (migrate-player-data raw)))
-        (multiple-value-bind (valid-p errors) (validate-player-plist migrated)
-          (unless valid-p
-            (warn "Invalid player data for ~a: ~{~a~^, ~}" player-id errors)
-            (return-from db-load-player-validated nil))
-          (deserialize-player migrated *inventory-size* (length *equipment-slot-ids*)))))))
-```
+**Load Pipeline:** See **Phase 6: 4-Outcome Validation System** for the complete load path with:
+- Size check on raw string (before parsing)
+- Basic sanity check (before migration)
+- Full validation (after migration)
+- 4-outcome response: `:ok`, `:clamp`, `:quarantine`, `:reject`
 
-**Validation Behavior: Reject, Don't Clamp**
-
-Invalid data is **rejected entirely** rather than clamped to valid ranges. Rationale:
-- Clamping hides corruption - if HP is -999999, something is very wrong
-- Rejecting surfaces bugs immediately rather than masking them
-- Players with corrupted data should be flagged for GM investigation
-- Production: Consider a "quarantine" table for corrupted player records
-
-If a player cannot load due to validation failure:
-1. Log detailed error with all validation failures
-2. Return nil (player cannot login)
-3. Admin can inspect raw Redis data and manually fix or restore from backup
+**Legacy Note:** The original implementation used reject-only validation. Phase 6 replaces this with 4-outcome validation to avoid bricking legitimate accounts from benign corruption or schema drift while still failing closed on exploit-adjacent data
 
 ### Implementation Status
 
-All phases have been implemented:
+Phases 1-5 have been implemented:
 
 | Phase | Feature | Files | Status |
 |-------|---------|-------|--------|
@@ -1375,6 +1344,7 @@ All phases have been implemented:
 | 3 | Session Ownership (Redis TTL) | `db.lisp`, `data/redis-scripts/` | **Complete** |
 | 4 | Structured Data (Leaderboards) | `db.lisp`, `migrations.lisp` | **Complete** |
 | 5 | Trade System + Atomic Ops | `trade.lisp`, `intent.lisp` | **Complete** |
+| 6 | 4-Outcome Validation | `save.lisp`, `db.lisp` | **Planned** |
 
 **Notes:**
 - Trade system uses coins as regular inventory items (no separate currency)
@@ -1396,23 +1366,27 @@ All phases have been implemented:
 3. Server sends trade window open to both clients
 4. Players add/remove items (including coins) from offer
 5. Both players click "Confirm"
-6. Server executes atomic Lua script:
-   - Validate both inventories have items being traded
-   - Swap items atomically (coins are just another inventory item)
+6. Server validates trade and computes post-trade inventories:
+   - Verify both players still have offered items
+   - Compute new inventory states with items swapped
+   - Execute atomic Lua script to commit both players simultaneously
 7. Server sends trade complete/fail to both clients
 ```
 
 **Currency:** Coins are an existing inventory item dropped by NPCs. Trading uses coins as a regular tradeable item - no separate gold/currency system needed.
 
 **Atomic Trade Lua Script:**
+
+Trade state is validated entirely server-side (in Lisp). The Lua script provides atomic commit of the already-validated result - it does not perform trade validation itself.
+
 ```lua
 -- trade_complete.lua
 -- KEYS[1] = player:A, KEYS[2] = player:B
--- ARGV[1] = playerA-data-with-items-removed-gold-adjusted
--- ARGV[2] = playerB-data-with-items-removed-gold-adjusted
+-- ARGV[1] = playerA-data-with-items-removed-gold-adjusted (pre-validated)
+-- ARGV[2] = playerB-data-with-items-removed-gold-adjusted (pre-validated)
 
--- Both player states are pre-computed by server with items/gold swapped
--- This script just does the atomic write of both
+-- Server has already validated: items exist, counts correct, inventories have space
+-- This script just does the atomic multi-key write
 
 local existsA = redis.call('EXISTS', KEYS[1])
 local existsB = redis.call('EXISTS', KEYS[2])
@@ -1421,12 +1395,14 @@ if existsA == 0 or existsB == 0 then
   return {err = "PLAYER_NOT_FOUND"}
 end
 
--- Atomic write of both players
+-- Atomic write of both players (all-or-nothing)
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
 
 return {ok = "TRADE_COMPLETE"}
 ```
+
+**Idempotency consideration:** If intents can replay (network retry), consider adding a trade nonce to prevent double-apply. Current implementation relies on trade session state being cleared on completion.
 
 **Trade State (Ephemeral):**
 ```lisp
@@ -1464,3 +1440,324 @@ return {ok = "TRADE_COMPLETE"}
 - `src/intent.lisp` - Trade intents (request, offer, confirm, cancel)
 - `data/redis-scripts/trade_complete.lua` - Atomic trade script
 - `tests/trade-test.lisp` (new) - Trade system tests
+
+---
+
+## Phase 6: 4-Outcome Validation System (PLANNED)
+
+**Status: PLANNED - Awaiting Approval**
+
+The current 2-outcome validator (valid/reject) will brick legitimate players when:
+- Schema drift from partial deploys
+- Content changes (zones/items removed/renamed)
+- Benign corruption from migrations that missed fields
+- Inventory size changes
+
+With trades, leaderboards, and session ownership now implemented, rejecting a player has cascading effects on social systems. A more nuanced approach is needed.
+
+### The Problem with Reject-Only
+
+Current behavior in `db-load-player-validated`:
+```lisp
+(multiple-value-bind (valid-p errors)
+    (validate-player-plist-deep raw-data :log-errors t)
+  (unless valid-p
+    (return-from db-load-player-validated (values nil nil))))  ; BRICK
+```
+
+This causes:
+- Permanent account lockout for benign issues
+- Orphaned leaderboard entries
+- Orphaned online player set entries
+- Session ownership keys that must TTL expire
+- Support burden requiring manual Redis blob fixes
+
+### Solution: 4-Outcome Validation
+
+Replace binary valid/invalid with four outcomes:
+
+| Outcome | Meaning | Action |
+|---------|---------|--------|
+| `:ok` | Data valid | Deserialize, login normally |
+| `:clamp` | Minor issues, safely fixable | Fix data, tier-1 save, then login |
+| `:quarantine` | Suspicious, needs admin review | Don't spawn, show repair screen, store blob |
+| `:reject` | Dangerous/exploit-adjacent | Deny login, store blob for forensics |
+
+### New Validator Signature
+
+**Current:**
+```lisp
+(validate-player-plist-deep plist) → (values valid-p errors)
+```
+
+**Proposed:**
+```lisp
+(validate-player-plist-4way plist) → (values action issues fixed-plist)
+;; action: :ok, :clamp, :quarantine, :reject
+;; issues: list of warning/error strings
+;; fixed-plist: corrected data for :clamp, minimal identity for :quarantine, nil for :reject
+```
+
+### Field Classification Policy
+
+#### Clamp-Only (Safe Coercions)
+
+These corrections cannot benefit the player and preserve intent:
+
+| Field | Condition | Clamp To |
+|-------|-----------|----------|
+| `:hp` | < 0 | 0 |
+| `:hp` | > max-hp | max-hp |
+| `:x`, `:y` | Out of world bounds | Spawn point |
+| `:playtime` | < 0 | 0 |
+| `:deaths` | < 0 | 0 |
+| `:run-stamina` | Outside [0, 1] | Clamp to bounds |
+| `:attack-timer`, `:hit-timer` | < 0 | 0 |
+| `:created-at` | Missing | Current time |
+| Optional fields | Missing | Schema defaults |
+
+#### Reject (Exploit-Adjacent)
+
+Fixing these could give advantage or hide real bugs:
+
+| Field | Condition | Reason |
+|-------|-----------|--------|
+| `:id` | Missing | Can't identify player |
+| `:version` | > current, no migration | Unknown schema |
+| `:lifetime-xp` | < 0 | Exploit indicator |
+| Inventory slot | Negative count | Exploit indicator |
+| Inventory slot | Count > max stack | Possible dupe |
+| Inventory | Duplicate unique item ID | Definite dupe |
+| Structure | Not a plist | Corruption |
+| Structure | Missing required fields | Corruption |
+
+#### Quarantine (Recoverable but Suspicious)
+
+Weird enough to warrant admin inspection:
+
+| Field | Condition | Reason |
+|-------|-----------|--------|
+| `:zone-id` | Unknown zone | Zone removed/renamed |
+| Inventory | Unknown item ID | Item deprecated |
+| Equipment | Slot references missing item | Corruption, recoverable |
+| `:version` | < oldest supported migration | Very old account |
+
+### Storage Layer Fix: Size Check Bug
+
+**Current bug:** Size check happens AFTER `read-from-string`:
+```lisp
+(let ((raw-data (storage-load *storage* key)))  ; Already parsed!
+  (validate-blob-size (prin1-to-string raw-data)))  ; Re-serialize (WRONG)
+```
+
+**Fix:** Add `storage-load-raw` to check size BEFORE parsing:
+```lisp
+(defgeneric storage-load-raw (storage key)
+  (:documentation "Load raw string value for KEY. Returns string or NIL.
+   Does not parse - returns the exact bytes stored in Redis.
+   Use storage-load for parsed plist, storage-load-raw for size checks."))
+
+(defmethod storage-load-raw ((storage redis-storage) key)
+  (redis:with-connection (:host (redis-storage-host storage)
+                          :port (redis-storage-port storage))
+    (red:get key)))
+
+(defmethod storage-load-raw ((storage memory-storage) key)
+  (let ((data (gethash key (memory-storage-data storage))))
+    (when data (prin1-to-string data))))
+```
+
+**Note:** `storage-load-raw` complements (not replaces) `storage-load`. Use raw for size validation before parsing.
+
+**Correct load path:**
+```
+raw-string → size-check → parse → basic-sanity → migrate → validate-4way → action
+```
+
+**Why validate AFTER migration?** Validating before migration causes false rejects when old versions lack fields the migration would add. The flow is:
+
+1. **Size check** - Reject oversized blobs before any parsing (prevents allocation attacks)
+2. **Parse** - `read-from-string` with `*read-eval* nil`
+3. **Basic sanity** - Pre-migration check: Is it a plist? Has `:id` integer? If `:version` present, is it integer?
+4. **Migrate** - Run migration chain to current schema version (missing `:version` treated as 0)
+5. **Validate-4way** - Full validation against current schema (now all fields present)
+6. **Action** - `:ok`, `:clamp`, `:quarantine`, or `:reject`
+
+### Forensic Storage
+
+Store corrupt blobs for admin inspection:
+
+**New Redis keys:**
+```
+corrupt:{player-id}:{timestamp}  → {:raw "..." :report (...) :timestamp N}  (TTL: 7 days)
+metrics:validation:ok            → counter (INCR on each outcome)
+metrics:validation:clamp         → counter
+metrics:validation:quarantine    → counter
+metrics:validation:reject        → counter
+```
+
+**Retention policy:** Corrupt blobs expire after 7 days (604800 seconds) to prevent unbounded growth. A malicious actor flooding with bad data cannot fill Redis with `corrupt:*` keys.
+
+**Functions:**
+```lisp
+(defparameter *corrupt-blob-ttl-seconds* 604800
+  "TTL for corrupt blob forensic storage (7 days).")
+
+(defun store-corrupt-blob (player-id raw-string report)
+  "Store corrupt player data for forensic inspection with TTL."
+  (let ((key (format nil "corrupt:~a:~a" player-id (get-universal-time)))
+        (data (list :raw raw-string :report report :timestamp (get-universal-time))))
+    (storage-save-with-ttl *storage* key data *corrupt-blob-ttl-seconds*)))
+
+(defun increment-validation-metric (action)
+  "Increment validation outcome counter."
+  (storage-incr *storage* (format nil "metrics:validation:~a"
+                                   (string-downcase (symbol-name action)))))
+```
+
+**Note:** Requires new `storage-save-with-ttl` generic (Redis: `SETEX`, memory: store with expiry timestamp).
+
+### Quarantine Infrastructure
+
+**Minimal safe identity** (can't play, but recoverable):
+```lisp
+(defun make-quarantined-player (player-id)
+  "Create minimal player for quarantine state."
+  (make-player 0.0 0.0 :id player-id :zone-id :quarantine))
+```
+
+**Client behavior:** Show "Account needs repair - contact support" message. Do not spawn into world.
+
+### Refactored Load Path
+
+**Session ownership ordering:** The caller must `claim-session-ownership` BEFORE calling `db-load-player-validated`. This ensures that if the `:clamp` branch needs to save corrected data, the ownership-safe save path will succeed. Claiming after load creates a race where clamp saves fail.
+
+```lisp
+(defun db-load-player-validated (player-id)
+  "Load player with 4-outcome validation.
+   Returns (values player zone-id action).
+   PRECONDITION: Caller has already claimed session ownership for player-id."
+  (let* ((key (player-key player-id))
+         (raw-string (storage-load-raw *storage* key)))
+    (unless raw-string
+      (return-from db-load-player-validated (values nil nil :not-found)))
+
+    ;; 1. Size check BEFORE parsing
+    (when (> (length raw-string) *max-player-blob-size*)
+      (store-corrupt-blob player-id raw-string '("Blob size exceeds limit"))
+      (increment-validation-metric :reject)
+      (return-from db-load-player-validated (values nil nil :reject)))
+
+    ;; 2. Parse with error handling (read-from-string returns 2 values; we want the first)
+    (let ((raw-data (handler-case
+                        (let ((*read-eval* nil))
+                          (multiple-value-bind (parsed-plist end-pos)
+                              (read-from-string raw-string)
+                            (declare (ignore end-pos))
+                            parsed-plist))
+                      (error (e)
+                        (store-corrupt-blob player-id raw-string
+                                            (list (format nil "Parse error: ~a" e)))
+                        (increment-validation-metric :reject)
+                        (return-from db-load-player-validated (values nil nil :reject))))))
+
+      ;; 3. Basic sanity (pre-migration) - can we migrate at all?
+      ;; - Must be a list (listp check; full plist structure validated later in validate-4way)
+      ;; - Must have :id (integer)
+      ;; - :version missing is OK (treated as 0 by migration)
+      ;; - :version present must be integer
+      (let ((version-val (getf raw-data :version)))
+        (unless (and (listp raw-data)
+                     (integerp (getf raw-data :id))
+                     (or (null version-val) (integerp version-val)))
+          (store-corrupt-blob player-id raw-string '("Malformed structure: not a valid player data"))
+          (increment-validation-metric :reject)
+          (return-from db-load-player-validated (values nil nil :reject))))
+
+      ;; 4. Migrate to current schema (adds missing fields)
+      (let ((migrated-data (migrate-player-data raw-data)))
+
+        ;; 5. Full 4-way validation (against current schema, after migration)
+        (multiple-value-bind (action issues fixed-plist)
+            (validate-player-plist-4way migrated-data)
+          (increment-validation-metric action)
+
+          (case action
+            (:ok
+             (values (deserialize-player migrated-data *inventory-size*
+                                         (length *equipment-slot-ids*))
+                     (getf migrated-data :zone-id) :ok))
+
+            (:clamp
+             (log-verbose "Player ~a clamped: ~{~a~^, ~}" player-id issues)
+             ;; GUARANTEE: validate-player-plist-4way returns fixed-plist in current schema
+             ;; format with :version set to *player-schema-version*. No re-migration needed.
+             ;; Tier-1 save of corrected data using ownership-safe path + index updates
+             (let ((player (deserialize-player fixed-plist *inventory-size*
+                                               (length *equipment-slot-ids*))))
+               (db-save-player-immediate player)
+               (values player (getf fixed-plist :zone-id) :clamp)))
+
+            (:quarantine
+             (store-corrupt-blob player-id raw-string issues)
+             (warn "Player ~a quarantined: ~{~a~^, ~}" player-id issues)
+             (values (make-quarantined-player player-id) :quarantine :quarantine))
+
+            (:reject
+             (store-corrupt-blob player-id raw-string issues)
+             (warn "Player ~a REJECTED: ~{~a~^, ~}" player-id issues)
+             (values nil nil :reject))))))))
+```
+
+**Note on `:clamp` save:** The corrected data is saved through `db-save-player-immediate`, which uses the same ownership-safe save path and leaderboard index updates as normal persistence. This is not a special-cased unsafe write.
+
+**Validator contract for `:clamp`:** When `validate-player-plist-4way` returns `:clamp`, the `fixed-plist` is guaranteed to be:
+- In current schema format (all required fields present)
+- With `:version` set to `*player-schema-version*`
+- Ready for immediate save without re-migration
+
+### Implementation Phases
+
+| Phase | Task | Files |
+|-------|------|-------|
+| 6.1 | Add `storage-load-raw`, `storage-incr`, `storage-save-with-ttl` | `db.lisp` |
+| 6.2 | Write `validate-player-plist-4way` | `save.lisp` |
+| 6.3 | Add forensic storage functions | `db.lisp` |
+| 6.4 | Refactor `db-load-player-validated` | `db.lisp` |
+| 6.5 | Add quarantine player handling | `types.lisp`, `net.lisp` |
+| 6.6 | Write comprehensive tests | `tests/validation-test.lisp` |
+| 6.7 | Update documentation | `docs/db.md`, `docs/save.md` |
+
+### Test Cases Required
+
+```lisp
+;; Clamp tests
+(test-clamp-hp-below-zero)        ; HP -50 → 0, action :clamp
+(test-clamp-hp-above-max)         ; HP 99999 → max, action :clamp
+(test-clamp-missing-deaths)       ; No :deaths → 0, action :clamp
+(test-clamp-invalid-position)     ; x=9999999 → spawn, action :clamp
+
+;; Reject tests
+(test-reject-missing-id)          ; No :id → :reject
+(test-reject-negative-xp)         ; lifetime-xp=-1000 → :reject
+(test-reject-negative-stack)      ; item count=-5 → :reject
+(test-reject-stack-overflow)      ; count=999999 → :reject
+(test-reject-malformed-plist)     ; "garbage" → :reject
+
+;; Quarantine tests
+(test-quarantine-unknown-zone)    ; zone-id=:deleted → :quarantine
+(test-quarantine-unknown-item)    ; item-id=:deprecated → :quarantine
+(test-quarantine-orphan-equip)    ; equipped but not in inventory → :quarantine
+
+;; Integration tests
+(test-clamp-saves-fixed-data)     ; Verify tier-1 save after clamp
+(test-corrupt-blob-stored)        ; Verify forensic storage
+(test-metrics-incremented)        ; Verify counters
+```
+
+### Open Questions
+
+1. **Quarantine UI:** Do we have a "needs repair" screen? If not, quarantine degrades to reject+logging.
+2. **Oldest migration:** What's the floor? Currently v1, but could set v2 as minimum.
+3. **Unique items:** Do we have unique item IDs that can't be duplicated?
+4. **Content churn:** How often will zones/items be removed? Affects quarantine policy.
