@@ -1243,7 +1243,7 @@ username:lookup          -> HSET username player-id
 
 | Category | Score Source | Updated When |
 |----------|--------------|--------------|
-| `leaderboard:xp` | `player-lifetime-xp` | On XP gain (batched) |
+| `leaderboard:xp` | `player-lifetime-xp` | On XP gain |
 | `leaderboard:level` | `player-combat-level` | On level up (tier-1) |
 | `leaderboard:deaths` | `player-deaths` | On death (tier-1) |
 
@@ -1276,10 +1276,11 @@ username:lookup          -> HSET username player-id
 - **Real-time updates are best-effort**: Leaderboard zadd calls happen separately from blob saves
 
 This design provides eventual consistency without requiring atomic transactions:
-1. **Tier-1 blob saves** (death, level-up, trade, item destruction) use immediate writes with retry
-2. **Tier-2 blob saves** (routine state: position, HP) are batched every 30s and best-effort
-3. Leaderboard updates happen separately from blob saves (may be lost on crash)
-4. On next login, leaderboards are re-seeded from blob → self-healing
+1. **Tier-1 blob saves** (death, level-up, item destruction) use immediate writes with retry
+2. **Trades** commit via an atomic Lua script; failures cancel the trade (no retry)
+3. **Tier-2 blob saves** (routine state: position, HP) are batched every 30s and best-effort
+4. Leaderboard updates happen separately from blob saves (may be lost on crash)
+5. On next login, leaderboards are re-seeded from blob → self-healing
 
 **Update Flow:**
 ```lisp
@@ -1291,7 +1292,7 @@ This design provides eventual consistency without requiring atomic transactions:
 
 ;; During gameplay: best-effort leaderboard updates
 (db-update-leaderboard-deaths player-id deaths)  ; After death
-(db-update-leaderboard-xp player-id xp)          ; After XP gain (if implemented)
+(db-update-leaderboard-xp player-id xp)          ; After XP gain
 ```
 
 **Why not atomic saves?**
@@ -1322,21 +1323,27 @@ This design provides eventual consistency without requiring atomic transactions:
 **Schema Rules:**
 ```lisp
 (defparameter *player-schema*
-  '((:id        :type integer :required t :min 1)
-    (:x         :type float   :required t :min -1000000.0 :max 1000000.0)
-    (:y         :type float   :required t :min -1000000.0 :max 1000000.0)
-    (:zone-id   :type symbol  :required t)
-    (:hp        :type integer :required t :min 0 :max 99999)
-    (:lifetime-xp :type integer :required nil :min 0 :default 0)
-    (:version   :type integer :required nil :min 1)))  ; nil = missing OK (treat as v0)
+  '((:id          :type integer :required t   :min 1)
+    (:version     :type integer :required nil :min 1 :max 100)
+    (:x           :type number  :required t   :min -1000000.0 :max 1000000.0)
+    (:y           :type number  :required t   :min -1000000.0 :max 1000000.0)
+    (:hp          :type integer :required t   :min 0 :max 99999)
+    (:lifetime-xp :type integer :required nil :min 0 :max 999999999)
+    (:playtime    :type number  :required nil :min 0)
+    (:created-at  :type integer :required nil :min 0)
+    (:deaths      :type integer :required nil :min 0 :max 999999999)
+    (:zone-id     :type symbol  :required nil)
+    (:stats       :type plist   :required nil)
+    (:inventory   :type plist   :required nil)
+    (:equipment   :type plist   :required nil)))
 ```
 
 **Size Limits:**
 ```lisp
 (defparameter *max-player-blob-size* (* 64 1024))  ; 64KB max per player
-(defparameter *max-inventory-slots* 100)           ; Hard cap on slots
-(defparameter *max-stack-count* 999999)            ; Max items per stack
+(defparameter *max-item-stack-size* 999999)        ; Max items per stack
 ```
+Inventory size is fixed by `*inventory-size*` in `config-server.lisp`. Deserialization ignores slots beyond that size.
 
 **Load Pipeline:** See **Phase 6: 4-Outcome Validation System** for the complete load path with:
 - Size check on raw string (before parsing)
@@ -1471,7 +1478,7 @@ With trades, leaderboards, and session ownership now implemented, rejecting a pl
 
 ### The Problem with Reject-Only
 
-Current behavior in `db-load-player-validated`:
+Previous behavior (pre-Phase 6):
 ```lisp
 (multiple-value-bind (valid-p errors)
     (validate-player-plist-deep raw-data :log-errors t)
@@ -1494,8 +1501,8 @@ Replace binary valid/invalid with four outcomes:
 |---------|---------|--------|
 | `:ok` | Data valid | Deserialize, login normally |
 | `:clamp` | Minor issues, safely fixable | Fix data, tier-1 save, then login |
-| `:quarantine` | Suspicious, needs admin review | Don't spawn, show repair screen, store blob |
-| `:reject` | Dangerous/exploit-adjacent | Deny login, store blob for forensics |
+| `:quarantine` | Suspicious, needs admin review | Deny login, store blob for inspection |
+| `:reject` | Exploit-adjacent or malformed | Deny login, store blob for forensics |
 
 ### New Validator Signature
 
@@ -1504,12 +1511,12 @@ Replace binary valid/invalid with four outcomes:
 (validate-player-plist-deep plist) → (values valid-p errors)
 ```
 
-**Proposed:**
+**4-way validator:**
 ```lisp
 (validate-player-plist-4way plist) → (values action issues fixed-plist)
 ;; action: :ok, :clamp, :quarantine, :reject
 ;; issues: list of warning/error strings
-;; fixed-plist: corrected data for :clamp, minimal identity for :quarantine, nil for :reject
+;; fixed-plist: corrected data for :clamp, nil for :quarantine/:reject
 ```
 
 ### Field Classification Policy
@@ -1525,10 +1532,8 @@ These corrections cannot benefit the player and preserve intent:
 | `:x`, `:y` | Out of world bounds | Spawn point |
 | `:playtime` | < 0 | 0 |
 | `:deaths` | < 0 | 0 |
-| `:run-stamina` | Outside [0, 1] | Clamp to bounds |
-| `:attack-timer`, `:hit-timer` | < 0 | 0 |
 | `:created-at` | Missing | Current time |
-| Optional fields | Missing | Schema defaults |
+| `:version` | Any | Set to current schema version in fixed-plist |
 
 #### Reject (Exploit-Adjacent)
 
@@ -1536,14 +1541,14 @@ Fixing these could give advantage or hide real bugs:
 
 | Field | Condition | Reason |
 |-------|-----------|--------|
-| `:id` | Missing | Can't identify player |
-| `:version` | > current, no migration | Unknown schema |
+| `:id` | Missing/invalid | Can't identify player |
+| `:x`, `:y`, `:hp` | Wrong type | Malformed data |
 | `:lifetime-xp` | < 0 | Exploit indicator |
 | Inventory slot | Negative count | Exploit indicator |
 | Inventory slot | Count > max stack | Possible dupe |
-| Inventory | Duplicate unique item ID | Definite dupe |
-| Structure | Not a plist | Corruption |
-| Structure | Missing required fields | Corruption |
+| Inventory slot | Non-symbol item-id | Malformed data |
+| Stats skill | Negative XP | Exploit indicator |
+| Structure | Not a list or bad :version | Corruption (pre-4way sanity check) |
 
 #### Quarantine (Recoverable but Suspicious)
 
@@ -1551,10 +1556,10 @@ Weird enough to warrant admin inspection:
 
 | Field | Condition | Reason |
 |-------|-----------|--------|
-| `:zone-id` | Unknown zone | Zone removed/renamed |
-| Inventory | Unknown item ID | Item deprecated |
-| Equipment | Slot references missing item | Corruption, recoverable |
-| `:version` | < oldest supported migration | Very old account |
+| `:zone-id` | Not a symbol | Zone data corrupt |
+| `:zone-id` | Unknown (when `*known-zone-ids*` set) | Zone removed/renamed |
+| Inventory | Unknown item-id (when `*game-data-loaded-p*`) | Item deprecated |
+| Equipment | Unknown item-id (when `*game-data-loaded-p*`) | Item deprecated |
 
 ### Storage Layer Fix: Size Check Bug
 
@@ -1706,7 +1711,7 @@ metrics:validation:reject        → counter
              (log-verbose "Player ~a clamped: ~{~a~^, ~}" player-id issues)
              ;; GUARANTEE: validate-player-plist-4way returns fixed-plist in current schema
              ;; format with :version set to *player-schema-version*. No re-migration needed.
-             ;; Tier-1 save of corrected data using ownership-safe path + index updates
+             ;; Tier-1 save of corrected data using ownership-safe path
              (let ((player (deserialize-player fixed-plist *inventory-size*
                                                (length *equipment-slot-ids*))))
                (db-save-player-immediate player)
@@ -1723,7 +1728,7 @@ metrics:validation:reject        → counter
              (values nil nil :reject))))))))
 ```
 
-**Note on `:clamp` save:** The corrected data is saved through `db-save-player-immediate`, which uses the same ownership-safe save path and leaderboard index updates as normal persistence. This is not a special-cased unsafe write.
+**Note on `:clamp` save:** The corrected data is saved through `db-save-player-immediate`, which uses the same ownership-safe save path as normal persistence. This is not a special-cased unsafe write.
 
 **Validator contract for `:clamp`:** When `validate-player-plist-4way` returns `:clamp`, the `fixed-plist` is guaranteed to be:
 - In current schema format (all required fields present)
@@ -1739,34 +1744,57 @@ metrics:validation:reject        → counter
 | 6.3 | Add forensic storage functions | `db.lisp` |
 | 6.4 | Refactor `db-load-player-validated` | `db.lisp` |
 | 6.5 | Add quarantine player handling | `types.lisp`, `net.lisp` |
-| 6.6 | Write comprehensive tests | `tests/validation-test.lisp` |
+| 6.6 | Write comprehensive tests | `tests/persistence-test.lisp` |
 | 6.7 | Update documentation | `docs/db.md`, `docs/save.md` |
 
-### Test Cases Required
+### Validation Tests (current)
 
 ```lisp
-;; Clamp tests
-(test-clamp-hp-below-zero)        ; HP -50 → 0, action :clamp
-(test-clamp-hp-above-max)         ; HP 99999 → max, action :clamp
-(test-clamp-missing-deaths)       ; No :deaths → 0, action :clamp
-(test-clamp-invalid-position)     ; x=9999999 → spawn, action :clamp
+;; Schema validation tests
+(test-validation-valid-data-passes)
+(test-validation-missing-required-fields)
+(test-validation-wrong-types)
+(test-validation-out-of-bounds)
+(test-validation-oversized-blob)
+(test-validation-nested-stats)
+(test-validation-nested-inventory)
+(test-validation-sparse-inventory)
 
-;; Reject tests
-(test-reject-missing-id)          ; No :id → :reject
-(test-reject-negative-xp)         ; lifetime-xp=-1000 → :reject
-(test-reject-negative-stack)      ; item count=-5 → :reject
-(test-reject-stack-overflow)      ; count=999999 → :reject
-(test-reject-malformed-plist)     ; "garbage" → :reject
+;; 4-way clamp tests
+(test-4way-clamp-hp-below-zero)
+(test-4way-clamp-hp-above-max)
+(test-4way-clamp-position-out-of-bounds)
+(test-4way-clamp-missing-created-at)
+(test-4way-clamp-negative-deaths)
 
-;; Quarantine tests
-(test-quarantine-unknown-zone)    ; zone-id=:deleted → :quarantine
-(test-quarantine-unknown-item)    ; item-id=:deprecated → :quarantine
-(test-quarantine-orphan-equip)    ; equipped but not in inventory → :quarantine
+;; 4-way reject tests
+(test-4way-reject-missing-id)
+(test-4way-reject-negative-lifetime-xp)
+(test-4way-reject-negative-item-count)
+(test-4way-reject-excessive-item-count)
+(test-4way-reject-wrong-type-x)
+(test-4way-reject-negative-skill-xp)
+(test-4way-reject-inventory-not-list)
+(test-4way-reject-slots-not-list)
+(test-4way-reject-stats-not-list)
+(test-4way-reject-stat-entry-not-list)
 
-;; Integration tests
-(test-clamp-saves-fixed-data)     ; Verify tier-1 save after clamp
-(test-corrupt-blob-stored)        ; Verify forensic storage
-(test-metrics-incremented)        ; Verify counters
+;; 4-way quarantine tests
+(test-4way-quarantine-invalid-zone-type)
+(test-4way-quarantine-unknown-zone)
+(test-4way-quarantine-unknown-item)
+(test-4way-quarantine-unknown-equipment-item)
+(test-4way-validation-skips-zone-check-when-not-loaded)
+
+;; Load/forensics/metrics tests
+(test-4way-load-valid-player)
+(test-4way-load-clamp-hp)
+(test-4way-load-reject-bad-type)
+(test-4way-load-not-found)
+(test-4way-storage-incr)
+(test-4way-storage-save-with-ttl)
+(test-4way-forensic-storage)
+(test-4way-validation-metrics)
 ```
 
 ### Open Questions

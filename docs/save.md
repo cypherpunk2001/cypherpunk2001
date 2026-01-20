@@ -55,10 +55,10 @@ When applying snapshots with multiple connected clients, `apply-player-plists` u
 
 **Schema Validation:**
 - `*player-schema*` - Schema definition with type/bounds rules for all player fields.
-- `validate-player-plist` - Validate plist against schema, returns (valid-p errors).
+- `validate-player-plist` - Strict schema validation, returns (valid-p errors).
 - `validate-player-plist-deep` - Full validation including inventory/equipment sub-structures.
-- `*max-player-blob-size*` - Maximum serialized player size (64KB).
-- `validate-and-clamp-player-data` - Comprehensive validation with 4-way outcomes.
+- `*max-player-blob-size*` - Max raw blob size checked before parsing.
+- `validate-player-plist-4way` - 4-outcome validation (action, issues, fixed-plist).
 
 **Validation Outcomes (4-way system):**
 
@@ -68,25 +68,33 @@ Schema validation uses a graduated response system based on data quality:
 |---------|------|--------|
 | `:ok` | All data valid | Load normally |
 | `:clamp` | Minor out-of-bounds | Clamp to limits, warn, load |
-| `:quarantine` | Severe corruption | Mark account quarantined, reject login |
-| `:reject` | Structural failure | Reject login with error message |
+| `:quarantine` | Suspicious but recoverable | Quarantine account, deny login |
+| `:reject` | Exploit-adjacent or malformed | Reject login with error message |
 
 **Clampable fields** (minor issues auto-corrected):
-- `hp`, `lifetime-xp`, `playtime`, `deaths` - Clamped to [0, max]
-- Position fields (`x`, `y`) - Clamped to zone bounds
+- `hp` - Clamped to [0, 99999]
+- Position fields (`x`, `y`) - Out-of-bounds → spawn point
+- `playtime` - < 0 → 0
+- `deaths` - < 0 → 0
+- `created-at` - Missing → current time
+- `version` - Set to current schema version in fixed-plist
 
 **Rejection triggers** (structural failures):
 - Invalid player ID (nil or <= 0)
-- Missing/malformed stat block
-- Type mismatches in required fields
-- Blob size exceeds `*max-player-blob-size*`
+- `:x`/`:y` not numeric, `:hp` not integer
+- `lifetime-xp` < 0
+- Inventory slot count < 0 or > `*max-item-stack-size*`
+- Inventory item-id present but not a symbol
+- Malformed inventory/stats structures (non-list) or negative skill XP
+- Blob size exceeds `*max-player-blob-size*` (checked before parsing)
 
 **Quarantine triggers** (severe corruption):
-- > 5 clamped fields in single load
-- Repeated validation failures within time window
-- Admin flag via `db-quarantine-player`
+- `:zone-id` not a symbol
+- Unknown `:zone-id` when `*known-zone-ids*` is set
+- Unknown inventory item-id when `*game-data-loaded-p*` is true
+- Unknown equipment item-id when `*game-data-loaded-p*` is true
 
-Quarantined accounts cannot log in until an admin reviews and either fixes the data or calls `db-unquarantine-player`. See `docs/db.md` "Phase 6: Validation Integration" for full details.
+Quarantined accounts cannot log in until an admin reviews and repairs the data. The server returns `:account-quarantined` on login and stores the blob for inspection. See `docs/db.md` "Phase 6: 4-Outcome Validation System" for details.
 
 Walkthrough: save game
 1) Player triggers save action
