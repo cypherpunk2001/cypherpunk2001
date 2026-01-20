@@ -556,34 +556,71 @@
                                   id))
                   (player nil))
              (cond
-               ;; Existing character - load from DB
+               ;; Existing character - load from DB with Phase 6 validation
                (character-id
-                (let* ((loaded-info
-                         (with-retry-exponential
-                             (loaded (lambda ()
-                                       (multiple-value-bind (loaded-player loaded-zone-id)
-                                           (db-load-player character-id)
-                                         (list loaded-player loaded-zone-id)))
-                              :max-retries 3
-                              :initial-delay 100
-                              :max-delay 300)
-                           loaded))
-                       (loaded-player (and loaded-info (first loaded-info)))
-                       (saved-zone-id (and loaded-info (second loaded-info))))
-                  (unless loaded-player
-                  ;; Failed to load - unregister session and return error
-                    (session-unregister username)
-                    (return-from process-login-async
-                      (make-auth-result :type :login
-                                        :success nil
-                                        :host host
-                                        :port port
-                                        :username username
-                                        :client client
-                                        :error-reason :load-failed)))
-                  ;; Player loaded - use their saved zone (zones are map regions, not servers)
-                  (setf player loaded-player)
-                  (log-verbose "Loaded existing character ~d for account ~a" character-id username)))
+                ;; Claim session ownership FIRST (required by db-load-player-validated)
+                (unless (claim-session-ownership character-id)
+                  (session-unregister username)
+                  (return-from process-login-async
+                    (make-auth-result :type :login
+                                      :success nil
+                                      :host host
+                                      :port port
+                                      :username username
+                                      :client client
+                                      :error-reason :already-logged-in)))
+                ;; Load with 4-outcome validation
+                (multiple-value-bind (loaded-player loaded-zone-id action)
+                    (with-retry-exponential
+                        (result (lambda ()
+                                  (multiple-value-list (db-load-player-validated character-id)))
+                         :max-retries 3
+                         :initial-delay 100
+                         :max-delay 300)
+                      (values (first result) (second result) (third result)))
+                  (case action
+                    ((:ok :clamp)
+                     ;; Normal load or corrected data - proceed
+                     (when (eq action :clamp)
+                       (log-verbose "Player ~a loaded with corrections" character-id))
+                     (setf player loaded-player)
+                     (log-verbose "Loaded existing character ~d for account ~a" character-id username))
+                    (:quarantine
+                     ;; Account needs admin repair - reject login
+                     (release-session-ownership character-id)
+                     (session-unregister username)
+                     (return-from process-login-async
+                       (make-auth-result :type :login
+                                         :success nil
+                                         :host host
+                                         :port port
+                                         :username username
+                                         :client client
+                                         :error-reason :account-quarantined)))
+                    (:reject
+                     ;; Dangerous data - reject login
+                     (release-session-ownership character-id)
+                     (session-unregister username)
+                     (return-from process-login-async
+                       (make-auth-result :type :login
+                                         :success nil
+                                         :host host
+                                         :port port
+                                         :username username
+                                         :client client
+                                         :error-reason :data-corrupted)))
+                    ((:not-found nil)
+                     ;; No character data - should not happen for existing account
+                     (release-session-ownership character-id)
+                     (session-unregister username)
+                     (return-from process-login-async
+                       (make-auth-result :type :login
+                                         :success nil
+                                         :host host
+                                         :port port
+                                         :username username
+                                         :client client
+                                         :error-reason :load-failed))))))
                ;; No character yet - spawn new one
                (t
                 (setf player (spawn-player-at-world world id-source))
@@ -1769,46 +1806,81 @@
               (zone-id (and zone (zone-id zone)))
               (player nil))
          (cond
-           ;; Existing character - load from DB
+           ;; Existing character - load from DB with Phase 6 validation
            (character-id
-            (let* ((loaded-info
-                     (with-retry-exponential
-                         (loaded (lambda ()
-                                   (multiple-value-bind (loaded-player loaded-zone-id)
-                                       (db-load-player character-id)
-                                     (list loaded-player loaded-zone-id)))
-                          :max-retries 3
-                          :initial-delay 100
-                          :max-delay 300)
-                       loaded))
-                   (loaded-player (and loaded-info (first loaded-info)))
-                   (saved-zone-id (and loaded-info (second loaded-info))))
-              (if loaded-player
-                  (progn
-                    ;; Player loaded - use their saved zone (zones are map regions, not servers)
-                    (setf player loaded-player)
-                    ;; Remove any existing player with same ID (from stale session)
-                    (let ((existing (find (player-id player) (game-players game)
-                                         :key #'player-id)))
-                      (when existing
-                        (remove-player-from-game game existing)
-                        (log-verbose "Removed stale player ~d before re-adding"
-                                    (player-id player))))
-                    ;; Add loaded player to game
-                    (add-player-to-game game player)
-                    (log-verbose "Loaded existing character ~d for account ~a"
-                                character-id username))
-                  (progn
-                    ;; Failed to load - unregister session and return error
-                    (session-unregister username)
-                    (send-net-message-with-retry socket
-                                                 (list :type :auth-fail :reason :load-failed)
-                                                 :host host :port port
-                                                 :max-retries 3
-                                                 :delay 50)
-                    (log-verbose "Login failed from ~a:~d - load failed for ~a"
-                                host port username)
-                    (return-from handle-login-request nil)))))
+            ;; Claim session ownership FIRST (required by db-load-player-validated)
+            (unless (claim-session-ownership character-id)
+              (session-unregister username)
+              (send-net-message-with-retry socket
+                                           (list :type :auth-fail :reason :ownership-conflict)
+                                           :host host :port port
+                                           :max-retries 3
+                                           :delay 50)
+              (log-verbose "Login failed from ~a:~d - ownership conflict for ~a"
+                          host port username)
+              (return-from handle-login-request nil))
+            ;; Load with 4-outcome validation
+            (multiple-value-bind (loaded-player loaded-zone-id action)
+                (with-retry-exponential
+                    (result (lambda ()
+                              (multiple-value-list (db-load-player-validated character-id)))
+                     :max-retries 3
+                     :initial-delay 100
+                     :max-delay 300)
+                  (values (first result) (second result) (third result)))
+              (case action
+                ((:ok :clamp)
+                 ;; Normal load or corrected data - proceed
+                 (when (eq action :clamp)
+                   (log-verbose "Player ~a loaded with corrections" character-id))
+                 (setf player loaded-player)
+                 ;; Remove any existing player with same ID (from stale session)
+                 (let ((existing (find (player-id player) (game-players game)
+                                       :key #'player-id)))
+                   (when existing
+                     (remove-player-from-game game existing)
+                     (log-verbose "Removed stale player ~d before re-adding"
+                                  (player-id player))))
+                 ;; Add loaded player to game
+                 (add-player-to-game game player)
+                 (log-verbose "Loaded existing character ~d for account ~a"
+                              character-id username))
+                (:quarantine
+                 ;; Account needs admin repair - reject login
+                 (release-session-ownership character-id)
+                 (session-unregister username)
+                 (send-net-message-with-retry socket
+                                              (list :type :auth-fail :reason :account-quarantined)
+                                              :host host :port port
+                                              :max-retries 3
+                                              :delay 50)
+                 (log-verbose "Login failed from ~a:~d - account quarantined for ~a"
+                              host port username)
+                 (return-from handle-login-request nil))
+                (:reject
+                 ;; Dangerous data - reject login
+                 (release-session-ownership character-id)
+                 (session-unregister username)
+                 (send-net-message-with-retry socket
+                                              (list :type :auth-fail :reason :data-corrupted)
+                                              :host host :port port
+                                              :max-retries 3
+                                              :delay 50)
+                 (log-verbose "Login failed from ~a:~d - data corrupted for ~a"
+                              host port username)
+                 (return-from handle-login-request nil))
+                ((:not-found nil)
+                 ;; No character data - should not happen for existing account
+                 (release-session-ownership character-id)
+                 (session-unregister username)
+                 (send-net-message-with-retry socket
+                                              (list :type :auth-fail :reason :load-failed)
+                                              :host host :port port
+                                              :max-retries 3
+                                              :delay 50)
+                 (log-verbose "Login failed from ~a:~d - load failed for ~a"
+                              host port username)
+                 (return-from handle-login-request nil)))))
            ;; No character yet - spawn new one (shouldn't happen after registration)
            (t
             (setf player (spawn-player-at-world world (game-id-source game)))

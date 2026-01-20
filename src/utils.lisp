@@ -199,9 +199,11 @@
                    (warn "All ~d retry attempts exhausted: ~a" ,max-retries ,error-var)
                    ,@(when on-final-fail
                        `((funcall ,on-final-fail ,error-var))))))))
-       (when ,success-var
-         ,@body)
-       ,result-var)))
+       ;; If body is provided, use its return value; otherwise return result-var
+       ,(if body
+            `(when ,success-var
+               ,@body)
+            result-var))))
 
 (defmacro with-retry-linear ((result-var fn &key
                                           (max-retries 3)

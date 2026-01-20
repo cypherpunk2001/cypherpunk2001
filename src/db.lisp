@@ -1109,17 +1109,17 @@
 
 (defun db-load-id-counter ()
   "Load the global ID counter from storage with retry (critical for server startup).
-   Returns 0 if not found or all retries exhausted."
+   Returns 1 if not found or all retries exhausted (ID 0 is reserved/invalid)."
   (let ((data (with-retry-exponential (loaded (lambda () (storage-load *storage* (server-id-counter-key)))
                                         :max-retries 5
                                         :initial-delay 200
                                         :max-delay 2000
                                         :on-final-fail (lambda (e)
-                                                         (warn "CRITICAL: Failed to load ID counter after all retries: ~a. Starting from 0 may cause ID collisions!" e)))
+                                                         (warn "CRITICAL: Failed to load ID counter after all retries: ~a. Starting from 1 may cause ID collisions!" e)))
                 loaded)))
-    (if (and data (integerp data))
+    (if (and data (integerp data) (> data 0))
         data
-        0)))
+        1)))
 
 ;;;; Migration System
 ;;;;
@@ -1624,6 +1624,9 @@
        *player-sessions*))
     ;; Execute batch save outside lock (IO can be slow)
     (when to-flush
+      (unless *storage*
+        (log-verbose "flush-dirty-players: no storage backend initialized, skipping")
+        (return-from flush-dirty-players 0))
       (let ((saved-count (storage-save-batch *storage* key-data-pairs)))
         ;; Update session state for all flushed players (under lock)
         (with-player-sessions-lock
