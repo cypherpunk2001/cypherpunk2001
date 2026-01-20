@@ -968,21 +968,24 @@
           t)))))
 
 (defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for ALL players.
-  ;; Each player can independently transition to different zones.
+  ;; Handle edge-based world graph transitions for players in the active world zone.
   ;; Returns count of players that transitioned this frame.
   (let* ((world (game-world game))
+         (world-zone (and world (world-zone world)))
+         (world-zone-id (and world-zone (zone-id world-zone)))
          (players (game-players game))
          (transition-count 0))
     (when (and players (> (length players) 0))
       ;; Check all players for zone transition
       (loop :for player :across players
             :when player
-            :do (let* ((edge (world-exit-edge world player))
-                       (exit (and edge (world-edge-exit world edge))))
-                  (when exit
-                    (transition-zone game player exit edge)
-                    (incf transition-count)))))
+            :do (let ((player-zone-id (player-zone-id player)))
+                  (when (and world-zone-id (eq player-zone-id world-zone-id))
+                    (let* ((edge (world-exit-edge world player))
+                           (exit (and edge (world-edge-exit world edge))))
+                      (when exit
+                        (transition-zone game player exit edge)
+                        (incf transition-count)))))))
     transition-count))
 
 (defun log-player-position (player world)
