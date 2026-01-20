@@ -318,6 +318,8 @@
 
 (defun execute-trade-atomic (session player1 player2)
   "Execute the trade atomically using Redis Lua script.
+   Phase 3: Verifies session ownership before committing to prevent
+   stale servers from overwriting data after losing ownership.
    Returns T on success, NIL on failure (trade cancelled on failure)."
   (setf (trade-session-state session) :executing)
   (let* ((offer1 (trade-session-player1-offer session))
@@ -348,11 +350,14 @@
           (let ((p1-data (prin1-to-string data-1))
                 (p2-data (prin1-to-string data-2))
                 (p1-key (player-key (player-id player1)))
-                (p2-key (player-key (player-id player2))))
-        ;; Execute atomic swap
+                (p2-key (player-key (player-id player2)))
+                ;; Phase 3: Add ownership keys and server ID for ownership verification
+                (p1-owner-key (session-owner-key (player-id player1)))
+                (p2-owner-key (session-owner-key (player-id player2))))
+        ;; Execute atomic swap with ownership verification
         (let ((result (storage-eval-script *storage* "trade_complete"
-                                           (list p1-key p2-key)
-                                           (list p1-data p2-data))))
+                                           (list p1-key p2-key p1-owner-key p2-owner-key)
+                                           (list p1-data p2-data *server-instance-id*))))
           (if (and result (string= result "OK"))
               (progn
                 ;; Update in-memory player state

@@ -1052,22 +1052,47 @@
           nil))))
 
 ;; Register emulated trade_complete script handler
+;; Phase 3: Updated to verify ownership and parse strings to plists
 (setf (gethash "trade_complete" *memory-script-handlers*)
       (lambda (storage keys args)
         "Emulate trade_complete.lua: atomic item swap between two players.
-         KEYS: [player1-key, player2-key]
-         ARGS: [serialized-player1-data, serialized-player2-data]"
-        (declare (ignore storage))
-        (let ((key1 (first keys))
-              (key2 (second keys))
-              (data1 (first args))
-              (data2 (second args)))
-          ;; Atomically update both player records
-          ;; In memory storage, this is inherently atomic (single-threaded)
-          (when (and key1 key2 data1 data2)
-            (setf (gethash key1 (memory-storage-data *storage*)) data1)
-            (setf (gethash key2 (memory-storage-data *storage*)) data2)
-            "OK"))))
+         Phase 3: Verifies session ownership before committing.
+         KEYS: [player1-key, player2-key, owner1-key, owner2-key]
+         ARGS: [serialized-player1-data, serialized-player2-data, expected-owner]"
+        (block trade-handler
+          (let ((key1 (first keys))
+                (key2 (second keys))
+                (owner-key1 (third keys))
+                (owner-key2 (fourth keys))
+                (data1 (first args))
+                (data2 (second args))
+                (expected-owner (third args)))
+            ;; Validate inputs
+            (unless (and key1 key2 data1 data2)
+              (return-from trade-handler "TRADE_ERROR: Missing required parameters"))
+            ;; Phase 3: Verify ownership (same logic as Lua script)
+            ;; Use storage-load-raw for TTL-aware reads (P2 fix: respect key expiration)
+            (when (and owner-key1 owner-key2 expected-owner)
+              (let ((actual-owner1 (storage-load-raw storage owner-key1))
+                    (actual-owner2 (storage-load-raw storage owner-key2)))
+                (unless (equal actual-owner1 expected-owner)
+                  (return-from trade-handler
+                    (format nil "TRADE_ERROR: Ownership mismatch for player 1 (expected ~a, got ~a)"
+                            expected-owner actual-owner1)))
+                (unless (equal actual-owner2 expected-owner)
+                  (return-from trade-handler
+                    (format nil "TRADE_ERROR: Ownership mismatch for player 2 (expected ~a, got ~a)"
+                            expected-owner actual-owner2)))))
+            ;; Phase 3: Parse strings to plists before storing (memory backend consistency)
+            ;; This ensures db-load-player works correctly after trades
+            (let* ((*read-eval* nil)  ; Security: disable eval in read
+                   (plist1 (read-from-string data1))
+                   (plist2 (read-from-string data2)))
+              ;; Atomically update both player records
+              ;; In memory storage, this is inherently atomic (single-threaded)
+              (setf (gethash key1 (memory-storage-data storage)) plist1)
+              (setf (gethash key2 (memory-storage-data storage)) plist2)
+              "OK")))))
 
 ;;;; Key Schema Functions
 

@@ -18,7 +18,11 @@
                  test-trade-cancel
                  test-trade-timeout
                  test-offer-to-item-list
-                 test-add-items-to-inventory-array)))
+                 test-add-items-to-inventory-array
+                 ;; Phase 3: Trade safety tests
+                 test-trade-ownership-mismatch-aborts
+                 test-trade-memory-backend-consistency
+                 test-trade-expired-ownership-aborts)))
     (format t "~%=== Running Trade Tests ===~%")
     ;; Ensure game data is loaded
     (unless *game-data-loaded-p*
@@ -222,3 +226,153 @@
             () "Add bones succeeds")
     (assert (eq (inventory-slot-item-id (aref slots 1)) :bones)
             () "Bones in slot 1")))
+
+;;;; ========================================================================
+;;;; Phase 3: Trade Safety Tests
+;;;; ========================================================================
+
+(defun test-trade-ownership-mismatch-aborts ()
+  "Test that trade aborts if session ownership doesn't match.
+   Phase 3: Prevents stale servers from committing trades after losing ownership."
+  (let* ((storage (make-instance 'memory-storage))
+         (*storage* storage)
+         (*server-instance-id* "test-server-001"))
+    (storage-connect storage)
+    ;; Set up two players with different owners
+    (let* ((p1-key "player:100")
+           (p2-key "player:200")
+           (owner1-key (session-owner-key 100))
+           (owner2-key (session-owner-key 200))
+           (p1-data '(:id 100 :version 3 :x 0.0 :y 0.0))
+           (p2-data '(:id 200 :version 3 :x 10.0 :y 10.0)))
+      ;; Save initial player data
+      (storage-save storage p1-key p1-data)
+      (storage-save storage p2-key p2-data)
+      ;; Set ownership - player 1 owned by this server, player 2 owned by OTHER server
+      (storage-save storage owner1-key *server-instance-id*)
+      (storage-save storage owner2-key "other-server-002")  ; Different owner!
+      ;; Try to execute trade script - should fail on ownership mismatch
+      (let ((result (storage-eval-script storage "trade_complete"
+                                         (list p1-key p2-key owner1-key owner2-key)
+                                         (list "((:id 100 :version 3))"
+                                               "((:id 200 :version 3))"
+                                               *server-instance-id*))))
+        ;; Should return an error, not "OK"
+        (assert (or (null result)
+                    (and (stringp result)
+                         (search "TRADE_ERROR" result)))
+                () "Trade should abort on ownership mismatch, got: ~a" result))
+      ;; Verify original data unchanged
+      (let ((p1-loaded (storage-load storage p1-key))
+            (p2-loaded (storage-load storage p2-key)))
+        (assert (equal (getf p1-loaded :x) (getf p1-data :x))
+                () "Player 1 data unchanged after failed trade")
+        (assert (equal (getf p2-loaded :x) (getf p2-data :x))
+                () "Player 2 data unchanged after failed trade")))))
+
+(defun test-trade-memory-backend-consistency ()
+  "Test that memory backend trade results load cleanly via db-load-player.
+   Phase 3: Memory backend must parse strings to plists, not store raw strings."
+  (let* ((storage (make-instance 'memory-storage))
+         (*storage* storage)
+         (*server-instance-id* "test-server-001"))
+    (storage-connect storage)
+    ;; Set up two players
+    (let* ((p1-key (player-key 100))
+           (p2-key (player-key 200))
+           (owner1-key (session-owner-key 100))
+           (owner2-key (session-owner-key 200))
+           ;; Full valid player plists with inventory
+           (p1-data (list :id 100 :version *player-schema-version*
+                          :username "trader1" :x 0.0 :y 0.0
+                          :hp 100 :max-hp 100 :xp 0 :level 1
+                          :inventory nil :equipment nil
+                          :zone-id 'test-zone :gold 50
+                          :lifetime-xp 0 :playtime 0
+                          :created-at (get-universal-time)))
+           (p2-data (list :id 200 :version *player-schema-version*
+                          :username "trader2" :x 10.0 :y 10.0
+                          :hp 100 :max-hp 100 :xp 0 :level 1
+                          :inventory nil :equipment nil
+                          :zone-id 'test-zone :gold 100
+                          :lifetime-xp 0 :playtime 0
+                          :created-at (get-universal-time))))
+      ;; Save initial player data as plists (normal storage)
+      (storage-save storage p1-key p1-data)
+      (storage-save storage p2-key p2-data)
+      ;; Set ownership - both owned by this server
+      (storage-save storage owner1-key *server-instance-id*)
+      (storage-save storage owner2-key *server-instance-id*)
+      ;; Execute trade script with stringified data (as execute-trade-atomic does)
+      (let* ((p1-updated (copy-list p1-data))
+             (p2-updated (copy-list p2-data)))
+        ;; Simulate trade: swap gold
+        (setf (getf p1-updated :gold) 100)  ; p1 receives 50 from p2
+        (setf (getf p2-updated :gold) 50)   ; p2 gives 50 to p1
+        (let ((result (storage-eval-script storage "trade_complete"
+                                           (list p1-key p2-key owner1-key owner2-key)
+                                           (list (prin1-to-string p1-updated)
+                                                 (prin1-to-string p2-updated)
+                                                 *server-instance-id*))))
+          (assert (and result (string= result "OK"))
+                  () "Trade should succeed, got: ~a" result)))
+      ;; Key test: load player data via storage-load (simulating db-load-player)
+      ;; This MUST return a plist, not a string
+      (let ((p1-loaded (storage-load storage p1-key))
+            (p2-loaded (storage-load storage p2-key)))
+        ;; Verify loaded data is a plist, not a string
+        (assert (listp p1-loaded)
+                () "Player 1 loaded data should be a plist, not ~a" (type-of p1-loaded))
+        (assert (listp p2-loaded)
+                () "Player 2 loaded data should be a plist, not ~a" (type-of p2-loaded))
+        ;; Verify trade effects persisted correctly
+        (assert (= (getf p1-loaded :gold) 100)
+                () "Player 1 should have 100 gold after trade")
+        (assert (= (getf p2-loaded :gold) 50)
+                () "Player 2 should have 50 gold after trade")
+        ;; Verify other fields intact
+        (assert (equal (getf p1-loaded :username) "trader1")
+                () "Player 1 username intact")
+        (assert (equal (getf p2-loaded :username) "trader2")
+                () "Player 2 username intact")))))
+
+(defun test-trade-expired-ownership-aborts ()
+  "Test that trade aborts if ownership key has expired (TTL-aware check).
+   Phase 3 P2: Memory backend must respect TTL expiration on ownership keys."
+  (let* ((storage (make-instance 'memory-storage))
+         (*storage* storage)
+         (*server-instance-id* "test-server-001"))
+    (storage-connect storage)
+    ;; Set up two players
+    (let* ((p1-key "player:100")
+           (p2-key "player:200")
+           (owner1-key (session-owner-key 100))
+           (owner2-key (session-owner-key 200))
+           (p1-data '(:id 100 :version 3 :x 0.0 :y 0.0))
+           (p2-data '(:id 200 :version 3 :x 10.0 :y 10.0)))
+      ;; Save initial player data
+      (storage-save storage p1-key p1-data)
+      (storage-save storage p2-key p2-data)
+      ;; Set ownership with TTL - player 1 has valid ownership
+      (storage-save-with-ttl storage owner1-key *server-instance-id* 60)
+      ;; Player 2 ownership is EXPIRED (simulate by setting TTL in the past)
+      (setf (gethash owner2-key (memory-storage-data storage)) *server-instance-id*)
+      (setf (gethash owner2-key *memory-storage-ttls*) (- (get-universal-time) 10))  ; Expired 10 seconds ago
+      ;; Try to execute trade script - should fail because player 2's ownership expired
+      (let ((result (storage-eval-script storage "trade_complete"
+                                         (list p1-key p2-key owner1-key owner2-key)
+                                         (list "((:id 100 :version 3))"
+                                               "((:id 200 :version 3))"
+                                               *server-instance-id*))))
+        ;; Should return an error because expired ownership reads as NIL
+        (assert (or (null result)
+                    (and (stringp result)
+                         (search "TRADE_ERROR" result)))
+                () "Trade should abort when ownership expired, got: ~a" result))
+      ;; Verify original data unchanged
+      (let ((p1-loaded (storage-load storage p1-key))
+            (p2-loaded (storage-load storage p2-key)))
+        (assert (equal (getf p1-loaded :x) (getf p1-data :x))
+                () "Player 1 data unchanged after failed trade")
+        (assert (equal (getf p2-loaded :x) (getf p2-data :x))
+                () "Player 2 data unchanged after failed trade")))))
