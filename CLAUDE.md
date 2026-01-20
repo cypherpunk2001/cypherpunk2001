@@ -299,6 +299,75 @@ When adding features, classify ALL new state as **durable** or **ephemeral**:
 
 Add durable fields to `serialize-player` (base payload), add ephemeral fields only to `:include-visuals` section.
 
+### Network Data Classification (CRITICAL for Scale)
+
+When adding features, classify ALL new state for network transmission:
+
+**Public Snapshots (60 Hz broadcast to ALL clients in zone):**
+- What other players NEED TO SEE about you
+- Position (x, y), velocity (dx, dy)
+- HP (for health bars above heads)
+- Animation state, facing direction
+- Combat state (attacking, hit animation)
+- Visual timers (animation sync)
+- **Size budget: ~64-80 bytes per player** (keep this small!)
+
+**Private State (sent only to owner, only when dirty flag set):**
+- What YOU need to know about YOURSELF
+- Inventory contents, equipment slots
+- Detailed stats (strength, dexterity, intelligence, etc.)
+- Gold, currency
+- **No bandwidth impact on public snapshots**
+
+**Load-Once Data (sent on login or zone change only):**
+- What rarely or never changes
+- Zone data (tiles, collision, objects)
+- Friends list, guild roster
+- Quest journal
+- Skill tree unlocks
+- **Zero ongoing bandwidth**
+
+#### Design Rules for New Features
+
+| Feature Type | Where It Goes | Example |
+|--------------|---------------|---------|
+| **Visual effects others see** | Public snapshot | Buff icon above head (+1-2 bytes) |
+| **Character progression** | Private state, mark dirty on change | Level up, skill points |
+| **UI state** | Client-only, no sync | Minimap zoom, UI panel visibility |
+| **Static game data** | Load once on startup | Item definitions, NPC archetypes |
+| **Skill cooldowns** | Client tracks locally after `:skill-used` confirm | No snapshot overhead |
+| **Chat messages** | Separate `:type :chat` message | Not in snapshots |
+
+#### Anti-Patterns (These Break Scale)
+
+**BAD - Adding to 60 Hz snapshot when not needed:**
+```lisp
+;; Don't add inventory to public snapshots
+#(id x y hp ... item1 item2 item3 ...)  ; Everyone sees your inventory 60 times/sec
+```
+
+**GOOD - Use private state channel:**
+```lisp
+;; Server marks inventory dirty when changed
+(mark-player-inventory-dirty player)
+;; Sent once via :private-state message to owner only
+```
+
+**BAD - Syncing client-tracked state:**
+```lisp
+;; Don't send skill cooldowns in snapshot
+#(id x y hp ... skill1-cd skill2-cd skill3-cd ...)
+```
+
+**GOOD - Server confirms, client tracks:**
+```lisp
+;; Server confirms skill use once
+(send-net-message socket '(:type :skill-used :skill-id 5 :cooldown 10.0) ...)
+;; Client decrements timer locally (no 60 Hz sync needed)
+```
+
+**Rule of thumb:** If it doesn't affect how you LOOK to other players, it doesn't belong in public snapshots.
+
 ### Zone System
 - **Zone data**: `data/zones/*.lisp` - tile layers, collision, spawns, objects
 - **World graph**: `data/world-graph.lisp` - zone connections and transitions
