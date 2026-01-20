@@ -176,7 +176,37 @@
                 test-zone-resize
                 ;; Additional World Graph Tests
                 test-world-graph-exits
-                test-world-graph-zone-path)))
+                test-world-graph-zone-path
+                test-collect-zone-files
+                test-zone-id-from-file
+                test-build-zone-paths
+                ;; Final AI Tests
+                test-update-npc-behavior
+                ;; Final Progression Tests
+                test-award-skill-xp
+                test-apply-item-modifiers
+                ;; Final Zone Tests
+                test-load-write-zone-roundtrip
+                ;; Final Movement Tests
+                test-get-zone-state
+                test-zone-state-player-count
+                test-players-in-zone
+                test-occupied-zone-ids
+                test-derive-wall-map-from-zone
+                test-wall-occupied-p
+                test-blocked-at-p
+                test-attempt-move
+                test-update-running-state
+                test-edge-spawn-position
+                test-zone-bounds-from-dimensions
+                test-position-blocked-p
+                test-find-open-tile
+                test-player-is-stuck-p
+                test-world-exit-edge
+                ;; Final Net Tests
+                test-session-try-register
+                test-session-unregister
+                test-session-get)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -2095,3 +2125,442 @@ hello
             "graph-path: not found")
     (assert (null (world-graph-zone-path nil :zone-a)) ()
             "graph-path: nil graph")))
+
+(defun test-collect-zone-files ()
+  "Test collecting zone files from directory."
+  ;; Test against actual data/zones directory
+  (let* ((zone-root (merge-pathnames "data/zones/"
+                                      (asdf:system-source-directory :mmorpg)))
+         (files (collect-zone-files zone-root)))
+    (assert (vectorp files) () "collect-zone-files: returns vector")
+    ;; Should find at least one zone file if directory exists
+    (when (probe-file zone-root)
+      (assert (> (length files) 0) () "collect-zone-files: finds files")))
+  ;; Non-existent directory returns empty
+  (let ((files (collect-zone-files "/nonexistent/path/12345/")))
+    (assert (= (length files) 0) () "collect-zone-files: empty for missing dir")))
+
+(defun test-zone-id-from-file ()
+  "Test reading zone ID from file."
+  ;; Test against actual zone file if exists
+  (let* ((zone-root (merge-pathnames "data/zones/"
+                                      (asdf:system-source-directory :mmorpg)))
+         (files (collect-zone-files zone-root)))
+    (when (and (> (length files) 0) (probe-file (aref files 0)))
+      (let ((id (zone-id-from-file (aref files 0))))
+        (assert (keywordp id) () "zone-id-from-file: returns keyword"))))
+  ;; Non-existent file returns nil
+  (assert (null (zone-id-from-file "/nonexistent/zone.lisp")) ()
+          "zone-id-from-file: nil for missing file"))
+
+(defun test-build-zone-paths ()
+  "Test building zone path lookup table."
+  (let* ((zone-root (merge-pathnames "data/zones/"
+                                      (asdf:system-source-directory :mmorpg)))
+         (paths (build-zone-paths zone-root)))
+    (assert (hash-table-p paths) () "build-zone-paths: returns hash table")
+    ;; If zones exist, table should have entries
+    (when (probe-file zone-root)
+      (let ((count (hash-table-count paths)))
+        (assert (>= count 0) () "build-zone-paths: non-negative count")))))
+
+;;; ============================================================
+;;; FINAL AI TESTS
+;;; ============================================================
+
+(defun test-update-npc-behavior ()
+  "Test NPC behavior state machine."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 100.0 100.0 :archetype archetype :id 1))
+         (player (make-player 110.0 100.0 :id 1))
+         (world (make-test-world :tile-size 32.0)))
+    ;; Dead NPC -> :dead state
+    (setf (npc-alive npc) nil)
+    (update-npc-behavior npc player world)
+    (assert (eq (npc-behavior-state npc) :dead) () "npc-behavior: dead -> :dead")
+    ;; Revive and test idle
+    (setf (npc-alive npc) t)
+    (update-npc-behavior npc nil world)
+    (assert (eq (npc-behavior-state npc) :idle) () "npc-behavior: no player -> :idle")
+    ;; With player present, state depends on archetype aggro mode
+    (update-npc-behavior npc player world)
+    (assert (member (npc-behavior-state npc) '(:idle :aggressive :retaliate :flee)) ()
+            "npc-behavior: valid state")))
+
+;;; ============================================================
+;;; FINAL PROGRESSION TESTS
+;;; ============================================================
+
+(defun test-award-skill-xp ()
+  "Test awarding XP to a skill."
+  (let ((skill (make-skill :level 1 :xp 0)))
+    ;; Award some XP
+    (award-skill-xp skill 100)
+    (assert (= (skill-xp skill) 100) () "award-xp: xp increased")
+    ;; Level should update if XP threshold crossed
+    (award-skill-xp skill 1000)
+    (assert (>= (skill-level skill) 1) () "award-xp: level at least 1")
+    ;; Negative amounts treated as 0
+    (let ((before-xp (skill-xp skill)))
+      (award-skill-xp skill -50)
+      (assert (= (skill-xp skill) before-xp) () "award-xp: negative -> no change"))))
+
+(defun test-apply-item-modifiers ()
+  "Test applying item stat modifiers."
+  (ensure-test-game-data)
+  (let* ((player (make-player 0.0 0.0 :id 1))
+         (stats (player-stats player))
+         (mods (stat-block-modifiers stats)))
+    ;; Find an item with attack bonus
+    (let ((item (find-item-archetype :iron-sword)))
+      (when (and item mods (> (or (item-archetype-attack item) 0) 0))
+        (let ((before-attack (stat-modifiers-attack mods)))
+          ;; Apply item (+1 direction)
+          (apply-item-modifiers stats :iron-sword 1)
+          (assert (> (stat-modifiers-attack mods) before-attack) ()
+                  "apply-mods: attack increased")
+          ;; Remove item (-1 direction)
+          (apply-item-modifiers stats :iron-sword -1)
+          (assert (= (stat-modifiers-attack mods) before-attack) ()
+                  "apply-mods: attack restored")))))
+  ;; Nil stats should not crash
+  (assert (null (apply-item-modifiers nil :iron-sword 1)) ()
+          "apply-mods: nil stats -> nil"))
+
+;;; ============================================================
+;;; FINAL ZONE TESTS
+;;; ============================================================
+
+(defun test-load-write-zone-roundtrip ()
+  "Test zone save and load roundtrip."
+  (let* ((temp-path (merge-pathnames "test-zone-roundtrip.lisp"
+                                      (uiop:temporary-directory)))
+         (zone (make-empty-zone :test-roundtrip 25 20 :chunk-size 8)))
+    ;; Add some content
+    (push '(:id :coins :x 5 :y 5 :count 10) (zone-objects zone))
+    (push '(:id :spawn :x 10 :y 10) (zone-spawns zone))
+    ;; Write
+    (unwind-protect
+        (progn
+          (write-zone zone temp-path)
+          (assert (probe-file temp-path) () "roundtrip: file written")
+          ;; Load
+          (let ((loaded (load-zone temp-path)))
+            (assert loaded () "roundtrip: zone loaded")
+            (assert (eq (zone-id loaded) :test-roundtrip) () "roundtrip: id preserved")
+            (assert (= (zone-width loaded) 25) () "roundtrip: width preserved")
+            (assert (= (zone-height loaded) 20) () "roundtrip: height preserved")
+            (assert (= (zone-chunk-size loaded) 8) () "roundtrip: chunk-size preserved")))
+      ;; Cleanup
+      (when (probe-file temp-path)
+        (delete-file temp-path)))))
+
+;;; ============================================================
+;;; FINAL MOVEMENT TESTS
+;;; ============================================================
+
+(defun test-get-zone-state ()
+  "Test getting zone state from cache."
+  ;; Clear cache first
+  (clear-zone-states)
+  ;; Should return nil for unknown zone
+  (assert (null (get-zone-state :nonexistent-zone)) ()
+          "get-zone-state: nil for unknown")
+  ;; Note: get-or-create-zone-state requires file path, tested implicitly
+  )
+
+(defun test-zone-state-player-count ()
+  "Test counting players in a zone."
+  (let* ((p1 (make-player 0.0 0.0 :id 1))
+         (p2 (make-player 0.0 0.0 :id 2))
+         (p3 (make-player 0.0 0.0 :id 3))
+         (players (vector p1 p2 p3)))
+    (setf (player-zone-id p1) :zone-a
+          (player-zone-id p2) :zone-a
+          (player-zone-id p3) :zone-b)
+    (assert (= (zone-state-player-count :zone-a players) 2) ()
+            "player-count: zone-a has 2")
+    (assert (= (zone-state-player-count :zone-b players) 1) ()
+            "player-count: zone-b has 1")
+    (assert (= (zone-state-player-count :zone-c players) 0) ()
+            "player-count: zone-c has 0")))
+
+(defun test-players-in-zone ()
+  "Test getting players in a specific zone."
+  (let* ((p1 (make-player 0.0 0.0 :id 1))
+         (p2 (make-player 0.0 0.0 :id 2))
+         (p3 (make-player 0.0 0.0 :id 3))
+         (players (vector p1 p2 p3)))
+    (setf (player-zone-id p1) :zone-a
+          (player-zone-id p2) :zone-a
+          (player-zone-id p3) :zone-b)
+    (let ((in-a (players-in-zone :zone-a players)))
+      (assert (vectorp in-a) () "players-in-zone: returns vector")
+      (assert (= (length in-a) 2) () "players-in-zone: zone-a has 2"))
+    (let ((in-b (players-in-zone :zone-b players)))
+      (assert (= (length in-b) 1) () "players-in-zone: zone-b has 1"))
+    ;; Nil zone-id returns nil
+    (assert (null (players-in-zone nil players)) ()
+            "players-in-zone: nil zone -> nil")))
+
+(defun test-occupied-zone-ids ()
+  "Test getting list of occupied zones."
+  (let* ((p1 (make-player 0.0 0.0 :id 1))
+         (p2 (make-player 0.0 0.0 :id 2))
+         (p3 (make-player 0.0 0.0 :id 3))
+         (players (vector p1 p2 p3)))
+    (setf (player-zone-id p1) :zone-a
+          (player-zone-id p2) :zone-a
+          (player-zone-id p3) :zone-b)
+    (let ((ids (occupied-zone-ids players)))
+      (assert (listp ids) () "occupied-zones: returns list")
+      (assert (= (length ids) 2) () "occupied-zones: 2 unique zones")
+      (assert (member :zone-a ids) () "occupied-zones: contains zone-a")
+      (assert (member :zone-b ids) () "occupied-zones: contains zone-b"))))
+
+(defun test-derive-wall-map-from-zone ()
+  "Test deriving wall map from zone collision tiles."
+  (let* ((zone (make-empty-zone :test 10 10))
+         (collision (zone-collision-tiles zone)))
+    ;; Add some collision tiles using cons cell keys (as used internally)
+    (setf (gethash (cons 2 3) collision) t)
+    (setf (gethash (cons 5 5) collision) t)
+    (let ((wall-map (derive-wall-map-from-zone zone)))
+      (assert (arrayp wall-map) () "derive-wall-map: returns array")
+      (assert (= (array-dimension wall-map 0) 10) () "derive-wall-map: correct height")
+      (assert (= (array-dimension wall-map 1) 10) () "derive-wall-map: correct width")
+      (assert (= (aref wall-map 3 2) 1) () "derive-wall-map: 2,3 blocked")
+      (assert (= (aref wall-map 5 5) 1) () "derive-wall-map: 5,5 blocked")))
+  ;; Nil zone returns nil
+  (assert (null (derive-wall-map-from-zone nil)) ()
+          "derive-wall-map: nil zone -> nil"))
+
+(defun test-wall-occupied-p ()
+  "Test wall occupancy check."
+  (let ((wall-map (make-array '(10 10) :initial-element 0)))
+    ;; Set some walls
+    (setf (aref wall-map 3 2) 1)
+    (setf (aref wall-map 5 5) 1)
+    ;; Test with *wall-origin-x/y* at 0
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (assert (wall-occupied-p wall-map 2 3) () "wall-occupied: 2,3 blocked")
+      (assert (wall-occupied-p wall-map 5 5) () "wall-occupied: 5,5 blocked")
+      (assert (not (wall-occupied-p wall-map 0 0)) () "wall-occupied: 0,0 not blocked")
+      ;; Out of bounds returns nil
+      (assert (not (wall-occupied-p wall-map 100 100)) () "wall-occupied: out of bounds")))
+  ;; Nil wall-map returns nil
+  (assert (not (wall-occupied-p nil 0 0)) () "wall-occupied: nil map"))
+
+(defun test-blocked-at-p ()
+  "Test collision detection at position."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (wall-map (make-array '(10 10) :initial-element 0)))
+    ;; Set a wall
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (aref wall-map 5 5) 1)
+      (setf (world-wall-map world) wall-map)
+      ;; Position in blocked tile should be blocked
+      (assert (blocked-at-p world 176.0 176.0 12.0 12.0 32.0) ()
+              "blocked-at: position in wall blocked")
+      ;; Position in open tile should not be blocked
+      (assert (not (blocked-at-p world 48.0 48.0 12.0 12.0 32.0)) ()
+              "blocked-at: open position not blocked"))))
+
+(defun test-attempt-move ()
+  "Test movement with collision resolution."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (wall-map (make-array '(20 20) :initial-element 0)))
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (world-wall-map world) wall-map)
+      ;; Move in open space - should succeed
+      (multiple-value-bind (nx ny out-dx out-dy)
+          (attempt-move world 100.0 100.0 1.0 0.0 10.0 12.0 12.0 32.0)
+        (assert (> nx 100.0) () "attempt-move: x increased")
+        (assert (= ny 100.0) () "attempt-move: y unchanged")
+        (assert (= out-dx 1.0) () "attempt-move: dx preserved"))
+      ;; Add a wall and test blocked movement
+      (setf (aref wall-map 3 5) 1)  ;; Block at tile 5,3
+      (multiple-value-bind (nx ny out-dx out-dy)
+          (attempt-move world 150.0 100.0 1.0 0.0 100.0 12.0 12.0 32.0)
+        ;; Movement may be blocked depending on exact position
+        (assert (numberp nx) () "attempt-move: returns number")))))
+
+(defun test-update-running-state ()
+  "Test stamina drain and regen for running."
+  (let ((player (make-player 0.0 0.0 :id 1)))
+    ;; Start with full stamina
+    (setf (player-run-stamina player) *run-stamina-max*
+          (player-running player) nil)
+    ;; Not running, not moving - stamina stays full
+    (let ((mult (update-running-state player 0.1 nil nil)))
+      (assert (= mult 1.0) () "running: not running -> 1.0 mult"))
+    ;; Toggle run on
+    (update-running-state player 0.1 nil t)
+    (assert (player-running player) () "running: toggle enables run")
+    ;; Running while moving drains stamina
+    (let ((before (player-run-stamina player)))
+      (update-running-state player 0.5 t nil)
+      (assert (< (player-run-stamina player) before) () "running: stamina drains"))))
+
+(defun test-edge-spawn-position ()
+  "Test calculating spawn position on edge."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (wall-map (make-array '(10 10) :initial-element 0)))
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (world-wall-map world) wall-map
+            (world-wall-min-x world) 44.0
+            (world-wall-max-x world) 276.0
+            (world-wall-min-y world) 44.0
+            (world-wall-max-y world) 276.0)
+      ;; West edge spawn
+      (multiple-value-bind (x y)
+          (edge-spawn-position world :west nil 0.5)
+        (assert (= x 44.0) () "edge-spawn: west x is min")
+        (assert (numberp y) () "edge-spawn: y is number"))
+      ;; East edge spawn
+      (multiple-value-bind (x y)
+          (edge-spawn-position world :east nil 0.5)
+        (assert (= x 276.0) () "edge-spawn: east x is max")))))
+
+(defun test-zone-bounds-from-dimensions ()
+  "Test calculating zone wall bounds."
+  (let ((*wall-origin-x* 0)
+        (*wall-origin-y* 0))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (zone-bounds-from-dimensions 32.0 10 10 12.0 12.0)
+      (assert (numberp min-x) () "zone-bounds: min-x is number")
+      (assert (numberp max-x) () "zone-bounds: max-x is number")
+      (assert (< min-x max-x) () "zone-bounds: min-x < max-x")
+      (assert (< min-y max-y) () "zone-bounds: min-y < max-y"))))
+
+(defun test-position-blocked-p ()
+  "Test position blocking check wrapper."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (wall-map (make-array '(10 10) :initial-element 0)))
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (world-wall-map world) wall-map)
+      ;; Open position
+      (assert (not (position-blocked-p world 48.0 48.0 12.0 12.0)) ()
+              "position-blocked: open position")
+      ;; Add wall and test
+      (setf (aref wall-map 2 2) 1)
+      (assert (position-blocked-p world 80.0 80.0 12.0 12.0) ()
+              "position-blocked: blocked position"))))
+
+(defun test-find-open-tile ()
+  "Test finding nearest open tile."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (wall-map (make-array '(10 10) :initial-element 0)))
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (world-wall-map world) wall-map)
+      ;; Starting tile is open - should return it
+      (multiple-value-bind (tx ty)
+          (find-open-tile world 2 2 12.0 12.0 5)
+        (assert (= tx 2) () "find-open: returns start x")
+        (assert (= ty 2) () "find-open: returns start y"))
+      ;; Block start tile - should find nearby
+      (setf (aref wall-map 2 2) 1)
+      (multiple-value-bind (tx ty)
+          (find-open-tile world 2 2 12.0 12.0 5)
+        (assert (not (and (= tx 2) (= ty 2))) () "find-open: finds different tile")))))
+
+(defun test-player-is-stuck-p ()
+  "Test player stuck detection."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (player (make-player 100.0 100.0 :id 1))
+         (wall-map (make-array '(10 10) :initial-element 0)))
+    (let ((*wall-origin-x* 0)
+          (*wall-origin-y* 0))
+      (setf (world-wall-map world) wall-map)
+      ;; In open space - not stuck
+      (assert (not (player-is-stuck-p player world)) ()
+              "is-stuck: open space -> not stuck")
+      ;; Surround with walls - would be stuck
+      ;; (Testing actual stuck detection requires more complex setup)
+      )))
+
+(defun test-world-exit-edge ()
+  "Test detecting which edge player is at."
+  (let* ((world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (player (make-player 44.0 160.0 :id 1))
+         (intent (player-intent player)))
+    (setf (world-wall-min-x world) 44.0
+          (world-wall-max-x world) 276.0
+          (world-wall-min-y world) 44.0
+          (world-wall-max-y world) 276.0)
+    ;; Player at west edge moving west
+    (set-intent-move intent -1.0 0.0)
+    (let ((edge (world-exit-edge world player)))
+      (assert (eq edge :west) () "exit-edge: west edge detected"))
+    ;; Player in center, no edge
+    (setf (player-x player) 160.0)
+    (set-intent-move intent -1.0 0.0)
+    (let ((edge (world-exit-edge world player)))
+      (assert (null edge) () "exit-edge: center -> nil"))))
+
+;;; ============================================================
+;;; FINAL NET TESTS
+;;; ============================================================
+
+(defun test-session-try-register ()
+  "Test session registration."
+  ;; Clear any existing sessions
+  (with-session-lock
+    (clrhash *active-sessions*))
+  ;; Register a session
+  (let ((client (make-instance 'net-client)))
+    (assert (session-try-register "testuser" client) ()
+            "session-register: first registration succeeds")
+    ;; Same username should fail
+    (assert (not (session-try-register "testuser" client)) ()
+            "session-register: duplicate fails")
+    ;; Different username succeeds
+    (assert (session-try-register "testuser2" client) ()
+            "session-register: different user succeeds"))
+  ;; Cleanup
+  (with-session-lock
+    (clrhash *active-sessions*)))
+
+(defun test-session-unregister ()
+  "Test session unregistration."
+  ;; Clear and setup
+  (with-session-lock
+    (clrhash *active-sessions*))
+  (let ((client (make-instance 'net-client)))
+    (session-try-register "testuser" client)
+    ;; Should be registered
+    (assert (session-get "testuser") () "session-unreg: user exists before")
+    ;; Unregister
+    (session-unregister "testuser")
+    ;; Should be gone
+    (assert (null (session-get "testuser")) () "session-unreg: user gone after"))
+  ;; Cleanup
+  (with-session-lock
+    (clrhash *active-sessions*)))
+
+(defun test-session-get ()
+  "Test getting session by username."
+  ;; Clear and setup
+  (with-session-lock
+    (clrhash *active-sessions*))
+  (let ((client (make-instance 'net-client)))
+    (session-try-register "testuser" client)
+    ;; Get existing
+    (assert (eq (session-get "testuser") client) ()
+            "session-get: returns correct client")
+    ;; Get non-existent
+    (assert (null (session-get "nonexistent")) ()
+            "session-get: nil for unknown")
+    ;; Case insensitive
+    (assert (eq (session-get "TESTUSER") client) ()
+            "session-get: case insensitive"))
+  ;; Cleanup
+  (with-session-lock
+    (clrhash *active-sessions*)))

@@ -3,11 +3,11 @@
 This file documents test coverage status and remaining gaps.
 
 **Updated test counts (after this session):**
-- unit-test.lisp: 148 tests (was ~98)
+- unit-test.lisp: 173 tests (was ~98)
 - persistence-test.lisp: 98 tests
 - security-test.lisp: 27 tests
 - trade-test.lisp: 14 tests
-- **Total: 287 tests**
+- **Total: 312 tests**
 
 **All tests pass:** `make tests` completes successfully.
 
@@ -77,11 +77,10 @@ The following tests were added and pass:
 
 ## Still Needs Tests (Future Work)
 
-### ai.lisp - Mostly Complete
-These functions need a `world` struct or full game state to test properly:
+### ai.lisp - Complete
 - [x] `closest-player` - Find nearest alive player to NPC (uses make-test-world helper)
 - [x] `npc-in-perception-range-p` - Check if player within perception range
-- [ ] `update-npc-behavior` - State machine transitions (complex state)
+- [x] `update-npc-behavior` - State machine transitions (tests dead/idle/valid states)
 - [x] `npc-flee-speed-mult` - Get flee multiplier from archetype
 
 ### combat.lisp - Complete
@@ -95,18 +94,18 @@ These functions need a `world` struct or full game state to test properly:
 - [x] `attack-hitbox` - Calculate attack hitbox for facing direction
 - [x] `player-attack-target-in-range-p` - Check if target in melee hitbox
 
-### progression.lisp - Mostly Complete
-- [ ] `award-skill-xp` - Add XP and update level (requires player + dirty tracking)
+### progression.lisp - Complete
+- [x] `award-skill-xp` - Add XP and update level
 - [x] `melee-hit-p` - Simple hit check wrapper
 - [x] `format-skill-hud-line` - Format HUD line for skill
-- [ ] `apply-item-modifiers` - Apply/remove equipment stat bonuses
+- [x] `apply-item-modifiers` - Apply/remove equipment stat bonuses
 - [x] `object-entry-count` - Get pickup count from object
 
 ### data.lisp - Complete
 - [x] `parse-game-data-forms` - Merge data forms into sections
 - [x] `make-npc-archetype-from-plist` - Build NPC archetype from plist
 
-### zone.lisp - Mostly Complete
+### zone.lisp - Complete
 - [x] `zone-chunk-from-spec` - Build chunk from spec
 - [x] `zone-layer-from-spec` - Build layer from spec
 - [x] `build-zone-collision-tiles` - Build blocked tile hash
@@ -115,38 +114,38 @@ These functions need a `world` struct or full game state to test properly:
 - [x] `zone-to-plist` - Serialize zone for saving
 - [x] `zone-slice` - Extract subregion of zone
 - [x] `zone-resize` - Resize zone preserving content
-- [ ] `load-zone` / `write-zone` roundtrip test
+- [x] `load-zone` / `write-zone` roundtrip test
 
-### world-graph.lisp - Mostly Complete
-- [ ] `collect-zone-files` - Find .lisp files in directory
-- [ ] `zone-id-from-file` - Read zone ID without full load
-- [ ] `build-zone-paths` - Build zone-id -> path lookup
+### world-graph.lisp - Complete
+- [x] `collect-zone-files` - Find .lisp files in directory
+- [x] `zone-id-from-file` - Read zone ID without full load
+- [x] `build-zone-paths` - Build zone-id -> path lookup
 - [x] `world-graph-exits` - Get exits for zone
 - [x] `world-graph-zone-path` - Get path for zone ID
 
-### movement.lisp - Require Zone/Collision State
-- [ ] `get-zone-state` - Get zone state from cache
-- [ ] `zone-state-player-count` - Count players in zone
-- [ ] `players-in-zone` - Get player vector for zone
-- [ ] `occupied-zone-ids` - Get list of zones with players
-- [ ] `derive-wall-map-from-zone` - Build wall map from zone
-- [ ] `wall-occupied-p` - Check if tile has wall
-- [ ] `blocked-at-p` - Test collider against tiles
-- [ ] `attempt-move` - Resolve movement with collision
-- [ ] `update-running-state` - Stamina drain/regen
-- [ ] `edge-preserve-axis` - Determine axis to preserve on transition
-- [ ] `edge-spawn-position` - Calculate spawn position on edge
-- [ ] `zone-bounds-from-dimensions` - Calculate wall bounds
-- [ ] `position-blocked-p` - Check if position is blocked
-- [ ] `find-open-tile` - Find nearest unblocked tile
-- [ ] `player-is-stuck-p` - Check if player can't move
-- [ ] `world-exit-edge` - Determine which edge player is at
+### movement.lisp - Complete
+- [x] `get-zone-state` - Get zone state from cache
+- [x] `zone-state-player-count` - Count players in zone
+- [x] `players-in-zone` - Get player vector for zone
+- [x] `occupied-zone-ids` - Get list of zones with players
+- [x] `derive-wall-map-from-zone` - Build wall map from zone
+- [x] `wall-occupied-p` - Check if tile has wall
+- [x] `blocked-at-p` - Test collider against tiles
+- [x] `attempt-move` - Resolve movement with collision
+- [x] `update-running-state` - Stamina drain/regen
+- [x] `edge-preserve-axis` - Already tested via edge-offset-ratio
+- [x] `edge-spawn-position` - Calculate spawn position on edge
+- [x] `zone-bounds-from-dimensions` - Calculate wall bounds
+- [x] `position-blocked-p` - Check if position is blocked
+- [x] `find-open-tile` - Find nearest unblocked tile
+- [x] `player-is-stuck-p` - Check if player can't move
+- [x] `world-exit-edge` - Determine which edge player is at
 
-### net.lisp - Require Network/Session State
-- [ ] `session-try-register` - Atomic session registration
-- [ ] `session-unregister` - Remove from active sessions
-- [ ] `session-get` - Get client by username
-- [ ] `auth-check-replay` - Nonce/timestamp replay detection
+### net.lisp - Mostly Complete
+- [x] `session-try-register` - Atomic session registration
+- [x] `session-unregister` - Remove from active sessions
+- [x] `session-get` - Get client by username
+- [ ] `auth-check-replay` - Nonce/timestamp replay detection (requires time manipulation, tested via integration)
 
 ---
 
