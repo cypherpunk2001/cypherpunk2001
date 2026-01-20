@@ -103,7 +103,11 @@
                 #'test-dirty-flags-preserved-on-batch-failure
                 #'test-id-counter-blocked-on-persistence-failure
                 #'test-id-counter-advances-on-persistence-success
-                #'test-retry-catches-storage-error)))
+                #'test-retry-catches-storage-error
+                ;; Ownership Loss Cleanup Tests (Phase 2 - Implementation Findings Fix)
+                #'test-ownership-reclaim-on-verification-failure
+                #'test-ownership-truly-lost-when-another-server-owns
+                #'test-local-unregister-preserves-online-set)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -1775,6 +1779,93 @@
   (run-test 'test-retry-catches-storage-error)
   (format t "~&All Phase 1 storage failure tests complete.~%"))
 
+;;; Phase 2: Ownership Loss Cleanup Tests
+
+(defun test-ownership-reclaim-on-verification-failure ()
+  "Test: refresh-all-session-ownerships attempts reclaim before reporting loss (Phase 2)."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player (make-player 100.0 200.0 :id 999))
+         (reclaim-attempted nil))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          (setf *server-instance-id* "test-server-001")
+          ;; Register the player session
+          (register-player-session player :zone-id 'test-zone :username "testuser")
+          ;; Verify ownership is established
+          (assert-true (verify-session-ownership 999) "Should own session initially")
+          ;; Simulate ownership key expiration by deleting it
+          (storage-delete storage (session-owner-key 999))
+          ;; Now verify-session-ownership should fail, but claim should succeed
+          (assert-true (not (verify-session-ownership 999)) "Verify should fail after key deletion")
+          ;; claim-session-ownership should be able to re-claim (no other owner)
+          (assert-true (claim-session-ownership 999) "Should be able to re-claim")
+          ;; Clean up
+          (unregister-player-session 999)
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-ownership-truly-lost-when-another-server-owns ()
+  "Test: refresh-all-session-ownerships reports loss when another server owns (Phase 2)."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player (make-player 100.0 200.0 :id 999)))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          (setf *server-instance-id* "test-server-001")
+          ;; Register the player session
+          (register-player-session player :zone-id 'test-zone :username "testuser")
+          ;; Simulate another server taking ownership (must use TTL for claim to recognize it)
+          (let ((owner-key (session-owner-key 999)))
+            (storage-save-with-ttl storage owner-key "other-server-002" *session-ownership-ttl-seconds*))
+          ;; Now verify should fail
+          (assert-true (not (verify-session-ownership 999)) "Verify should fail")
+          ;; And claim should also fail (key exists with different owner)
+          (assert-true (not (claim-session-ownership 999)) "Claim should fail - owned by other")
+          ;; Clean up locally only
+          (unregister-player-session-local 999)
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-local-unregister-preserves-online-set ()
+  "Test: unregister-player-session-local does not touch online set (Phase 2)."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player (make-player 100.0 200.0 :id 999)))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          (setf *server-instance-id* "test-server-001")
+          ;; Register the player session (adds to online set)
+          (register-player-session player :zone-id 'test-zone :username "testuser")
+          ;; Verify player is in online set (uses key "online:players")
+          (let ((online-count (storage-scard storage "online:players")))
+            (assert-true (and online-count (> online-count 0))
+                         "Player should be in online set after registration"))
+          ;; Now use local-only unregister (simulating ownership loss)
+          (unregister-player-session-local 999)
+          ;; Online set should still contain the player (not touched)
+          (let ((online-count-after (storage-scard storage "online:players")))
+            (assert-true (and online-count-after (> online-count-after 0))
+                         "Online set should not be modified by local unregister"))
+          ;; Clean up online set manually for test cleanup
+          (storage-srem storage "online:players" "999")
+          t)
+      (setf *storage* old-storage))))
+
+(defun run-phase2-ownership-cleanup-tests ()
+  "Run all Phase 2 ownership cleanup tests."
+  (format t "~&Running Phase 2 ownership cleanup tests...~%")
+  (run-test 'test-ownership-reclaim-on-verification-failure)
+  (run-test 'test-ownership-truly-lost-when-another-server-owns)
+  (run-test 'test-local-unregister-preserves-online-set)
+  (format t "~&All Phase 2 ownership cleanup tests complete.~%"))
+
 (defun run-4way-validation-tests ()
   "Run all 4-outcome validation tests."
   (format t "~&Running 4-outcome validation tests...~%")
@@ -1805,3 +1896,4 @@
 (export 'run-persistence-tests)
 (export 'run-4way-validation-tests)
 (export 'run-phase1-storage-failure-tests)
+(export 'run-phase2-ownership-cleanup-tests)

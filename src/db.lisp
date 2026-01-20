@@ -1621,7 +1621,12 @@
 
 (defun refresh-all-session-ownerships ()
   "Refresh TTL on all active session ownerships. Called periodically.
-   Returns list of player-ids that failed to refresh (ownership lost or error).
+   Returns list of player-ids that failed to refresh (ownership truly lost).
+
+   Phase 2 improvement: On verification failure, attempts to re-claim ownership
+   before reporting as lost. This handles transient Redis hiccups where the key
+   expired but no other server took ownership.
+
    Catches storage-error to keep server loop alive on transient Redis failures."
   (let ((failed-ids nil))
     (with-player-sessions-lock
@@ -1637,7 +1642,21 @@
                          (log-verbose "Refresh failed for player ~a (transient): ~a" player-id e)
                          ;; Don't mark as failed - will retry next cycle
                          nil))
-                     (push player-id failed-ids)))
+                     ;; Ownership verification failed - try to re-claim before giving up
+                     ;; This handles the case where Redis key expired but no other
+                     ;; server has claimed ownership yet (transient outage)
+                     (if (claim-session-ownership player-id)
+                         (progn
+                           (log-verbose "Re-claimed ownership for player ~a after verification failure" player-id)
+                           ;; Successfully re-claimed, refresh TTL
+                           (handler-case
+                               (refresh-session-ownership player-id)
+                             (error (e)
+                               (log-verbose "Refresh after re-claim failed for ~a: ~a" player-id e))))
+                         ;; Re-claim failed - another server owns it now, truly lost
+                         (progn
+                           (log-verbose "Ownership truly lost for player ~a (another server owns)" player-id)
+                           (push player-id failed-ids)))))
                *player-sessions*))
     failed-ids))
 
@@ -1688,6 +1707,15 @@
     (remhash player-id *player-sessions*))
   (log-verbose "Unregistered session for player ~a" player-id))
 
+(defun unregister-player-session-local (player-id)
+  "Unregister a player session locally only (no online-set or ownership changes).
+   Used when ownership is already lost to another server - we should not touch
+   the global online set since the new owner controls that now.
+   Thread-safe."
+  (with-player-sessions-lock
+    (remhash player-id *player-sessions*))
+  (log-verbose "Unregistered local session for player ~a (ownership lost)" player-id))
+
 (defun flush-dirty-players (&key force)
   "Flush all dirty players to storage (tier-2 batched writes). Thread-safe.
    Uses pipelined batch save for efficiency (up to 300x faster than sequential).
@@ -1723,14 +1751,14 @@
                  ;; Lost ownership - track for cleanup (don't save - would overwrite)
                  (push player-id lost-player-ids)))))
        *player-sessions*))
-    ;; Handle lost ownership outside lock (cleanup requires its own locking)
+    ;; Handle lost ownership - DO NOT cleanup here, just skip saves
+    ;; Phase 2 fix: Let the ownership refresh loop (refresh-all-session-ownerships)
+    ;; handle cleanup so it can attempt re-claim first and do full net-client de-auth.
+    ;; If we cleanup here, the session is removed before the refresh loop sees it,
+    ;; leaving stale authenticated clients in the server.
     (when lost-player-ids
-      (warn "Batch flush: lost ownership for ~d players, skipping save and cleaning up: ~a"
-            (length lost-player-ids) lost-player-ids)
-      (dolist (player-id lost-player-ids)
-        ;; Clean up session - cannot save since we don't own it
-        ;; unregister-player-session releases ownership and removes from *player-sessions*
-        (unregister-player-session player-id)))
+      (warn "Batch flush: lost ownership for ~d players, skipping save (cleanup deferred to refresh loop): ~a"
+            (length lost-player-ids) lost-player-ids))
     ;; Execute batch save outside lock (IO can be slow)
     (when to-flush
       (unless *storage*

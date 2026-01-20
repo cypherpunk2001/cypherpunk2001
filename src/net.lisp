@@ -2254,19 +2254,30 @@
                          (when (>= (- elapsed last-ownership-refresh-time) *ownership-refresh-interval*)
                            (let ((lost-sessions (refresh-all-session-ownerships)))
                              (when lost-sessions
-                               ;; Handle lost ownership - cleanup sessions without saving
+                               ;; Handle lost ownership - full cleanup including net clients
+                               ;; Phase 2: refresh-all-session-ownerships now attempts re-claim before
+                               ;; reporting as lost, so these are truly lost to another server
                                (dolist (player-id lost-sessions)
                                  (warn "Session ownership lost for player ~a - forcing cleanup" player-id)
                                  (let ((session (gethash player-id *player-sessions*)))
                                    (when session
                                      (let ((player (player-session-player session))
                                            (username (player-session-username session)))
-                                       ;; 1. Remove from active sessions (by username)
+                                       ;; 1. Find and de-auth the net client (Phase 2)
                                        (when username
+                                         (let ((client (session-get username)))
+                                           (when client
+                                             ;; Clear auth fields
+                                             (setf (net-client-authenticated-p client) nil)
+                                             (setf (net-client-player client) nil)
+                                             ;; Remove from clients list
+                                             (setf clients (remove client clients :test #'eq))
+                                             (log-verbose "De-authed client for ~a due to ownership loss" username)))
+                                         ;; Remove from active sessions (by username)
                                          (session-unregister username))
-                                       ;; 2. Remove from player sessions (skip ownership release - already lost)
-                                       (with-player-sessions-lock
-                                         (remhash player-id *player-sessions*))
+                                       ;; 2. Remove from player sessions locally only (Phase 2)
+                                       ;; Don't touch online set - new owner controls that now
+                                       (unregister-player-session-local player-id)
                                        ;; 3. Remove player from game world
                                        (when player
                                          (remove-player-from-game game player))))))))
