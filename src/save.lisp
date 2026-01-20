@@ -628,6 +628,8 @@
             (player-lifetime-xp player) (getf plist :lifetime-xp (player-lifetime-xp player))
             (player-playtime player) (getf plist :playtime (player-playtime player))
             (player-created-at player) (getf plist :created-at (player-created-at player))
+            ;; Phase 5: Apply deaths from snapshot for client-side display
+            (player-deaths player) (getf plist :deaths (player-deaths player))
             (player-attack-timer player) (getf plist :attack-timer 0.0)
             (player-hit-timer player) (getf plist :hit-timer 0.0)
             (player-run-stamina player) (getf plist :run-stamina 1.0)

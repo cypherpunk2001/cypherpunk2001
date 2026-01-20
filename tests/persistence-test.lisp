@@ -41,6 +41,10 @@
                 #'test-death-triggers-immediate-save
                 #'test-level-up-triggers-immediate-save
                 #'test-item-consume-triggers-immediate-save
+                ;; Phase 5: Death Tracking + Leaderboard Tests
+                #'test-death-increments-player-deaths
+                #'test-death-updates-leaderboard
+                #'test-login-seeds-deaths-leaderboard
                 ;; Currency Invariant Tests
                 #'test-coins-never-negative
                 ;; Schema Migration Tests
@@ -694,6 +698,78 @@
                 (assert-equal 3 saved-bones-total "Saved inventory should have 3 bones total"))))
           t)
       ;; Restore global state
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+;;; Phase 5: Death Tracking + Leaderboard Tests
+
+(defun test-death-increments-player-deaths ()
+  "Test: Player death increments player-deaths counter.
+   Phase 5: player-deaths must be incremented before leaderboard update."
+  (let* ((player (make-test-player :id 91)))
+    (setf (player-deaths player) 5)  ; Start with 5 deaths
+    (setf (player-hp player) 1)      ; Set to 1 HP
+    ;; Apply lethal hit
+    (combatant-apply-hit player 1)
+    ;; Verify deaths incremented
+    (assert-equal 6 (player-deaths player) "Deaths should be 6 after death")
+    t))
+
+(defun test-death-updates-leaderboard ()
+  "Test: Player death updates deaths leaderboard with correct total.
+   Phase 5: Leaderboard uses zadd with total count (not zincrby)."
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 92))
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          (register-player-session player)
+          ;; Start with 3 deaths
+          (setf (player-deaths player) 3)
+          (setf (player-hp player) 1)
+          ;; Die
+          (combatant-apply-hit player 1)
+          ;; Check leaderboard has correct total (4, not incremented from 0)
+          ;; db-get-leaderboard returns ((player-id score) ...) with integer IDs
+          (let* ((leaderboard (db-get-leaderboard :deaths :top 10))
+                 (entry (find 92 leaderboard :key #'first)))
+            (assert-true entry "Player should be on deaths leaderboard")
+            (assert-equal 4 (second entry) "Leaderboard should show 4 deaths"))
+          t)
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+(defun test-login-seeds-deaths-leaderboard ()
+  "Test: Player login seeds deaths leaderboard with existing count.
+   Phase 5: Leaderboard is seeded on login, not just on death."
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 93))
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          ;; Set existing deaths before login
+          (setf (player-deaths player) 7)
+          ;; Register session (simulates login)
+          (register-player-session player)
+          ;; Check leaderboard was seeded with existing deaths
+          ;; db-get-leaderboard returns ((player-id score) ...) with integer IDs
+          (let* ((leaderboard (db-get-leaderboard :deaths :top 10))
+                 (entry (find 93 leaderboard :key #'first)))
+            (assert-true entry "Player should be on deaths leaderboard after login")
+            (assert-equal 7 (second entry) "Leaderboard should show 7 deaths from login seeding"))
+          t)
       (setf *storage* old-storage)
       (clrhash *player-sessions*)
       (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))

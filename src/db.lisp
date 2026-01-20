@@ -1466,17 +1466,18 @@
   (when *storage*
     (storage-zadd *storage* (leaderboard-key :level) level (prin1-to-string player-id))))
 
-(defun db-update-leaderboard-deaths (player-id)
-  "Increment player's death count on the deaths leaderboard."
+(defun db-update-leaderboard-deaths (player-id deaths)
+  "Update player's death count on the deaths leaderboard.
+   Phase 5: Uses zadd with total count (not zincrby) for correctness after restart."
   (when *storage*
-    (storage-zincrby *storage* (leaderboard-key :deaths) 1 (prin1-to-string player-id))))
+    (storage-zadd *storage* (leaderboard-key :deaths) deaths (prin1-to-string player-id))))
 
 (defun db-get-leaderboard (category &key (top 10) (withscores t))
   "Get top N entries from leaderboard CATEGORY (:xp, :level, :deaths).
    Returns list of (player-id score) pairs if WITHSCORES, else list of player-ids."
   (when *storage*
-    (let ((key (leaderboard-key category))
-          (result (storage-zrevrange *storage* key 0 (1- top) :withscores withscores)))
+    (let* ((key (leaderboard-key category))
+           (result (storage-zrevrange *storage* key 0 (1- top) :withscores withscores)))
       (if withscores
           ;; Convert string IDs back to numbers
           (mapcar (lambda (entry)
@@ -1709,6 +1710,8 @@
     (db-update-leaderboard-xp player-id (player-lifetime-xp player))
     (let ((level (combat-level (player-stats player))))
       (db-update-leaderboard-level player-id level))
+    ;; Phase 5: Seed deaths leaderboard on login with existing death count
+    (db-update-leaderboard-deaths player-id (player-deaths player))
     (log-verbose "Registered session for player ~a in zone ~a" player-id zone-id)
     t))
 
