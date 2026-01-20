@@ -5,9 +5,9 @@ This file documents test coverage status and remaining gaps.
 **Updated test counts (after this session):**
 - unit-test.lisp: 173 tests (was ~98)
 - persistence-test.lisp: 98 tests
-- security-test.lisp: 27 tests
+- security-test.lisp: 24 tests
 - trade-test.lisp: 14 tests
-- **Total: 312 tests**
+- **Total: 309 tests**
 
 **All tests pass:** `make tests` completes successfully.
 
@@ -58,6 +58,7 @@ The following tests were added and pass:
 - [x] `octets-to-string` - Byte vector to ASCII string
 - [x] `encode-net-message` / `decode-net-message` - Plist roundtrip
 - [x] `host-to-string` - Convert byte vector to IP string
+- [x] `auth-check-replay` - Timestamp window + duplicate nonce handling
 
 ### Priority 5: Intent System
 - [x] `reset-frame-intent` - Clear per-frame signals
@@ -145,7 +146,7 @@ The following tests were added and pass:
 - [x] `session-try-register` - Atomic session registration
 - [x] `session-unregister` - Remove from active sessions
 - [x] `session-get` - Get client by username
-- [ ] `auth-check-replay` - Nonce/timestamp replay detection (requires time manipulation, tested via integration)
+- [x] `auth-check-replay` - Nonce/timestamp replay detection (unit test added)
 
 ---
 

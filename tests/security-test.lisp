@@ -1318,6 +1318,38 @@
                (intent-move-dy intent))))))
 
 ;;;; ==========================================================================
+;;;; TEST: Auth Replay Protection
+;;;; Validate timestamp window and duplicate nonce behavior
+;;;; ==========================================================================
+
+(define-security-test test-auth-check-replay-window
+  (unwind-protect
+      (progn
+        ;; Reset nonce cache for a clean test.
+        (with-auth-nonce-lock
+          (clrhash *auth-nonce-cache*)
+          (setf *auth-nonce-last-cleanup* 0))
+        ;; Valid timestamp should be accepted once.
+        (let* ((nonce "auth-replay-ok")
+               (timestamp (get-universal-time)))
+          (unless (auth-check-replay nonce timestamp)
+            (error "Valid auth replay check was rejected"))
+          (when (auth-check-replay nonce timestamp)
+            (error "Duplicate nonce was accepted")))
+        ;; Too old timestamps should be rejected.
+        (let ((old-ts (- (get-universal-time) *auth-timestamp-window* 1)))
+          (when (auth-check-replay "auth-replay-old" old-ts)
+            (error "Expired auth timestamp was accepted")))
+        ;; Future timestamps beyond tolerance should be rejected.
+        (let ((future-ts (+ (get-universal-time) 10)))
+          (when (auth-check-replay "auth-replay-future" future-ts)
+            (error "Future auth timestamp was accepted"))))
+    ;; Cleanup nonce cache to avoid cross-test contamination.
+    (with-auth-nonce-lock
+      (clrhash *auth-nonce-cache*)
+      (setf *auth-nonce-last-cleanup* 0))))
+
+;;;; ==========================================================================
 ;;;; THREAD-SAFETY REGRESSION TESTS (Multi-threaded Server Mode)
 ;;;; These tests verify mutex-protected operations work correctly under
 ;;;; concurrent access, preventing regressions when MMORPG_WORKER_THREADS > 1
@@ -1547,6 +1579,7 @@
 
   ;; Input validation tests
   (test-movement-direction-clamped)
+  (test-auth-check-replay-window)
 
   ;; Thread-safety regression tests (SBCL only)
   ;; These prevent multi-threaded mode from regressing
