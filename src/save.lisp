@@ -290,22 +290,27 @@
               (loop for slot in slots
                     for i from 0
                     when slot
-                    do (let ((count (getf slot :count))
-                             (item-id (getf slot :item-id)))
-                         ;; Negative count is exploit
-                         (when (and count (integerp count) (< count 0))
-                           (push (format nil "Inventory slot ~d has negative count (~d)" i count) issues)
-                           (setf needs-reject t))
-                         ;; Excessive count is potential dupe
-                         (when (and count (integerp count) (> count *max-item-stack-size*))
-                           (push (format nil "Inventory slot ~d count (~d) exceeds max (~d)"
-                                         i count *max-item-stack-size*)
-                                 issues)
-                           (setf needs-reject t))
-                         ;; Item-id must be a symbol if present
-                         (when (and item-id (not (symbolp item-id)))
-                           (push (format nil "Inventory slot ~d has non-symbol item-id: ~s" i item-id) issues)
-                           (setf needs-reject t)))))))))
+                    do (cond
+                         ((not (listp slot))
+                          (push (format nil "Inventory slot ~d is not a plist: ~s" i slot) issues)
+                          (setf needs-reject t))
+                         (t
+                          (let ((count (getf slot :count))
+                                (item-id (getf slot :item-id)))
+                            ;; Negative count is exploit
+                            (when (and count (integerp count) (< count 0))
+                              (push (format nil "Inventory slot ~d has negative count (~d)" i count) issues)
+                              (setf needs-reject t))
+                            ;; Excessive count is potential dupe
+                            (when (and count (integerp count) (> count *max-item-stack-size*))
+                              (push (format nil "Inventory slot ~d count (~d) exceeds max (~d)"
+                                            i count *max-item-stack-size*)
+                                    issues)
+                              (setf needs-reject t))
+                            ;; Item-id must be a symbol if present
+                            (when (and item-id (not (symbolp item-id)))
+                              (push (format nil "Inventory slot ~d has non-symbol item-id: ~s" i item-id) issues)
+                              (setf needs-reject t)))))))))))
 
     ;; Stats skill XP cannot be negative (exploit indicator)
     (let ((stats (getf plist :stats)))
@@ -327,6 +332,21 @@
                     (when (and xp (integerp xp) (< xp 0))
                       (push (format nil "Stats ~a :xp is negative (~d) - exploit indicator" stat-key xp) issues)
                       (setf needs-reject t))))))))))
+
+    ;; Equipment structure must be a plist with a list of :items
+    (let ((equipment (getf plist :equipment)))
+      (when equipment
+        ;; Guard: equipment must be a list to access nested fields
+        (unless (listp equipment)
+          (push (format nil "Field :equipment has wrong type: expected list, got ~a" (type-of equipment)) issues)
+          (setf needs-reject t))
+        (when (listp equipment)
+          (let ((items (getf equipment :items)))
+            ;; Guard: items must be a list
+            (unless (or (null items) (listp items))
+              (push (format nil "Field :equipment :items has wrong type: expected list, got ~a"
+                            (type-of items)) issues)
+              (setf needs-reject t))))))
 
     ;; If any reject condition, return immediately
     (when needs-reject

@@ -93,8 +93,11 @@
                 #'test-4way-reject-negative-skill-xp
                 #'test-4way-reject-inventory-not-list
                 #'test-4way-reject-slots-not-list
+                #'test-4way-reject-inventory-slot-not-list
                 #'test-4way-reject-stats-not-list
                 #'test-4way-reject-stat-entry-not-list
+                #'test-4way-reject-equipment-not-list
+                #'test-4way-reject-equipment-items-not-list
                 #'test-4way-quarantine-invalid-zone-type
                 ;; Phase 6: Unknown zones/items validation
                 #'test-4way-quarantine-unknown-zone
@@ -114,6 +117,7 @@
                 #'test-storage-error-signaled-on-save-failure
                 #'test-storage-error-signaled-on-batch-failure
                 #'test-dirty-flags-preserved-on-batch-failure
+                #'test-tier1-save-signals-on-ownership-error
                 #'test-id-counter-blocked-on-persistence-failure
                 #'test-id-counter-advances-on-persistence-success
                 #'test-retry-catches-storage-error
@@ -1587,6 +1591,15 @@
       (assert-equal :reject action "Non-list :slots should return :reject")
       t)))
 
+(defun test-4way-reject-inventory-slot-not-list ()
+  "Test: Non-list inventory slot returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :inventory) (list :slots (list 42)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list inventory slot should return :reject")
+      t)))
+
 (defun test-4way-reject-stats-not-list ()
   "Test: Non-list :stats returns :reject."
   (let ((plist (make-valid-test-plist)))
@@ -1603,6 +1616,24 @@
     (multiple-value-bind (action issues fixed-plist)
         (validate-player-plist-4way plist)
       (assert-equal :reject action "Non-list stat entry should return :reject")
+      t)))
+
+(defun test-4way-reject-equipment-not-list ()
+  "Test: Non-list :equipment returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :equipment) "not-a-list")
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list :equipment should return :reject")
+      t)))
+
+(defun test-4way-reject-equipment-items-not-list ()
+  "Test: Non-list :equipment :items returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :equipment) (list :items "not-a-list"))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list :equipment :items should return :reject")
       t)))
 
 ;;; :quarantine tests - suspicious but recoverable
@@ -1978,6 +2009,29 @@
       (setf *storage* old-storage
             *server-instance-id* old-server-id))))
 
+(defun test-tier1-save-signals-on-ownership-error ()
+  "Test: Tier-1 save signals storage-error when ownership check fails."
+  (let* ((storage (make-instance 'failing-storage :fail-loads t :fail-saves nil))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*)
+         (player (make-player 100.0 200.0 :id 555))
+         (caught nil))
+    (unwind-protect
+        (progn
+          (setf *storage* storage
+                *server-instance-id* "test-server-tier1")
+          (storage-connect storage)
+          (handler-case
+              (db-save-player-immediate player)
+            (storage-error (e)
+              (setf caught t)
+              (assert-equal :load-raw (storage-error-operation e)
+                            "Ownership check should signal load-raw error")))
+          (assert-true caught "Tier-1 save should signal storage-error on ownership check failure")
+          t)
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
+
 (defun test-id-counter-blocked-on-persistence-failure ()
   "Test: ID counter does not advance when persistence fails (Phase 1)."
   (let* ((storage (make-instance 'failing-storage :fail-saves t))
@@ -2047,6 +2101,7 @@
   (run-test 'test-storage-error-signaled-on-save-failure)
   (run-test 'test-storage-error-signaled-on-batch-failure)
   (run-test 'test-dirty-flags-preserved-on-batch-failure)
+  (run-test 'test-tier1-save-signals-on-ownership-error)
   (run-test 'test-id-counter-blocked-on-persistence-failure)
   (run-test 'test-id-counter-advances-on-persistence-success)
   (run-test 'test-retry-catches-storage-error)
@@ -2154,6 +2209,9 @@
   (run-test 'test-4way-reject-excessive-item-count)
   (run-test 'test-4way-reject-wrong-type-x)
   (run-test 'test-4way-reject-negative-skill-xp)
+  (run-test 'test-4way-reject-inventory-slot-not-list)
+  (run-test 'test-4way-reject-equipment-not-list)
+  (run-test 'test-4way-reject-equipment-items-not-list)
   (run-test 'test-4way-quarantine-invalid-zone-type)
   (run-test 'test-4way-load-valid-player)
   (run-test 'test-4way-load-clamp-hp)

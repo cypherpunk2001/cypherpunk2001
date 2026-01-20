@@ -1619,9 +1619,9 @@
         (warn "Release session ownership failed for player ~a (storage error): ~a - local cleanup continues"
               player-id e)))))
 
-(defun verify-session-ownership (player-id)
+(defun verify-session-ownership (player-id &key (signal-on-error nil))
   "Verify we still own the session. Returns T if we own it, NIL otherwise.
-   On storage error, returns NIL (safe default - treat as 'unknown, don't save')."
+   When SIGNAL-ON-ERROR is true, re-signals storage errors so callers can retry."
   (unless *storage*
     (return-from verify-session-ownership t))  ; No storage = always succeed
   (unless *server-instance-id*
@@ -1633,7 +1633,9 @@
         (and current-owner (string= current-owner *server-instance-id*)))
     (storage-error (e)
       (log-verbose "Ownership check failed for player ~a (transient): ~a" player-id e)
-      nil)))
+      (if signal-on-error
+          (error e)
+          nil))))
 
 (defun refresh-session-ownership (player-id)
   "Refresh TTL on session ownership. Called periodically as heartbeat."
@@ -1822,8 +1824,9 @@
    Verifies session ownership before saving to prevent stale server writes.
    Returns T on success. Signals STORAGE-ERROR on failure (Phase 1: enables retry)."
   (let ((player-id (player-id player)))
-    ;; Verify we still own this session (prevents stale server writes)
-    (unless (verify-session-ownership player-id)
+    ;; Verify we still own this session (prevents stale server writes).
+    ;; Signal storage errors so retry logic can handle transient failures.
+    (unless (verify-session-ownership player-id :signal-on-error t)
       (warn "REJECTED: Tier-1 save for player ~a - session not owned by this server" player-id)
       (return-from db-save-player-immediate nil))
     ;; Ownership verified, proceed with save
