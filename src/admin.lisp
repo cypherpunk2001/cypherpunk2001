@@ -253,6 +253,10 @@
                    (setf (player-y player) (player-y target-player))
                    (update-player-session-zone (player-id player)
                                                (player-session-zone-id target-session))
+                   (setf (player-zone-id player)
+                         (or (and target-session (player-session-zone-id target-session))
+                             (player-zone-id target-player))
+                         (player-snapshot-dirty player) t)
                    (mark-player-dirty (player-id player))
                    (format t "~&Teleported player ~a to player ~a (zone: ~a, x:~d y:~d)~%"
                            (player-username player) (player-username target-player)
@@ -269,6 +273,8 @@
            (setf (player-x player) (float x 1.0))
            (setf (player-y player) (float y 1.0))
            (update-player-session-zone (player-id player) zone-or-keyword)
+           (setf (player-zone-id player) zone-or-keyword
+                 (player-snapshot-dirty player) t)
            (mark-player-dirty (player-id player))
            (format t "~&Teleported player ~a to zone ~a (x:~d y:~d)~%"
                    (player-username player) zone-or-keyword x y)
