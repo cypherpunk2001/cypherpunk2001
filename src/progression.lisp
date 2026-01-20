@@ -649,12 +649,19 @@
                     (getf object :respawn) timer)
               (when (<= timer 0.0)
                 (let* ((object-id (getf object :id))
-                       (archetype (and object-id (find-object-archetype object-id))))
-                  (when archetype
-                    (setf (getf object :count) (object-archetype-count archetype)
-                          (getf object :respawn) 0.0
-                          ;; Mark dirty so delta snapshot includes respawn
-                          (getf object :snapshot-dirty) t)))))))))))
+                       (archetype (and object-id (find-object-archetype object-id)))
+                       (base-count (getf object :base-count nil)))
+                  (cond
+                    (archetype
+                     (setf (getf object :count) (object-archetype-count archetype)
+                           (getf object :respawn) 0.0
+                           ;; Mark dirty so delta snapshot includes respawn
+                           (getf object :snapshot-dirty) t))
+                    ((and base-count (numberp base-count) (> base-count 0))
+                     (setf (getf object :count) (truncate base-count)
+                           (getf object :respawn) 0.0
+                           ;; Mark dirty so delta snapshot includes respawn
+                           (getf object :snapshot-dirty) t))))))))))))
 
 (defun update-object-respawns (world dt)
   ;; Tick down respawn timers for world's current zone.

@@ -453,13 +453,20 @@
                  (raw-objects (getf plist :objects nil))
                  ;; Initialize objects with all keys so setf getf works properly
                  (objects (mapcar (lambda (obj)
-                                    (list :id (getf obj :id)
-                                          :x (getf obj :x)
-                                          :y (getf obj :y)
-                                          :count (getf obj :count nil)
-                                          :respawn 0.0
-                                          :respawnable (getf obj :respawnable t)
-                                          :snapshot-dirty nil))
+                                    (let* ((raw-count (getf obj :count nil))
+                                           (base-count (if (and raw-count
+                                                                (numberp raw-count)
+                                                                (>= raw-count 0))
+                                                           (truncate raw-count)
+                                                           1)))
+                                      (list :id (getf obj :id)
+                                            :x (getf obj :x)
+                                            :y (getf obj :y)
+                                            :count raw-count
+                                            :base-count base-count
+                                            :respawn 0.0
+                                            :respawnable (getf obj :respawnable t)
+                                            :snapshot-dirty nil)))
                                   raw-objects))
                  (spawns (getf plist :spawns nil))
                  (collision-tiles (build-zone-collision-tiles layers chunk-size)))
