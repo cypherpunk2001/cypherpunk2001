@@ -231,6 +231,7 @@
    - :zone-id not a symbol → zone data corrupt
    - :zone-id unknown (not in *known-zone-ids*) → zone removed/renamed
    - Inventory item-id unknown (not in *item-archetypes*) → item deprecated
+   - Equipment item-id unknown (not in *item-archetypes*) → item deprecated
    - :version much older than supported (future enhancement)"
   (let ((issues nil)
         (fixed-plist (copy-list plist))
@@ -351,6 +352,7 @@
     ;; Phase 6: Unknown item check (item deprecated)
     ;; Only check if game data is loaded
     (when *game-data-loaded-p*
+      ;; Check inventory items
       (let ((inventory (getf plist :inventory)))
         (when (listp inventory)
           (let ((slots (getf inventory :slots)))
@@ -364,7 +366,19 @@
                                     (not (gethash item-id *item-archetypes*)))
                            (push (format nil "Unknown item-id ~s in inventory slot ~d (item may have been removed)"
                                          item-id i) issues)
-                           (setf needs-quarantine t)))))))))
+                           (setf needs-quarantine t))))))))
+      ;; Check equipment items (P2 fix: equipment can also reference deprecated items)
+      (let ((equipment (getf plist :equipment)))
+        (when (listp equipment)
+          (let ((equip-items (getf equipment :items)))
+            (when (listp equip-items)
+              (loop for item-id in equip-items
+                    for i from 0
+                    when (and item-id (symbolp item-id))
+                    do (unless (gethash item-id *item-archetypes*)
+                         (push (format nil "Unknown item-id ~s in equipment slot ~d (item may have been removed)"
+                                       item-id i) issues)
+                         (setf needs-quarantine t))))))))
 
     ;; If any quarantine condition, return
     (when needs-quarantine

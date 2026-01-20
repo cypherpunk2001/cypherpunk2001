@@ -99,6 +99,7 @@
                 ;; Phase 6: Unknown zones/items validation
                 #'test-4way-quarantine-unknown-zone
                 #'test-4way-quarantine-unknown-item
+                #'test-4way-quarantine-unknown-equipment-item
                 #'test-4way-validation-skips-zone-check-when-not-loaded
                 #'test-4way-clamp-uses-plist-put
                 #'test-4way-load-valid-player
@@ -1655,6 +1656,27 @@
             (assert-equal :quarantine action "Unknown item-id should return :quarantine")
             (assert-true (some (lambda (s) (search "Unknown item-id" s)) issues)
                          "Issues should mention unknown item")
+            t))
+      (setf *game-data-loaded-p* old-game-data-loaded-p))))
+
+(defun test-4way-quarantine-unknown-equipment-item ()
+  "Test: Unknown item-id in equipment returns :quarantine when game data loaded.
+   P2 fix: Equipment items must also be validated against *item-archetypes*."
+  (let ((plist (make-valid-test-plist))
+        (old-game-data-loaded-p *game-data-loaded-p*))
+    (unwind-protect
+        (progn
+          ;; Set game data loaded flag
+          (setf *game-data-loaded-p* t)
+          ;; Add equipment with unknown item (deprecated helmet)
+          (setf (getf plist :equipment)
+                '(:items (:deprecated-helmet nil nil nil)))
+          (multiple-value-bind (action issues fixed-plist)
+              (validate-player-plist-4way plist)
+            (declare (ignore fixed-plist))
+            (assert-equal :quarantine action "Unknown equipment item-id should return :quarantine")
+            (assert-true (some (lambda (s) (search "equipment slot" s)) issues)
+                         "Issues should mention equipment slot")
             t))
       (setf *game-data-loaded-p* old-game-data-loaded-p))))
 
