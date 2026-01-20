@@ -38,7 +38,7 @@ Message format (plist, printed with `prin1`)
 Key functions
 
 **Server/Client Entry Points:**
-- `run-server`: bind UDP, track clients, handle auth, apply intents, tick `server-step`, send snapshots. Accepts `:worker-threads` for parallel sends.
+- `run-server`: Initialize storage backend, load Lua scripts for atomic operations, bind UDP, track clients, handle auth, apply intents, tick `server-step`, send snapshots. Accepts `:worker-threads` for parallel sends.
 - `run-client`: connect to server, handle login UI, send intents, apply snapshots. Accepts `:auto-login-username`/`:auto-login-password` for testing.
 
 **Message Handling:**
@@ -71,6 +71,8 @@ Key functions
 - `check-client-timeouts`: Remove inactive clients, free sessions.
 - `net-client-authenticated-p`: Check if client has logged in.
 - `net-client-account-username`: Get username of logged-in account.
+- `register-player-session`: Claims Redis session ownership (rejects double-logins), adds player to online set, updates leaderboards.
+- `unregister-player-session`: Releases Redis session ownership, removes from online set.
 
 Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.

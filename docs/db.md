@@ -30,29 +30,41 @@ The game server and client MUST NOT know where data comes from or where it goes.
 
 ```lisp
 ;; Abstract storage protocol - game code only sees this
-(defgeneric storage-load (storage key)
-  (:documentation "Load data for KEY. Returns plist or NIL if not found."))
 
-(defgeneric storage-save (storage key data)
-  (:documentation "Save DATA under KEY. Returns T on success."))
+;; Core operations
+(defgeneric storage-load (storage key))
+(defgeneric storage-save (storage key data))
+(defgeneric storage-delete (storage key))
+(defgeneric storage-exists-p (storage key))
+(defgeneric storage-connect (storage))
+(defgeneric storage-disconnect (storage))
+(defgeneric storage-keys (storage pattern))
 
-(defgeneric storage-delete (storage key)
-  (:documentation "Delete KEY. Returns T if existed."))
+;; Session ownership (Phase 3)
+(defgeneric storage-setnx-with-ttl (storage key value ttl-seconds)
+  (:documentation "Set KEY only if not exists, with TTL. Returns T if set."))
+(defgeneric storage-refresh-ttl (storage key ttl-seconds)
+  (:documentation "Refresh TTL on KEY. Returns T if key exists."))
+(defgeneric storage-get-raw (storage key)
+  (:documentation "Get raw string value (not deserialized)."))
 
-(defgeneric storage-exists-p (storage key)
-  (:documentation "Return T if KEY exists."))
+;; Sorted sets for leaderboards (Phase 4)
+(defgeneric storage-zadd (storage key score member))
+(defgeneric storage-zincrby (storage key increment member))
+(defgeneric storage-zrevrange (storage key start stop &key withscores))
+(defgeneric storage-zrank (storage key member))
+(defgeneric storage-zrevrank (storage key member))
+(defgeneric storage-zscore (storage key member))
 
-(defgeneric storage-flush (storage)
-  (:documentation "Force any pending writes to durable storage."))
+;; Sets for online tracking (Phase 4)
+(defgeneric storage-sadd (storage key member))
+(defgeneric storage-srem (storage key member))
+(defgeneric storage-scard (storage key))
+(defgeneric storage-smembers (storage key))
 
-(defgeneric storage-connect (storage)
-  (:documentation "Establish connection to storage backend."))
-
-(defgeneric storage-disconnect (storage)
-  (:documentation "Close connection to storage backend."))
-
-(defgeneric storage-keys (storage pattern)
-  (:documentation "Return list of keys matching PATTERN (e.g., 'player:*')."))
+;; Lua script execution (Phase 5)
+(defgeneric storage-script-load (storage script-name script-body))
+(defgeneric storage-eval-script (storage script-name keys args))
 ```
 
 ### Concrete Implementations
@@ -452,7 +464,7 @@ On server start, optionally pre-load frequently accessed data:
 Every record has a `:version` field. Current schema version is tracked in code:
 
 ```lisp
-(defparameter *player-schema-version* 3)  ; v3: added playtime, created-at
+(defparameter *player-schema-version* 4)  ; v4: added deaths field for leaderboards
 ```
 
 ### Migration Chain
@@ -461,9 +473,9 @@ Migrations are **append-only** and **chained**:
 
 ```lisp
 (defparameter *player-migrations*
-  '((1 . migrate-player-v0->v1)
-    (2 . migrate-player-v1->v2)
-    (3 . migrate-player-v2->v3)))
+  '((2 . migrate-player-v1->v2)
+    (3 . migrate-player-v2->v3)
+    (4 . migrate-player-v3->v4)))
 
 (defun migrate-player (data)
   "Migrate player data to current schema version."
@@ -502,9 +514,16 @@ Migrations are **append-only** and **chained**:
   (unless (getf data :created-at)
     (setf data (plist-put data :created-at (get-universal-time))))
   data)
+
+;; v3->v4: Add deaths field for leaderboard tracking
+(defun migrate-player-v3->v4 (data)
+  "v3->v4: Add deaths field for leaderboard tracking."
+  (unless (getf data :deaths)
+    (setf data (plist-put data :deaths 0)))
+  data)
 ```
 
-These migrations are tested in `persistence-test.lisp` with `test-migration-v1-to-v2` and `test-migration-v1-to-v3-chain`.
+These migrations are tested in `persistence-test.lisp` and `unit-test.lisp`.
 
 ## Crash-Safe Writes (Atomic Saves)
 
@@ -847,31 +866,40 @@ CREATE INDEX idx_players_updated ON players(updated_at);
 
 ## Implementation Checklist
 
-### Phase 1: Redis Integration
+### Phase 1: Redis Integration (Complete)
 
-- [ ] Add cl-redis dependency to ASDF system
-- [ ] Implement storage abstraction layer (storage protocol + redis-storage class)
-- [ ] Implement key schema and serialization
-- [ ] Add version field to all serialized data
-- [ ] Implement dirty flag and batch flush
-- [ ] Implement tier-1 immediate writes for critical operations
-- [ ] Add login/logout Redis read/write
-- [ ] Configure Redis persistence (RDB + AOF)
-- [ ] Set up backup cron job
-- [ ] Add basic monitoring
+- [x] Add cl-redis dependency to ASDF system
+- [x] Implement storage abstraction layer (storage protocol + redis-storage class)
+- [x] Implement key schema and serialization
+- [x] Add version field to all serialized data
+- [x] Implement dirty flag and batch flush
+- [x] Implement tier-1 immediate writes for critical operations
+- [x] Add login/logout Redis read/write
+- [x] Configure Redis persistence (RDB + AOF)
+- [ ] Set up backup cron job (ops task)
+- [x] Add basic monitoring (Redis metrics)
 
-### Phase 2: Migration System
+### Phase 2: Migration System (Complete)
 
-- [ ] Implement migration chain runner
-- [ ] Add migration test framework
-- [ ] Document migration procedure
+- [x] Implement migration chain runner (`migrate-player-data`)
+- [x] Add migration test framework (`persistence-test.lisp`, `unit-test.lisp`)
+- [x] Document migration procedure (`migrations.md`)
 
-### Phase 3: Hardening
+### Phase 3: Hardening (Complete)
 
-- [ ] Implement graceful shutdown flush
-- [ ] Add disconnect grace period
-- [ ] Implement write rate limiting
-- [ ] Add crash recovery testing
+- [x] Schema validation (`validate-player-plist`)
+- [x] Redis latency metrics (ring buffers, p99 tracking)
+- [x] Session ownership with TTL (`storage-setnx-with-ttl`)
+- [x] Leaderboards (`storage-zadd`, `storage-zrevrange`)
+- [x] Online player tracking (`storage-sadd`, `storage-srem`)
+- [x] Lua script execution infrastructure
+- [x] Trade system with atomic swaps
+
+### Future Work
+
+- [ ] Graceful shutdown flush
+- [ ] Write rate limiting
+- [ ] Crash recovery testing
 - [ ] Load test batch flush under peak
 
 ## Appendix: Redis Commands Reference
@@ -1016,6 +1044,67 @@ redis.call('SET', temp_key, ARGV[2])
 redis.call('RENAME', temp_key, KEYS[2])
 return {ok = "SAVED"}
 ```
+
+### Lua Script Execution Infrastructure
+
+**Implementation:** Redis has a built-in Lua 5.1 interpreter. No external Lua installation is required.
+
+**Storage Abstraction:**
+```lisp
+;; Generic interface for script execution
+(defgeneric storage-eval-script (storage script-name keys args)
+  (:documentation "Execute a Lua script by name with KEYS and ARGS."))
+
+(defgeneric storage-script-load (storage script-name script-body)
+  (:documentation "Load a Lua script into Redis, cache SHA for EVALSHA."))
+
+;; Script SHA cache (avoids re-sending script body on each call)
+(defparameter *redis-script-shas* (make-hash-table :test 'equal))
+```
+
+**Backend Implementations:**
+
+| Backend | Implementation |
+|---------|----------------|
+| `redis-storage` | Uses `EVALSHA` with cached SHA, falls back to `EVAL` if evicted |
+| `memory-storage` | Dispatches to `*memory-script-handlers*` (Lisp emulation) |
+| `postgres-storage` (future) | Would use transactions or stored procedures |
+
+**Script Loading at Startup:**
+```lisp
+;; Called from run-server after init-storage
+(defun load-trade-scripts ()
+  "Load trade-related Lua scripts into Redis."
+  (when (typep *storage* 'redis-storage)
+    (storage-script-load *storage* "trade_complete"
+                         (uiop:read-file-string "data/redis-scripts/trade_complete.lua"))))
+```
+
+**Available Scripts:**
+
+| Script | Purpose | Location |
+|--------|---------|----------|
+| `session_claim.lua` | Atomic SETNX with TTL for session ownership | `data/redis-scripts/` |
+| `safe_save.lua` | Ownership-checked player save | `data/redis-scripts/` |
+| `trade_complete.lua` | Atomic two-player item swap | `data/redis-scripts/` |
+
+**Memory Storage Emulation:**
+
+For testing without Redis, memory storage emulates scripts via handler functions:
+
+```lisp
+(defparameter *memory-script-handlers* (make-hash-table :test 'equal))
+
+;; Register handler for trade_complete
+(setf (gethash "trade_complete" *memory-script-handlers*)
+      (lambda (storage keys args)
+        ;; Emulate atomic swap in memory (inherently atomic in single-threaded Lisp)
+        (setf (gethash (first keys) (memory-storage-data storage)) (first args))
+        (setf (gethash (second keys) (memory-storage-data storage)) (second args))
+        "OK"))
+```
+
+This design keeps the storage abstraction intact - game code calls `storage-eval-script` regardless of backend.
 
 ### Persistence Monitoring & Metrics
 
@@ -1275,20 +1364,19 @@ If a player cannot load due to validation failure:
 2. Return nil (player cannot login)
 3. Admin can inspect raw Redis data and manually fix or restore from backup
 
-### Implementation Priority
+### Implementation Status
 
-Phases are implemented **sequentially** in order:
+All phases have been implemented:
 
-| Phase | Feature | Risk | Value | Status |
-|-------|---------|------|-------|--------|
-| 1 | Schema Validation | Low | High | Planned |
-| 2 | Redis Metrics | Low | Medium | Planned |
-| 3 | Session Ownership (Redis TTL) | Medium | High | Planned |
-| 4 | Structured Data (Leaderboards: xp, level, deaths) | Medium | Medium | Planned |
-| 5 | Trade System + Atomic Ops | Medium | High | Planned |
+| Phase | Feature | Files | Status |
+|-------|---------|-------|--------|
+| 1 | Schema Validation | `save.lisp`, `db.lisp` | **Complete** |
+| 2 | Redis Metrics | `db.lisp` | **Complete** |
+| 3 | Session Ownership (Redis TTL) | `db.lisp`, `data/redis-scripts/` | **Complete** |
+| 4 | Structured Data (Leaderboards) | `db.lisp`, `migrations.lisp` | **Complete** |
+| 5 | Trade System + Atomic Ops | `trade.lisp`, `intent.lisp` | **Complete** |
 
 **Notes:**
-- Phase 5 implements trading AND atomic operations together (no deferral)
 - Trade system uses coins as regular inventory items (no separate currency)
 - PvP kills leaderboard deferred until PvP combat system exists
 - Skill leaderboards deferred until skilling system exists

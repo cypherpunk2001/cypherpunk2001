@@ -15,7 +15,7 @@ Key concepts
 
 **Schema Version**
 ```lisp
-(defparameter *player-schema-version* 3
+(defparameter *player-schema-version* 4
   "Current player schema version. Increment when changing player format.")
 ```
 
@@ -23,7 +23,8 @@ Key concepts
 ```lisp
 (defparameter *player-migrations*
   '((2 . migrate-player-v1->v2)
-    (3 . migrate-player-v2->v3))
+    (3 . migrate-player-v2->v3)
+    (4 . migrate-player-v3->v4))
   "Alist of (version . migration-function) for player data.")
 ```
 
@@ -66,13 +67,13 @@ Writing a new migration
 
 1. **Increment the schema version**
 ```lisp
-(defparameter *player-schema-version* 3)  ; was 2
+(defparameter *player-schema-version* 5)  ; was 4
 ```
 
 2. **Write the migration function**
 ```lisp
-(defun migrate-player-v2->v3 (data)
-  "v2->v3: Add new-field, defaulting to some-value."
+(defun migrate-player-v4->v5 (data)
+  "v4->v5: Add new-field, defaulting to some-value."
   (unless (getf data :new-field)
     (setf data (plist-put data :new-field some-default-value)))
   data)
@@ -82,7 +83,9 @@ Writing a new migration
 ```lisp
 (defparameter *player-migrations*
   '((2 . migrate-player-v1->v2)
-    (3 . migrate-player-v2->v3))  ; added
+    (3 . migrate-player-v2->v3)
+    (4 . migrate-player-v3->v4)
+    (5 . migrate-player-v4->v5))  ; added
   "Alist of (version . migration-function)")
 ```
 
@@ -107,6 +110,7 @@ Current migrations
 |---------|-----------|-------------|
 | 2 | migrate-player-v1->v2 | Add `lifetime-xp` field (default 0) |
 | 3 | migrate-player-v2->v3 | Add `playtime` (default 0) and `created-at` (default current time) |
+| 4 | migrate-player-v3->v4 | Add `deaths` field for leaderboard tracking (default 0) |
 
 Relationship to other files
 - **types.lisp**: Player struct definition (add new fields here)

@@ -53,6 +53,14 @@ When applying snapshots with multiple connected clients, `apply-player-plists` u
 - `serialize-inventory-slot` / `deserialize-inventory-slot` - Convert slot to/from plist.
 - `serialize-equipment` / `deserialize-equipment` - Convert equipment to/from plist.
 
+**Schema Validation:**
+- `*player-schema*` - Schema definition with type/bounds rules for all player fields.
+- `validate-player-plist` - Validate plist against schema, returns (valid-p errors).
+- `validate-player-plist-deep` - Full validation including inventory/equipment sub-structures.
+- `*max-player-blob-size*` - Maximum serialized player size (64KB).
+
+Schema validation rejects invalid data rather than clamping - corruption should surface as errors, not silent fixes. Invalid player data prevents login until admin investigates.
+
 Walkthrough: save game
 1) Player triggers save action
 2) `serialize-game-state` captures authoritative state to plist
@@ -68,10 +76,11 @@ Walkthrough: load game
 
 Save format (plist structure)
 ```lisp
-(:version 2
+(:version 4
  :zone-id :overworld
  :id-next 42
  :players ((:id 1 :x 100.0 :y 200.0 :hp 10 :lifetime-xp 5000
+            :playtime 3600 :created-at 3940000000 :deaths 5
             :stats (:attack (:level 5 :xp 123) ...)
             :inventory (:slots ((:item-id :coins :count 50) ...))
             :equipment (:items (:wooden-sword nil nil ...))

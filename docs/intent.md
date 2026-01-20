@@ -24,6 +24,12 @@ What an intent contains
   - `requested-chat-message`: pending chat message for the server to broadcast
 - Utility requests:
   - `requested-unstuck`: flag indicating player wants to use the unstuck teleport feature
+- Trade requests:
+  - `requested-trade-target-id`: player ID to initiate trade with
+  - `requested-trade-offer-slot`: inventory slot to add/remove from offer
+  - `requested-trade-offer-count`: count of items to offer (0 = remove)
+  - `requested-trade-confirm`: flag to confirm current trade offer
+  - `requested-trade-cancel`: flag to cancel active trade
 - Client prediction:
   - `:sequence`: optional per-input sequence number for server reconciliation
 
@@ -40,6 +46,11 @@ Key functions
 - `clear-requested-chat-message`: clear pending chat requests.
 - `request-unstuck`: client requests the unstuck teleport feature.
 - `clear-requested-unstuck`: clear the unstuck request after processing.
+- `request-trade-with-player`: initiate trade with another player.
+- `request-trade-offer`: add/update item in trade offer.
+- `request-trade-confirm`: confirm current trade offer.
+- `request-trade-cancel`: cancel active trade.
+- `clear-all-trade-requests`: clear all trade-related intent fields.
 
 Walkthrough: click-to-move
 1) Mouse click is converted to a world-space target.
