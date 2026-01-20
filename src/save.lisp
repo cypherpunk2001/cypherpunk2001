@@ -273,38 +273,57 @@
     ;; Check inventory for exploits
     (let ((inventory (getf plist :inventory)))
       (when inventory
-        (let ((slots (getf inventory :slots)))
-          (when (listp slots)
-            (loop for slot in slots
-                  for i from 0
-                  when slot
-                  do (let ((count (getf slot :count))
-                           (item-id (getf slot :item-id)))
-                       ;; Negative count is exploit
-                       (when (and count (integerp count) (< count 0))
-                         (push (format nil "Inventory slot ~d has negative count (~d)" i count) issues)
-                         (setf needs-reject t))
-                       ;; Excessive count is potential dupe
-                       (when (and count (integerp count) (> count *max-item-stack-size*))
-                         (push (format nil "Inventory slot ~d count (~d) exceeds max (~d)"
-                                       i count *max-item-stack-size*)
-                               issues)
-                         (setf needs-reject t))
-                       ;; Item-id must be a symbol if present
-                       (when (and item-id (not (symbolp item-id)))
-                         (push (format nil "Inventory slot ~d has non-symbol item-id: ~s" i item-id) issues)
-                         (setf needs-reject t))))))))
+        ;; Guard: inventory must be a list to access nested fields
+        (unless (listp inventory)
+          (push (format nil "Field :inventory has wrong type: expected list, got ~a" (type-of inventory)) issues)
+          (setf needs-reject t))
+        (when (listp inventory)
+          (let ((slots (getf inventory :slots)))
+            ;; Guard: slots must be a list
+            (unless (or (null slots) (listp slots))
+              (push (format nil "Field :inventory :slots has wrong type: expected list, got ~a" (type-of slots)) issues)
+              (setf needs-reject t))
+            (when (listp slots)
+              (loop for slot in slots
+                    for i from 0
+                    when slot
+                    do (let ((count (getf slot :count))
+                             (item-id (getf slot :item-id)))
+                         ;; Negative count is exploit
+                         (when (and count (integerp count) (< count 0))
+                           (push (format nil "Inventory slot ~d has negative count (~d)" i count) issues)
+                           (setf needs-reject t))
+                         ;; Excessive count is potential dupe
+                         (when (and count (integerp count) (> count *max-item-stack-size*))
+                           (push (format nil "Inventory slot ~d count (~d) exceeds max (~d)"
+                                         i count *max-item-stack-size*)
+                                 issues)
+                           (setf needs-reject t))
+                         ;; Item-id must be a symbol if present
+                         (when (and item-id (not (symbolp item-id)))
+                           (push (format nil "Inventory slot ~d has non-symbol item-id: ~s" i item-id) issues)
+                           (setf needs-reject t)))))))))
 
     ;; Stats skill XP cannot be negative (exploit indicator)
     (let ((stats (getf plist :stats)))
       (when stats
-        (dolist (stat-key '(:attack :strength :defense :hitpoints))
-          (let ((skill (getf stats stat-key)))
-            (when skill
-              (let ((xp (getf skill :xp)))
-                (when (and xp (integerp xp) (< xp 0))
-                  (push (format nil "Stats ~a :xp is negative (~d) - exploit indicator" stat-key xp) issues)
-                  (setf needs-reject t))))))))
+        ;; Guard: stats must be a list to access nested fields
+        (unless (listp stats)
+          (push (format nil "Field :stats has wrong type: expected list, got ~a" (type-of stats)) issues)
+          (setf needs-reject t))
+        (when (listp stats)
+          (dolist (stat-key '(:attack :strength :defense :hitpoints))
+            (let ((skill (getf stats stat-key)))
+              (when skill
+                ;; Guard: each skill must be a list
+                (unless (listp skill)
+                  (push (format nil "Stats ~a has wrong type: expected list, got ~a" stat-key (type-of skill)) issues)
+                  (setf needs-reject t))
+                (when (listp skill)
+                  (let ((xp (getf skill :xp)))
+                    (when (and xp (integerp xp) (< xp 0))
+                      (push (format nil "Stats ~a :xp is negative (~d) - exploit indicator" stat-key xp) issues)
+                      (setf needs-reject t))))))))))
 
     ;; If any reject condition, return immediately
     (when needs-reject

@@ -84,6 +84,10 @@
                 #'test-4way-reject-excessive-item-count
                 #'test-4way-reject-wrong-type-x
                 #'test-4way-reject-negative-skill-xp
+                #'test-4way-reject-inventory-not-list
+                #'test-4way-reject-slots-not-list
+                #'test-4way-reject-stats-not-list
+                #'test-4way-reject-stat-entry-not-list
                 #'test-4way-quarantine-invalid-zone-type
                 #'test-4way-load-valid-player
                 #'test-4way-load-clamp-hp
@@ -1379,6 +1383,42 @@
     (multiple-value-bind (action issues fixed-plist)
         (validate-player-plist-4way plist)
       (assert-equal :reject action "Negative skill XP should return :reject")
+      t)))
+
+(defun test-4way-reject-inventory-not-list ()
+  "Test: Non-list :inventory returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :inventory) "not-a-list")
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list :inventory should return :reject")
+      t)))
+
+(defun test-4way-reject-slots-not-list ()
+  "Test: Non-list :slots returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :inventory) (list :slots "not-a-list"))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list :slots should return :reject")
+      t)))
+
+(defun test-4way-reject-stats-not-list ()
+  "Test: Non-list :stats returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :stats) 12345)
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list :stats should return :reject")
+      t)))
+
+(defun test-4way-reject-stat-entry-not-list ()
+  "Test: Non-list stat entry returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :stats) (list :attack "not-a-list"))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-list stat entry should return :reject")
       t)))
 
 ;;; :quarantine tests - suspicious but recoverable
