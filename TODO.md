@@ -3,11 +3,11 @@
 This file documents test coverage status and remaining gaps.
 
 **Updated test counts (after this session):**
-- unit-test.lisp: 120 tests (was ~98)
+- unit-test.lisp: 130 tests (was ~98)
 - persistence-test.lisp: 98 tests
 - security-test.lisp: 27 tests
 - trade-test.lisp: 14 tests
-- **Total: 259 tests**
+- **Total: 269 tests**
 
 **All tests pass:** `make tests` completes successfully.
 
@@ -79,20 +79,20 @@ The following tests were added and pass:
 
 ### ai.lisp - Require World/Game State
 These functions need a `world` struct or full game state to test properly:
-- [ ] `closest-player` - Find nearest alive player to NPC (needs player array)
+- [x] `closest-player` - Find nearest alive player to NPC (uses make-test-world helper)
 - [ ] `npc-in-perception-range-p` - Check if player within perception range
 - [ ] `update-npc-behavior` - State machine transitions (complex state)
-- [ ] `npc-flee-speed-mult` - Get flee multiplier from archetype
+- [x] `npc-flee-speed-mult` - Get flee multiplier from archetype
 
-### combat.lisp - Complex Dependencies
-- [ ] `format-combat-log` - Format hit/miss combat log string
-- [ ] `npc-respawn-seconds` - Get respawn time from archetype
-- [ ] `target-in-range-p` - Check if NPC within targeting range
-- [ ] `npc-attack-range` - Calculate NPC melee range in pixels
-- [ ] `npc-attack-cooldown` - Get attack cooldown from archetype
-- [ ] `npc-attack-damage` - Get attack damage from archetype
-- [ ] `intent-attack-direction` - Choose attack direction from intent
-- [ ] `attack-hitbox` - Calculate attack hitbox for facing direction
+### combat.lisp - Mostly Complete
+- [x] `format-combat-log` - Format hit/miss combat log string
+- [x] `npc-respawn-seconds` - Get respawn time from archetype
+- [x] `target-in-range-p` - Check if NPC within targeting range
+- [x] `npc-attack-range` - Calculate NPC melee range in pixels
+- [x] `npc-attack-cooldown` - Get attack cooldown from archetype
+- [x] `npc-attack-damage` - Get attack damage from archetype
+- [x] `intent-attack-direction` - Choose attack direction from intent (returns nil when no input/target)
+- [x] `attack-hitbox` - Calculate attack hitbox for facing direction
 - [ ] `player-attack-target-in-range-p` - Check if target in melee hitbox
 
 ### progression.lisp - Require Game Context
@@ -154,10 +154,10 @@ These functions need a `world` struct or full game state to test properly:
 
 The following issues were encountered during test writing that would benefit from src/ modifications:
 
-### 1. `npc-home-radius` Requires World Object
+### 1. `npc-home-radius` Requires World Object - RESOLVED
 **File:** `src/ai.lisp:19`
 **Issue:** Function takes `(npc world)` but `world` is hard to construct in tests.
-**Suggestion:** Consider adding a version that takes tile-size directly, or export a helper.
+**Resolution:** Created `make-test-world` helper in unit-test.lisp that builds a minimal world struct. Test now passes.
 
 ### 2. `combatant-display-name` Returns Generic "Player"
 **File:** `src/combat.lisp:140`

@@ -37,6 +37,14 @@
                 test-combatant-display-name
                 test-find-npc-by-id
                 test-roll-melee-damage
+                test-format-combat-log
+                test-npc-respawn-seconds
+                test-npc-attack-cooldown
+                test-npc-attack-damage
+                test-intent-attack-direction
+                test-target-in-range-p
+                test-attack-hitbox
+                test-npc-attack-range
                 ;; Progression Tests
                 test-xp-to-level
                 test-level-to-xp
@@ -75,6 +83,8 @@
                 test-npc-home-radius
                 test-npc-move-speed
                 test-npc-wander-interval
+                test-npc-flee-speed-mult
+                test-closest-player
                 ;; Data Tests
                 test-plist-form-p
                 test-data-section-header-p
@@ -1097,6 +1107,106 @@ hello
           (assert (>= damage 1) () "roll-damage: at least 1")
           (assert (<= damage max-hit) () "roll-damage: at most max-hit"))))))
 
+(defun test-format-combat-log ()
+  "Test combat log formatting."
+  ;; Hit case
+  (let ((log (format-combat-log "Player" "Goblin" t 0.75 0.50 10 5 :damage 8)))
+    (assert (stringp log) () "combat-log: hit returns string")
+    (assert (search "hit" log) () "combat-log: hit contains 'hit'")
+    (assert (search "8" log) () "combat-log: hit contains damage"))
+  ;; Miss case
+  (let ((log (format-combat-log "Player" "Goblin" nil 0.25 0.50 10 5)))
+    (assert (stringp log) () "combat-log: miss returns string")
+    (assert (search "miss" log) () "combat-log: miss contains 'miss'"))
+  ;; Kill case
+  (let ((log (format-combat-log "Player" "Goblin" t 0.75 0.50 10 5 :damage 10 :killed t)))
+    (assert (search "KILL" log) () "combat-log: kill contains 'KILL'"))
+  ;; XP text
+  (let ((log (format-combat-log "Player" "Goblin" t 0.75 0.50 10 5 :damage 5 :xp-text "+50 XP")))
+    (assert (search "+50 XP" log) () "combat-log: contains xp text")))
+
+(defun test-npc-respawn-seconds ()
+  "Test NPC respawn time from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (let ((seconds (npc-respawn-seconds npc)))
+      (assert (numberp seconds) () "npc-respawn: returns number")
+      (assert (>= seconds 0) () "npc-respawn: non-negative"))))
+
+(defun test-npc-attack-cooldown ()
+  "Test NPC attack cooldown from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (let ((cooldown (npc-attack-cooldown npc)))
+      (assert (numberp cooldown) () "npc-cooldown: returns number")
+      (assert (> cooldown 0) () "npc-cooldown: positive"))))
+
+(defun test-npc-attack-damage ()
+  "Test NPC attack damage from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (let ((damage (npc-attack-damage npc)))
+      (assert (numberp damage) () "npc-damage: returns number")
+      (assert (>= damage 0) () "npc-damage: non-negative"))))
+
+(defun test-intent-attack-direction ()
+  "Test attack direction from intent."
+  (let ((player (make-player 100.0 100.0 :id 1))
+        (intent (make-intent)))
+    ;; Direction from movement input - returns :side for horizontal
+    (set-intent-move intent 1.0 0.0)
+    (multiple-value-bind (dir sign) (intent-attack-direction player intent)
+      (assert (eq dir :side) () "attack-dir: side from dx")
+      (assert (numberp sign) () "attack-dir: sign is number"))
+    ;; Direction up/down from dy
+    (set-intent-move intent 0.0 -1.0)
+    (multiple-value-bind (dir sign) (intent-attack-direction player intent)
+      (assert (eq dir :up) () "attack-dir: up from negative dy"))
+    ;; No input and no target - returns nil
+    (set-intent-move intent 0.0 0.0)
+    (multiple-value-bind (dir sign) (intent-attack-direction player intent)
+      (assert (null dir) () "attack-dir: nil when no input or target")
+      (assert (zerop sign) () "attack-dir: zero sign when no input"))))
+
+(defun test-target-in-range-p ()
+  "Test if NPC is within targeting range."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (player (make-player 100.0 100.0 :id 1))
+         (npc-near (make-npc 120.0 100.0 :archetype archetype :id 1))
+         (npc-far (make-npc 500.0 500.0 :archetype archetype :id 2))
+         (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
+    ;; Near NPC should be in range
+    (assert (target-in-range-p player npc-near world) () "target-range: near in range")
+    ;; Far NPC should be out of range
+    (assert (not (target-in-range-p player npc-far world)) () "target-range: far out of range")))
+
+(defun test-attack-hitbox ()
+  "Test attack hitbox calculation."
+  (let ((player (make-player 100.0 100.0 :id 1))
+        (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
+    ;; Test each facing direction
+    (dolist (facing '(:up :down :left :right))
+      (setf (player-facing player) facing)
+      (multiple-value-bind (cx cy half-w half-h) (attack-hitbox player world)
+        (assert (numberp cx) () (format nil "hitbox ~a: cx is number" facing))
+        (assert (numberp cy) () (format nil "hitbox ~a: cy is number" facing))
+        (assert (> half-w 0) () (format nil "hitbox ~a: half-w positive" facing))
+        (assert (> half-h 0) () (format nil "hitbox ~a: half-h positive" facing))))))
+
+(defun test-npc-attack-range ()
+  "Test NPC attack range calculation."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1))
+         (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
+    (let ((range (npc-attack-range npc world)))
+      (assert (numberp range) () "npc-range: returns number")
+      (assert (> range 0) () "npc-range: positive"))))
+
 ;;; ============================================================
 ;;; NEW PROGRESSION TESTS (Priority 1)
 ;;; ============================================================
@@ -1274,34 +1384,75 @@ hello
     (assert (= (object-respawn-timer obj) 0.0) () "respawn-timer: zero")))
 
 ;;; ============================================================
+;;; TEST HELPERS
+;;; ============================================================
+
+(defun make-test-world (&key (tile-size 32.0) (collision-half 12.0))
+  "Create a minimal world struct for testing functions that need world."
+  (%make-world :tile-dest-size tile-size
+               :collision-half-width collision-half
+               :collision-half-height collision-half))
+
+;;; ============================================================
 ;;; NEW AI TESTS (Priority 1)
 ;;; ============================================================
 
 (defun test-npc-home-radius ()
   "Test NPC home radius from archetype."
-  ;; npc-home-radius requires a world object to calculate tile size
-  ;; Skip detailed test - function exists and is tested via smoke test
-  (assert (fboundp 'npc-home-radius) () "home-radius: function exists"))
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1))
+         (world (make-test-world :tile-size 32.0)))
+    (let ((radius (npc-home-radius npc world)))
+      (assert (numberp radius) () "home-radius: returns number")
+      (assert (>= radius 0) () "home-radius: non-negative"))))
 
 (defun test-npc-move-speed ()
   "Test NPC move speed from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (gethash :goblin *npc-archetypes*))
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
-    (when archetype
-      (let ((speed (npc-move-speed npc)))
-        (assert (numberp speed) () "move-speed: returns number")
-        (assert (> speed 0) () "move-speed: positive")))))
+    (let ((speed (npc-move-speed npc)))
+      (assert (numberp speed) () "move-speed: returns number")
+      (assert (> speed 0) () "move-speed: positive"))))
 
 (defun test-npc-wander-interval ()
   "Test NPC wander interval from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (gethash :goblin *npc-archetypes*))
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
-    (when archetype
-      (let ((interval (npc-wander-interval npc)))
-        (assert (numberp interval) () "wander-interval: returns number")
-        (assert (>= interval 0) () "wander-interval: non-negative")))))
+    (let ((interval (npc-wander-interval npc)))
+      (assert (numberp interval) () "wander-interval: returns number")
+      (assert (>= interval 0) () "wander-interval: non-negative"))))
+
+(defun test-npc-flee-speed-mult ()
+  "Test NPC flee speed multiplier from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (let ((mult (npc-flee-speed-mult npc)))
+      (assert (numberp mult) () "flee-speed-mult: returns number")
+      (assert (> mult 0) () "flee-speed-mult: positive"))))
+
+(defun test-closest-player ()
+  "Test finding closest player to NPC."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 50.0 50.0 :archetype archetype :id 1))
+         (p1 (make-player 100.0 50.0 :id 1))   ;; 50 units away
+         (p2 (make-player 60.0 50.0 :id 2))    ;; 10 units away (closest)
+         (p3 (make-player 200.0 200.0 :id 3))  ;; far away
+         (players (vector p1 p2 p3)))
+    ;; Note: combatant-alive-p always returns T for players
+    ;; p2 is closest by position
+    (let ((closest (closest-player players npc)))
+      (assert (eq closest p2) () "closest-player: p2 is closest"))
+    ;; Single player
+    (let ((closest (closest-player (vector p1) npc)))
+      (assert (eq closest p1) () "closest-player: single player"))
+    ;; Empty/nil players
+    (assert (null (closest-player (vector) npc)) () "closest-player: empty vector")
+    (assert (null (closest-player nil npc)) () "closest-player: nil vector")))
 
 ;;; ============================================================
 ;;; NEW DATA TESTS (Priority 2)
