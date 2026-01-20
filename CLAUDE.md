@@ -18,15 +18,23 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 make tests              # Run ALL tests including smoke test (recommended)
 ```
 
-Individual test targets (run by `make tests`):
+**CRITICAL TEST ORDER**: The first three tests MUST run in this exact order:
+1. `make checkparens` - Verify balanced parentheses (fastest, catches syntax errors)
+2. `make ci` - Cold compile + UDP handshake (catches compile errors)
+3. `make smoke` - Full client/server smoke test (catches runtime errors early)
+
+This order ensures we fail fast on basic errors before running slower tests.
+
+Individual test targets (run by `make tests` in this order):
 ```bash
-make checkparens        # Verify balanced parentheses in all .lisp files
-make ci                 # Cold compile + UDP handshake test (no GPU needed)
+make checkparens        # 1st - Verify balanced parentheses in all .lisp files
+make ci                 # 2nd - Cold compile + UDP handshake test (no GPU needed)
+make smoke              # 3rd - Full client/server smoke test with window (2s default)
 make test-unit          # Unit tests (pure functions, game logic, utilities)
 make test-persistence   # Data integrity tests (serialization, migrations, invariants)
 make test-security      # Security tests (input validation, exploit prevention)
+make test-trade         # Trade system tests (player-to-player trading, validation)
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
-make smoke              # Full client/server smoke test with window (2s default)
 ```
 
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
@@ -83,7 +91,8 @@ We aim for 99% test coverage. Tests prevent regressions and catch bugs early. Ev
 **Test locations**:
 - `tests/persistence-test.lisp` - Data integrity, serialization, migrations
 - `tests/security-test.lisp` - Input validation, exploit prevention
-- `tests/unit-test.lisp` - Pure functions, game logic, utilities (NEW)
+- `tests/unit-test.lisp` - Pure functions, game logic, utilities
+- `tests/trade-test.lisp` - Trade system, player-to-player trading
 
 ### Proactive Test Writing Requirements (For Claude)
 
@@ -105,6 +114,7 @@ We aim for 99% test coverage. Tests prevent regressions and catch bugs early. Ev
 | `tests/unit-test.lisp` | Pure functions, utilities, game logic, AI decisions |
 | `tests/persistence-test.lisp` | Serialization, migrations, database operations |
 | `tests/security-test.lisp` | Input validation, exploit prevention, auth |
+| `tests/trade-test.lisp` | Trade system, offer/accept flow, gold/item validation |
 
 **How to implement:**
 1. Write the test BEFORE or ALONGSIDE the implementation
@@ -611,7 +621,7 @@ Key design docs:
 ## Important Reminders
 
 - **GIT: READ-ONLY**: Never run git commands that modify state (commit, stash, reset, checkout, push, add, etc.) without explicit user permission. Read-only commands (status, log, diff, show) are fine. The user manages version control.
-- **ALL TESTS MUST PASS**: Before claiming work complete, run ALL test targets in order: `make checkparens && make ci && make test-persistence && make test-security && make checkdocs && make smoke`. No exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run `make tests` which runs ALL test targets in the correct order. If running individually, you MUST follow this order: `make checkparens && make ci && make smoke && make test-unit && make test-persistence && make test-security && make test-trade && make checkdocs`. The first three (checkparens, ci, smoke) MUST run in that exact order - no exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
 - **Data integrity tests must pass**: `make test-persistence` ensures no save corruption

@@ -82,10 +82,16 @@ Before execution:
 
 ## Atomic Execution
 
-The trade completion uses a Redis Lua script (`trade_complete.lua`) to ensure atomicity:
+The trade completion uses a Redis Lua script (`trade_complete.lua`) to ensure atomicity and
+verify session ownership before committing:
 
 ```lua
--- Atomic swap: both players update or neither does
+-- Verify session ownership before committing
+local actual_owner1 = redis.call('GET', owner_key1)
+local actual_owner2 = redis.call('GET', owner_key2)
+if actual_owner1 ~= expected_owner or actual_owner2 ~= expected_owner then
+  return redis.error_reply("TRADE_ERROR: Ownership mismatch")
+end
 redis.call('SET', player1_key, new_player1_data)
 redis.call('SET', player2_key, new_player2_data)
 return "OK"
@@ -104,6 +110,10 @@ If the server crashes between these operations, Redis rolls back the entire scri
 ```
 
 ### Per-Tick Processing
+
+Trade intent processing is implemented but not currently wired into the server tick loop.
+To enable trading, `process-trade-intents` and `cleanup-timed-out-trades` need to be called
+from the server update loop.
 
 ```lisp
 ;; In server tick, after player intents

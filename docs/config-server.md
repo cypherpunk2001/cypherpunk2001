@@ -34,6 +34,13 @@ How it connects
 | `*max-delta-age*` | `60` | Max snapshots behind before forcing full resync |
 | `*max-delta-gap*` | `5` | Max snapshot gap tolerated before forcing full resync |
 
+### UDP Fragmentation
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*chunk-overhead*` | `100` | Reserved bytes for chunk message header |
+| `*max-chunk-payload*` | `65507-100` | Max payload bytes per UDP chunk |
+| `*chunk-timeout*` | `1.0` | Seconds before discarding incomplete chunk sequences |
+
 ### Auth Encryption
 | Parameter | Default | Description |
 |-----------|---------|-------------|

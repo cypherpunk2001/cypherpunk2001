@@ -159,7 +159,7 @@ world + assets
 
 **Supporting**
 - [main.md](main.md) - Client entry point
-- [admin.md](admin.md) - Admin commands (ban, kick, broadcast, etc.)
+- [admin.md](admin.md) - Admin commands and roadmap
 - [utils.md](utils.md) - Helper functions
 - [package.md](package.md) - Package definition
 

@@ -16,7 +16,7 @@ Key structs
 - `equipment`: equipped item IDs aligned to `*equipment-slot-ids*`.
 - `id-source`: monotonic ID generator used for stable entity IDs.
 - `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
-- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, chat buffer/active flag, hovered NPC name, HUD/combat log ring buffers with HUD fade timers, minimap layout/colors, Save/Load/quit menu buttons, and a context menu with target metadata; assets include object and item textures).
+- `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, chat buffer/active flag, hovered NPC name, HUD/combat log ring buffers with HUD fade timers, minimap layout/colors, menu layout for music/debug/editor/fullscreen/prediction/tile-filter toggles plus logout/unstuck actions, and a context menu with target metadata; assets include object and item textures).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette, object palette).
 - `combat-event`, `combat-event-queue`: event system for decoupling simulation from UI (server emits events, client renders them).
 - `game`: top-level aggregator passed to update/draw functions (includes the primary player plus a `players` array, combat-events queue, a client-side intent buffer, a net role flag, a queued net request list, and the client-side `net-player-id`).
@@ -48,7 +48,7 @@ Combat event queue (client/server separation)
 - This decouples server-side simulation from client-side UI rendering
 
 Network request queue
-- `queue-net-request`: push a client request (save/load) for network transport
+- `queue-net-request`: push a client request (currently used for `:logout`) for network transport
 - `drain-net-requests`: return queued requests (FIFO) and clear the queue
 
 Design note

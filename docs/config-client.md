@@ -25,6 +25,13 @@ How it connects
 
 *Why restart:* Raylib creates the window once at startup. Changing these affects UI layout calculations immediately, but NOT the actual window dimensions.
 
+### Frame Rate Target
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*client-target-fps*` | `60` | Target FPS for client rendering (0 = unlimited/vsync) |
+
+*Why restart:* Target FPS is set at startup. Changing it at runtime requires calling `raylib:set-target-fps` manually.
+
 ### Asset Paths
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -90,6 +97,11 @@ How it connects
 | `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation. Higher = smoother, more perceived lag |
 | `*client-prediction-enabled*` | `nil` | Enable client-side prediction for local player. Toggle via SLIME for testing |
 | `*prediction-error-threshold*` | `5.0` | Max prediction error in pixels before correction |
+
+### Rendering
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles |
 
 ### Camera
 | Parameter | Default | Description |

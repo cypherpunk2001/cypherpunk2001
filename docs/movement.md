@@ -37,12 +37,12 @@ Key functions
 - `edge-opposite` - Return opposite world edge.
 - `edge-spawn-position` - Return spawn coordinates for target edge.
 
-**LIMITATION - Multi-Player Zone Transitions:**
-Only the first connected player (index 0) can trigger zone transitions on a single server process. Other players are locked to the current zone. When player 0 transitions, all clients receive the new zone (they follow together). This prevents random players from teleporting everyone unexpectedly, while still allowing exploration.
-
-For production multi-player with true per-player zones, run separate server processes per zone. The current single-server model is designed for development/testing.
-
-**Stress Testing Tip:** Connect your client BEFORE running `make stress` so you're player 0 and can control zone transitions.
+**Multi-Zone Caveat (Current Implementation):**
+Per-player zone transitions are supported, but collision and edge detection still use the
+single `world` wall map. When multiple players are in different zones, only the most
+recently loaded zone is reflected in the `world` collision bounds. Players in other zones
+may have inaccurate collision/edge detection until their zone becomes the active `world`
+zone.
 
 **NPC Transition:**
 - `collect-transition-npcs` - Collect NPCs that should carry across zones.
@@ -71,7 +71,7 @@ For production multi-player with true per-player zones, run separate server proc
 
 **Player Movement:**
 - `update-player-position` - Move player with collision and target logic.
-- `update_running_state` - Update stamina and return speed multiplier.
+- `update-running-state` - Update stamina and return speed multiplier.
 - `player-intent-direction` - Return intended movement direction for edge transitions.
 
 **Player Unstuck System:**
@@ -85,7 +85,7 @@ For production multi-player with true per-player zones, run separate server proc
 - `wall-blocked-p` - Treat walls and out-of-bounds as blocked for collision.
 - `world-search-radius` - Return max search radius in tiles for open spawn placement.
 - `zone-bounds-from-dimensions` - Return wall bounds for zone with given dimensions.
-- `log-player_position` - Emit verbose position diagnostics for debugging.
+- `log-player-position` - Emit verbose position diagnostics for debugging.
 
 Key concepts
 - Zone collision tiles are converted into the wall map at load time.

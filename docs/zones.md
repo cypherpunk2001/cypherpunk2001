@@ -182,13 +182,11 @@ Empty zones (no players) have idle NPCs - no AI processing.
 
 ## Current Limitations
 
-1. **Shared Collision Map:** All players use the world's current zone for collision detection.
-   Players who transition to a different zone may have imperfect collision until the world
-   zone switches to match theirs.
-
-2. **Zone Edge Detection:** Players can only trigger zone transitions when they're in the
-   same zone as the world's current zone. This prevents stranded players in other zones
-   from transitioning further until someone else triggers a world zone change.
+1. **Shared Collision Map:** The `world` struct holds a single collision wall map derived
+   from the most recently loaded zone. When multiple players are active across different
+   zones, only the current `world` zone's collision bounds are used for movement and
+   edge detection. Players in other zones may experience inaccurate collision or
+   transition detection until their zone is loaded into `world`.
 
 ## Implementation History
 

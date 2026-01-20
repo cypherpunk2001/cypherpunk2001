@@ -40,7 +40,8 @@ How it connects
 | `*zone-default-height*` | `64` | Default zone height in tiles for new zones |
 | `*zone-default-chunk-size*` | `8` | Default chunk size in tiles for new zones |
 | `*world-graph-path*` | `"data/world-graph.lisp"` | World graph data path relative to repo |
-| `*save-filepath*` | `"data/savegame.lisp"` | Default save file path for ESC menu Save/Load |
+| `*known-zone-ids*` | `nil` | Set of zone IDs from `load-world-graph` for validation (nil skips validation) |
+| `*save-filepath*` | `"data/savegame.lisp"` | Default save file path used by `save-game`/`load-game` helpers (not wired to client menu) |
 
 *Why restart:* World graph and initial zone loaded once at startup.
 

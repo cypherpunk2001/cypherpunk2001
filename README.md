@@ -81,15 +81,21 @@ MMORPG_DB_BACKEND=memory make server
 make tests              # Run ALL tests including smoke (recommended)
 ```
 
-Individual test targets (run by `make tests`):
+**Critical test order**: The first three tests MUST run in this exact order:
+1. `make checkparens` - Catches syntax errors (fastest)
+2. `make ci` - Catches compile errors
+3. `make smoke` - Catches runtime errors early
+
+Individual test targets (run by `make tests` in this order):
 ```shell
-make checkparens        # Syntax error testing (balanced parens)
-make ci                 # Compile-time error testing, UDP handshake testing
-make test-unit          # Unit tests (68 tests: pure functions, game logic)
-make test-persistence   # Data integrity tests (37 tests: serialization, migrations)
-make test-security      # Security tests (23 tests: auth, input validation)
+make checkparens        # 1st - Syntax error testing (balanced parens)
+make ci                 # 2nd - Compile-time error testing, UDP handshake testing
+make smoke              # 3rd - Full client/server smoke test with window (2s default)
+make test-unit          # Unit tests (pure functions, game logic)
+make test-persistence   # Data integrity tests (serialization, migrations)
+make test-security      # Security tests (auth, input validation)
+make test-trade         # Trade system tests (player-to-player trading)
 make checkdocs          # Verify docs exist for each src file
-make smoke              # Full client/server smoke test with window (2s default)
 ```
 
 Test env overrides:

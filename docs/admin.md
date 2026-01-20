@@ -2,7 +2,7 @@
 
 REPL-based admin tools for managing the game server. All commands run from SLIME connected to the server process - no CLI tool or GUI needed.
 
-## Tier A: Implement Now
+## Tier A: Implemented
 
 Commands that can be built with current infrastructure.
 
@@ -108,7 +108,9 @@ Future convenience commands.
 1. **Export all commands** from the `mmorpg` package
 2. **Validate player-id exists** before modifying
 3. **Log all admin actions** (who did what, when) for accountability
-4. **Immediate save after modifications** (tier-1, not batched)
+4. **Persistence**: Most admin modifications mark players dirty (tier-2) and rely on batch flush;
+   destructive actions (wipe/kill) persist immediately. Use `db-save-player-immediate` if you
+   need immediate persistence for a specific admin path.
 5. **Return values**: plist for inspection commands, T/NIL for actions
 6. **Error handling**: Signal clear conditions, don't silently fail
 
@@ -139,6 +141,6 @@ T  ; bob disconnected
 
 ## Status
 
-- **Tier A**: Not started
+- **Tier A**: Implemented
 - **Tier B**: Blocked on infrastructure
 - **Tier C**: Future roadmap

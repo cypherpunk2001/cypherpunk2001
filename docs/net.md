@@ -17,14 +17,14 @@ Message format (plist, printed with `prin1`)
 - `(:type :login :username <str> :password <str>)` -> authenticate existing account
 - `(:type :logout)` -> graceful disconnect (saves player state)
 - `(:type :intent :payload <intent-plist>)` -> client input for the current frame
-- `(:type :save)` -> request server save
-- `(:type :load)` -> request server load
 
 **Server -> Client:**
 - `(:type :hello-ack)` -> server is online (response to :hello ping)
 - `(:type :auth-ok :player-id <id>)` -> authentication successful
 - `(:type :auth-fail :reason <keyword>)` -> authentication failed
-  - Reasons: `:missing-credentials`, `:username-taken`, `:bad-credentials`, `:already-logged-in`, `:wrong-zone`
+  - Reasons: `:rate-limited`, `:missing-credentials`, `:username-taken`, `:bad-credentials`,
+    `:already-logged-in`, `:ownership-conflict`, `:account-quarantined`, `:data-corrupted`,
+    `:load-failed`, `:internal-error`, `:wrong-zone`
   - When `:wrong-zone`, the server includes `:zone-id` with the player's saved zone.
 - `(:type :snapshot :format <format> :state <game-state> ...)` -> server snapshot
   - Formats: `:compact-v3` (full state), `:delta-v3` (changed entities only)
@@ -92,7 +92,7 @@ Security: Input Validation
 - Speed hack prevention: Server uses own `*player-speed*` constant, ignores magnitude of move-dx/dy.
 - Double-login prevention: `*active-sessions*` tracks logged-in usernames; second login attempt rejected.
 - Malformed packet handling: Invalid plists or types are dropped gracefully without crashing.
-- See `scripts/test-security.lisp` for the security test suite (7 tests).
+- See `tests/security-test.lisp` (driven by `scripts/test-security.lisp`) for the security test suite (23 tests).
 
 Client-Side Interpolation
 - Remote entities (other players, NPCs) are rendered slightly in the past for smooth movement.
@@ -123,12 +123,13 @@ Client-Side Prediction (Optional)
 - Mispredictions are logged when `*verbose*` is enabled.
 
 Performance & Scaling
-- Current server runs ONE zone (tested smooth with hundreds of entities on client).
+- Single server process can host multiple zones; snapshots and NPC simulation are filtered per zone.
+- World collision is still derived from the currently loaded zone (see `docs/movement.md` for caveats).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
 - Snapshot optimization:
-  - State serialized once per frame via `serialize-game-state`
-  - Snapshot encoded to bytes ONCE and sent to all clients (encode-once-send-many)
-  - Previously encoded O(clients × state_size), now O(state_size) - critical for 40+ clients
+  - State serialized once per zone per frame via `serialize-game-state-for-zone`
+  - Snapshot encoded to bytes once per zone and sent to all clients in that zone (encode-once-send-many)
+  - Previously encoded O(clients × state_size), now O(zone_count × state_size)
 - Accurate tick timing: Server tracks frame processing time and only sleeps for remaining duration. This ensures consistent tick rate regardless of frame complexity (no slowdown under load).
 - Optional parallel snapshot sending: Use `worker-threads` parameter to parallelize network sends across multiple threads.
   - Default: 1 (serial sending, simple)
