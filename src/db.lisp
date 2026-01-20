@@ -347,6 +347,9 @@
 (defparameter *redis-script-shas* (make-hash-table :test 'equal)
   "Cache of script name -> SHA1 hash for EVALSHA calls.")
 
+(defparameter *redis-script-bodies* (make-hash-table :test 'equal)
+  "Cache of script name -> script body for NOSCRIPT recovery.")
+
 (defgeneric storage-eval-script (storage script-name keys args)
   (:documentation "Execute a Lua script by name with KEYS and ARGS.
    KEYS is a list of Redis keys, ARGS is a list of additional arguments.
@@ -686,12 +689,15 @@
 ;;; Lua Script Execution Methods (Redis)
 
 (defmethod storage-script-load ((storage redis-storage) script-name script-body)
-  "Load a Lua script into Redis and cache its SHA."
+  "Load a Lua script into Redis and cache its SHA.
+   Also caches the script body for NOSCRIPT recovery."
   (handler-case
       (redis:with-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((sha (red:script-load script-body)))
           (setf (gethash script-name *redis-script-shas*) sha)
+          ;; Cache body for NOSCRIPT recovery (Phase F)
+          (setf (gethash script-name *redis-script-bodies*) script-body)
           (log-verbose "Loaded Redis script ~a with SHA ~a" script-name sha)
           sha))
     (error (e)
@@ -699,7 +705,8 @@
       nil)))
 
 (defmethod storage-eval-script ((storage redis-storage) script-name keys args)
-  "Execute a Lua script by name using EVALSHA with fallback to EVAL."
+  "Execute a Lua script by name using EVALSHA with NOSCRIPT recovery.
+   If Redis has evicted the script, reloads from cached body and retries."
   (let ((sha (gethash script-name *redis-script-shas*)))
     (unless sha
       (warn "Script ~a not loaded - call storage-script-load first" script-name)
@@ -712,12 +719,29 @@
                  (all-args (append keys args)))
             (apply #'red:evalsha sha num-keys all-args)))
       (error (e)
-        ;; If NOSCRIPT error, script was flushed - reload and retry
+        ;; If NOSCRIPT error, script was evicted - reload and retry (Phase F)
         (let ((err-str (format nil "~a" e)))
           (if (search "NOSCRIPT" err-str)
-              (progn
-                (warn "Script ~a evicted from Redis cache - cannot reload at runtime" script-name)
-                nil)
+              ;; Script evicted - attempt reload from cached body
+              (let ((script-body (gethash script-name *redis-script-bodies*)))
+                (if script-body
+                    (progn
+                      (log-verbose "Script ~a evicted, reloading..." script-name)
+                      (handler-case
+                          (redis:with-connection (:host (redis-storage-host storage)
+                                                  :port (redis-storage-port storage))
+                            (let ((new-sha (red:script-load script-body)))
+                              (setf (gethash script-name *redis-script-shas*) new-sha)
+                              ;; Retry with new SHA
+                              (let* ((num-keys (length keys))
+                                     (all-args (append keys args)))
+                                (apply #'red:evalsha new-sha num-keys all-args))))
+                        (error (retry-e)
+                          (warn "Script ~a reload/retry failed: ~a" script-name retry-e)
+                          nil)))
+                    (progn
+                      (warn "Script ~a evicted but body not cached - cannot reload" script-name)
+                      nil)))
               (progn
                 (warn "Redis EVALSHA error for ~a: ~a" script-name e)
                 nil)))))))

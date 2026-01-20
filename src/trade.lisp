@@ -334,13 +334,21 @@
       (unless (and updated-p1 updated-p2)
         (cancel-trade-session session "inventory error")
         (return-from execute-trade-atomic nil))
-      ;; Serialize for atomic save
-      (let ((p1-data (with-output-to-string (s)
-                       (write (serialize-player updated-p1) :stream s)))
-            (p2-data (with-output-to-string (s)
-                       (write (serialize-player updated-p2) :stream s)))
-            (p1-key (player-key (player-id player1)))
-            (p2-key (player-key (player-id player2))))
+      ;; Look up zone-ids from sessions (same pattern as flush-dirty-players)
+      (let* ((session-1 (gethash (player-id player1) *player-sessions*))
+             (session-2 (gethash (player-id player2) *player-sessions*))
+             (zone-1 (and session-1 (player-session-zone-id session-1)))
+             (zone-2 (and session-2 (player-session-zone-id session-2))))
+        ;; Serialize with version tagging (Phase F: trade version tagging)
+        (let* ((data-1 (serialize-player updated-p1 :include-visuals nil :zone-id zone-1))
+               (data-2 (serialize-player updated-p2 :include-visuals nil :zone-id zone-2)))
+          ;; Add version before stringifying (same pattern as flush-dirty-players)
+          (setf data-1 (plist-put data-1 :version *player-schema-version*))
+          (setf data-2 (plist-put data-2 :version *player-schema-version*))
+          (let ((p1-data (prin1-to-string data-1))
+                (p2-data (prin1-to-string data-2))
+                (p1-key (player-key (player-id player1)))
+                (p2-key (player-key (player-id player2))))
         ;; Execute atomic swap
         (let ((result (storage-eval-script *storage* "trade_complete"
                                            (list p1-key p2-key)
@@ -363,7 +371,7 @@
                 (warn "Trade ~a atomic execution failed: ~a"
                       (trade-session-id session) result)
                 (cancel-trade-session session "atomic execution failed")
-                nil)))))))
+                nil)))))))))
 
 ;;;; ========================================================================
 ;;;; Trade Timeout Handling
