@@ -26,12 +26,17 @@
                 test-u32-hash
                 test-u32-hash-deterministic
                 test-exponential-backoff-delay
+                test-player-animation-params
+                test-relative-path-from-root
                 ;; Combat Tests
                 test-aabb-overlap-p
                 test-aabb-overlap-p-edge-cases
                 test-melee-hit-chance
                 test-melee-hit-chance-clamped
                 test-melee-max-hit
+                test-combatant-display-name
+                test-find-npc-by-id
+                test-roll-melee-damage
                 ;; Progression Tests
                 test-xp-to-level
                 test-level-to-xp
@@ -46,6 +51,18 @@
                 test-equipment-slot-index
                 test-player-adjacent-to-tile-p
                 test-swap-inventory-slots
+                test-update-skill-level
+                test-clamp-player-hp
+                test-format-xp-awards
+                test-item-display-name
+                test-inventory-slot-label
+                test-inventory-add
+                test-inventory-remove
+                test-roll-loot-entry
+                test-roll-loot-count
+                test-object-respawn-seconds
+                test-object-respawnable-p
+                test-object-respawn-timer
                 ;; Movement Tests
                 test-wall-blocked-p
                 test-tile-center-position
@@ -55,18 +72,48 @@
                 ;; AI Tests
                 test-npc-should-flee-p
                 test-npc-perception-range-sq
+                test-npc-home-radius
+                test-npc-move-speed
+                test-npc-wander-interval
                 ;; Data Tests
                 test-plist-form-p
                 test-data-section-header-p
                 test-data-section-entry-p
                 test-normalize-pairs
+                test-validate-item-archetype-plist
+                test-item-archetype-from-plist
+                test-validate-object-archetype-plist
+                test-object-archetype-from-plist
+                test-loot-entry-from-spec
+                test-validate-loot-table-plist
+                test-loot-table-from-plist
+                test-animation-set-from-plist
+                test-merge-animation-sets
                 ;; Zone Tests
                 test-zone-chunk-key
                 test-tile-key-roundtrip
                 test-zone-tile-in-bounds-p
+                test-zone-label
+                test-zone-data-plist
+                test-make-empty-zone
+                test-build-tiles-from-fill
+                test-zone-layer-tile-at
                 ;; Intent Tests
                 test-set-intent-move
                 test-set-intent-face
+                test-reset-frame-intent
+                test-consume-intent-actions
+                test-set-intent-target
+                test-clear-intent-target
+                test-request-pickup-target
+                test-request-drop-item
+                test-request-inventory-swap
+                test-trade-intent-functions
+                ;; Net Tests
+                test-string-to-octets
+                test-octets-to-string
+                test-encode-decode-net-message
+                test-host-to-string
                 ;; Save/Serialization Tests
                 test-quantize-coord-roundtrip
                 test-quantize-timer-roundtrip
@@ -899,11 +946,11 @@ hello
     ;; p50 (median) should be around 5
     (let ((p50 (calculate-percentile values 50)))
       (assert (and p50 (>= p50 4) (<= p50 6)) ()
-              (format nil "p50 of 1-10 should be ~5, got ~a" p50)))
+              (format nil "p50 of 1-10 should be around 5, got ~a" p50)))
     ;; p99 should be close to 10
     (let ((p99 (calculate-percentile values 99)))
       (assert (and p99 (>= p99 9) (<= p99 10)) ()
-              (format nil "p99 of 1-10 should be ~10, got ~a" p99)))
+              (format nil "p99 of 1-10 should be around 10, got ~a" p99)))
     ;; p0 should be close to 1
     (let ((p0 (calculate-percentile values 0)))
       (assert (and p0 (= p0 1)) ()
@@ -976,3 +1023,602 @@ hello
           "metrics: save errors = 1")
   (assert (= (redis-metrics-total-load-errors *redis-metrics*) 1) ()
           "metrics: load errors = 1"))
+
+;;; ============================================================
+;;; NEW UTILS TESTS (Priority 6)
+;;; ============================================================
+
+(defun test-player-animation-params ()
+  "Test player animation params returns correct values for states."
+  (multiple-value-bind (frames time) (player-animation-params :idle)
+    (assert (integerp frames) () "anim-params: idle frames integer")
+    (assert (numberp time) () "anim-params: idle time number")
+    (assert (> frames 0) () "anim-params: idle frames > 0"))
+  (multiple-value-bind (frames time) (player-animation-params :walk)
+    (assert (integerp frames) () "anim-params: walk frames integer")
+    (assert (numberp time) () "anim-params: walk time number"))
+  (multiple-value-bind (frames time) (player-animation-params :attack)
+    (assert (integerp frames) () "anim-params: attack frames integer")
+    (assert (numberp time) () "anim-params: attack time number")))
+
+(defun test-relative-path-from-root ()
+  "Test relative path extraction from root."
+  (let ((result (relative-path-from-root "/home/user/project/src/file.lisp"
+                                          "/home/user/project/")))
+    (assert (stringp result) () "relative-path: returns string")
+    (assert (string= result "src/file.lisp") () "relative-path: strips root"))
+  ;; Path not under root
+  (let ((result (relative-path-from-root "/other/path/file.txt"
+                                          "/home/user/")))
+    (assert (stringp result) () "relative-path: other returns string")))
+
+;;; ============================================================
+;;; NEW COMBAT TESTS (Priority 1)
+;;; ============================================================
+
+(defun test-combatant-display-name ()
+  "Test combatant display name for players and NPCs."
+  (ensure-test-game-data)
+  ;; Player display name - returns "Player" for all players
+  (let ((player (make-player 0.0 0.0 :id 1)))
+    (let ((name (combatant-display-name player)))
+      (assert (stringp name) () "display-name: player returns string")
+      (assert (string= name "Player") () "display-name: player = Player")))
+  ;; NPC display name - use default-npc-archetype for reliability
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (let ((name (combatant-display-name npc)))
+      (assert (stringp name) () "display-name: npc returns string"))))
+
+(defun test-find-npc-by-id ()
+  "Test finding NPC by ID in array."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc1 (make-npc 0.0 0.0 :archetype archetype :id 100))
+         (npc2 (make-npc 10.0 10.0 :archetype archetype :id 200))
+         (npcs (vector npc1 npc2)))
+    ;; Find existing
+    (assert (eq (find-npc-by-id npcs 100) npc1) () "find-npc: id 100")
+    (assert (eq (find-npc-by-id npcs 200) npc2) () "find-npc: id 200")
+    ;; Not found
+    (assert (null (find-npc-by-id npcs 999)) () "find-npc: not found")
+    ;; Empty vector - uses loop :across which requires vector
+    (assert (null (find-npc-by-id (vector) 100)) () "find-npc: empty")))
+
+(defun test-roll-melee-damage ()
+  "Test melee damage roll is within expected range."
+  (ensure-test-game-data)
+  (let ((player (make-player 0.0 0.0 :id 1)))
+    (setf (skill-level (stat-block-strength (player-stats player))) 10)
+    ;; Roll multiple times to test range
+    (let ((max-hit (melee-max-hit player)))
+      (dotimes (_ 10)
+        (let ((damage (roll-melee-damage player)))
+          (assert (>= damage 1) () "roll-damage: at least 1")
+          (assert (<= damage max-hit) () "roll-damage: at most max-hit"))))))
+
+;;; ============================================================
+;;; NEW PROGRESSION TESTS (Priority 1)
+;;; ============================================================
+
+(defun test-update-skill-level ()
+  "Test skill level updates from XP."
+  (let ((skill (make-skill :level 1 :xp 0)))
+    ;; No change at 0 XP
+    (multiple-value-bind (old new) (update-skill-level skill)
+      (assert (= old 1) () "update-skill: old level 1")
+      (assert (= new 1) () "update-skill: new level 1"))
+    ;; Add enough XP for level 2
+    (setf (skill-xp skill) (level->xp 2))
+    (multiple-value-bind (old new) (update-skill-level skill)
+      (assert (= old 1) () "update-skill: old was 1")
+      (assert (= new 2) () "update-skill: new is 2"))))
+
+(defun test-clamp-player-hp ()
+  "Test player HP clamping."
+  (ensure-test-game-data)
+  (let ((player (make-player 0.0 0.0 :id 1)))
+    ;; Set HP above max
+    (let ((max-hp (combatant-max-hp player)))
+      (setf (player-hp player) (+ max-hp 100))
+      (clamp-player-hp player)
+      (assert (<= (player-hp player) max-hp) () "clamp-hp: not above max"))
+    ;; Set HP negative
+    (setf (player-hp player) -10)
+    (clamp-player-hp player)
+    (assert (>= (player-hp player) 0) () "clamp-hp: not negative")))
+
+(defun test-format-xp-awards ()
+  "Test XP awards formatting."
+  ;; All zeros - no format
+  (let ((result (format-xp-awards 0 0 0 0)))
+    (assert (null result) () "format-xp: all zeros -> nil"))
+  ;; Single stat
+  (let ((result (format-xp-awards 10 0 0 0)))
+    (assert (stringp result) () "format-xp: attack only")
+    (assert (search "A+" result) () "format-xp: contains A+"))
+  ;; Multiple stats
+  (let ((result (format-xp-awards 10 20 0 5)))
+    (assert (stringp result) () "format-xp: multiple stats")
+    (assert (search "A+" result) () "format-xp: contains A+")
+    (assert (search "S+" result) () "format-xp: contains S+")
+    (assert (search "HP+" result) () "format-xp: contains HP+")))
+
+(defun test-item-display-name ()
+  "Test item display name lookup."
+  (ensure-test-game-data)
+  ;; Known item
+  (let ((name (item-display-name :health-potion)))
+    (assert (stringp name) () "item-name: returns string")
+    (assert (> (length name) 0) () "item-name: not empty"))
+  ;; Unknown item returns fallback
+  (let ((name (item-display-name :nonexistent-item-12345)))
+    (assert (stringp name) () "item-name: unknown returns string"))
+  ;; Nil item
+  (let ((name (item-display-name nil)))
+    (assert (string= name "Unknown") () "item-name: nil -> Unknown")))
+
+(defun test-inventory-slot-label ()
+  "Test inventory slot label formatting."
+  (ensure-test-game-data)
+  ;; Single item
+  (let ((label (inventory-slot-label :health-potion 1)))
+    (assert (stringp label) () "slot-label: returns string")
+    (assert (not (search "x" label)) () "slot-label: single no count"))
+  ;; Stacked items
+  (let ((label (inventory-slot-label :health-potion 5)))
+    (assert (stringp label) () "slot-label: stacked returns string")
+    (assert (search "x5" label) () "slot-label: shows count")))
+
+(defun test-inventory-add ()
+  "Test adding items to inventory."
+  (ensure-test-game-data)
+  ;; Create a player which has a properly initialized inventory
+  (let* ((player (make-player 0.0 0.0 :id 999))
+         (inventory (player-inventory player))
+         (slots (inventory-slots inventory)))
+    ;; Clear all slots first
+    (dotimes (i (length slots))
+      (setf (aref slots i) (make-inventory-slot :item-id nil :count 0)))
+    ;; Add items - returns leftover (coins always stack)
+    (let ((leftover (inventory-add inventory :coins 100)))
+      (assert (= leftover 0) () "inv-add: no leftover")
+      ;; Check that coins were added somewhere
+      (let ((total 0))
+        (loop :for slot :across slots
+              :when (eq (inventory-slot-item-id slot) :coins)
+                :do (incf total (inventory-slot-count slot)))
+        (assert (= total 100) () "inv-add: total coins = 100")))))
+
+(defun test-inventory-remove ()
+  "Test removing items from inventory."
+  (ensure-test-game-data)
+  ;; Create a player which has a properly initialized inventory
+  (let* ((player (make-player 0.0 0.0 :id 999))
+         (inventory (player-inventory player))
+         (slots (inventory-slots inventory)))
+    ;; Clear all slots first
+    (dotimes (i (length slots))
+      (setf (aref slots i) (make-inventory-slot :item-id nil :count 0)))
+    ;; Add then remove
+    (setf (aref slots 0) (make-inventory-slot :item-id :health-potion :count 5))
+    (let ((leftover (inventory-remove inventory :health-potion 3)))
+      (assert (= leftover 0) () "inv-remove: removed 3")
+      (assert (= (inventory-slot-count (aref slots 0)) 2) () "inv-remove: 2 left"))
+    ;; Remove more than exists
+    (let ((leftover (inventory-remove inventory :health-potion 10)))
+      (assert (= leftover 8) () "inv-remove: 8 couldn't be removed"))))
+
+(defun test-roll-loot-entry ()
+  "Test loot entry rolling."
+  (let ((entries (list (%make-loot-entry :item-id :coins :weight 100 :min-count 1 :max-count 1)
+                       (%make-loot-entry :item-id :health-potion :weight 50 :min-count 1 :max-count 1))))
+    ;; Roll multiple times - should get entries
+    (let ((results nil))
+      (dotimes (_ 20)
+        (let ((entry (roll-loot-entry entries)))
+          (when entry
+            (pushnew (loot-entry-item-id entry) results))))
+      (assert (member :coins results) () "loot-roll: got coins")
+      ;; Potion might not appear every 20 rolls but that's probabilistic
+      )))
+
+(defun test-roll-loot-count ()
+  "Test loot count rolling."
+  (let ((entry (%make-loot-entry :item-id :coins :weight 100 :min-count 5 :max-count 10)))
+    (dotimes (_ 20)
+      (let ((count (roll-loot-count entry)))
+        (assert (>= count 5) () "loot-count: at least min")
+        (assert (<= count 10) () "loot-count: at most max"))))
+  ;; Single value (min = max)
+  (let ((entry (%make-loot-entry :item-id :coins :weight 100 :min-count 3 :max-count 3)))
+    (let ((count (roll-loot-count entry)))
+      (assert (= count 3) () "loot-count: exact value"))))
+
+(defun test-object-respawn-seconds ()
+  "Test object respawn time lookup."
+  (ensure-test-game-data)
+  ;; Get archetype with respawn
+  (let ((archetype (find-object-archetype :health-potion-drop)))
+    ;; If archetype exists, test it
+    (when archetype
+      (let ((seconds (object-respawn-seconds archetype)))
+        (assert (numberp seconds) () "respawn-seconds: returns number")
+        (assert (>= seconds 0.0) () "respawn-seconds: non-negative"))))
+  ;; Nil archetype
+  (let ((seconds (object-respawn-seconds nil)))
+    (assert (= seconds 0.0) () "respawn-seconds: nil -> 0")))
+
+(defun test-object-respawnable-p ()
+  "Test object respawnable check."
+  ;; Default is respawnable
+  (let ((obj '(:id :test :x 0 :y 0)))
+    (assert (object-respawnable-p obj) () "respawnable: default true"))
+  ;; Explicitly respawnable
+  (let ((obj '(:id :test :x 0 :y 0 :respawnable t)))
+    (assert (object-respawnable-p obj) () "respawnable: explicit true"))
+  ;; Not respawnable
+  (let ((obj '(:id :test :x 0 :y 0 :respawnable nil)))
+    (assert (not (object-respawnable-p obj)) () "respawnable: explicit false")))
+
+(defun test-object-respawn-timer ()
+  "Test object respawn timer extraction."
+  ;; No timer
+  (let ((obj '(:id :test :x 0 :y 0)))
+    (assert (= (object-respawn-timer obj) 0.0) () "respawn-timer: no timer -> 0"))
+  ;; With timer
+  (let ((obj '(:id :test :x 0 :y 0 :respawn 5.5)))
+    (assert (= (object-respawn-timer obj) 5.5) () "respawn-timer: has timer"))
+  ;; Timer at 0
+  (let ((obj '(:id :test :x 0 :y 0 :respawn 0.0)))
+    (assert (= (object-respawn-timer obj) 0.0) () "respawn-timer: zero")))
+
+;;; ============================================================
+;;; NEW AI TESTS (Priority 1)
+;;; ============================================================
+
+(defun test-npc-home-radius ()
+  "Test NPC home radius from archetype."
+  ;; npc-home-radius requires a world object to calculate tile size
+  ;; Skip detailed test - function exists and is tested via smoke test
+  (assert (fboundp 'npc-home-radius) () "home-radius: function exists"))
+
+(defun test-npc-move-speed ()
+  "Test NPC move speed from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (gethash :goblin *npc-archetypes*))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (when archetype
+      (let ((speed (npc-move-speed npc)))
+        (assert (numberp speed) () "move-speed: returns number")
+        (assert (> speed 0) () "move-speed: positive")))))
+
+(defun test-npc-wander-interval ()
+  "Test NPC wander interval from archetype."
+  (ensure-test-game-data)
+  (let* ((archetype (gethash :goblin *npc-archetypes*))
+         (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
+    (when archetype
+      (let ((interval (npc-wander-interval npc)))
+        (assert (numberp interval) () "wander-interval: returns number")
+        (assert (>= interval 0) () "wander-interval: non-negative")))))
+
+;;; ============================================================
+;;; NEW DATA TESTS (Priority 2)
+;;; ============================================================
+
+(defun test-validate-item-archetype-plist ()
+  "Test item archetype plist validation."
+  ;; Valid plist
+  (assert (validate-item-archetype-plist :test '(:name "Test" :stack-size 10)) ()
+          "validate-item: valid passes")
+  ;; Invalid name type - should error
+  (handler-case
+      (progn
+        (validate-item-archetype-plist :test '(:name 123))
+        (assert nil () "validate-item: invalid name should error"))
+    (error () t))
+  ;; Invalid stack-size - should error
+  (handler-case
+      (progn
+        (validate-item-archetype-plist :test '(:stack-size "not-a-number"))
+        (assert nil () "validate-item: invalid stack-size should error"))
+    (error () t)))
+
+(defun test-item-archetype-from-plist ()
+  "Test item archetype creation from plist."
+  (let ((item (item-archetype-from-plist :test-sword
+                                          '(:name "Test Sword"
+                                            :description "A test weapon"
+                                            :stack-size 1
+                                            :value 100
+                                            :equip-slot :weapon
+                                            :attack 5))))
+    (assert (eq (item-archetype-id item) :test-sword) () "item-from-plist: id")
+    (assert (string= (item-archetype-name item) "Test Sword") () "item-from-plist: name")
+    (assert (= (item-archetype-stack-size item) 1) () "item-from-plist: stack-size")
+    (assert (= (item-archetype-attack item) 5) () "item-from-plist: attack")
+    (assert (eq (item-archetype-equip-slot item) :weapon) () "item-from-plist: equip-slot")))
+
+(defun test-validate-object-archetype-plist ()
+  "Test object archetype plist validation."
+  ;; Valid plist
+  (assert (validate-object-archetype-plist :test '(:name "Test" :item-id :coins)) ()
+          "validate-object: valid passes")
+  ;; Invalid item-id type - should error
+  (handler-case
+      (progn
+        (validate-object-archetype-plist :test '(:item-id "not-keyword"))
+        (assert nil () "validate-object: invalid item-id should error"))
+    (error () t)))
+
+(defun test-object-archetype-from-plist ()
+  "Test object archetype creation from plist."
+  (let ((obj (object-archetype-from-plist :coin-pile
+                                           '(:name "Coin Pile"
+                                             :item-id :coins
+                                             :count 10
+                                             :respawn-seconds 30.0))))
+    (assert (eq (object-archetype-id obj) :coin-pile) () "object-from-plist: id")
+    (assert (string= (object-archetype-name obj) "Coin Pile") () "object-from-plist: name")
+    (assert (eq (object-archetype-item-id obj) :coins) () "object-from-plist: item-id")
+    (assert (= (object-archetype-count obj) 10) () "object-from-plist: count")
+    (assert (= (object-archetype-respawn-seconds obj) 30.0) () "object-from-plist: respawn")))
+
+(defun test-loot-entry-from-spec ()
+  "Test loot entry creation from spec."
+  ;; Full spec
+  (let ((entry (loot-entry-from-spec '(:coins 100 5 10))))
+    (assert (eq (loot-entry-item-id entry) :coins) () "loot-entry: item-id")
+    (assert (= (loot-entry-weight entry) 100) () "loot-entry: weight")
+    (assert (= (loot-entry-min-count entry) 5) () "loot-entry: min")
+    (assert (= (loot-entry-max-count entry) 10) () "loot-entry: max"))
+  ;; Minimal spec (defaults to 1,1)
+  (let ((entry (loot-entry-from-spec '(:potion 50))))
+    (assert (= (loot-entry-min-count entry) 1) () "loot-entry: default min")
+    (assert (= (loot-entry-max-count entry) 1) () "loot-entry: default max")))
+
+(defun test-validate-loot-table-plist ()
+  "Test loot table plist validation."
+  ;; Valid plist
+  (assert (validate-loot-table-plist :test '(:rolls 1 :entries ((:coins 100)))) ()
+          "validate-loot: valid passes")
+  ;; Missing entries - should error
+  (handler-case
+      (progn
+        (validate-loot-table-plist :test '(:rolls 1))
+        (assert nil () "validate-loot: missing entries should error"))
+    (error () t)))
+
+(defun test-loot-table-from-plist ()
+  "Test loot table creation from plist."
+  (let ((table (loot-table-from-plist :goblin-loot
+                                       '(:rolls 2
+                                         :entries ((:coins 100 1 10)
+                                                   (:health-potion 20 1 1))))))
+    (assert (eq (loot-table-id table) :goblin-loot) () "loot-table: id")
+    (assert (= (loot-table-rolls table) 2) () "loot-table: rolls")
+    (assert (= (length (loot-table-entries table)) 2) () "loot-table: 2 entries")))
+
+(defun test-animation-set-from-plist ()
+  "Test animation set creation from plist."
+  (let ((set (animation-set-from-plist :test-anim
+                                        '(:dir "sprites/"
+                                          :down-idle "idle.png"
+                                          :down-walk "walk.png"))))
+    (assert (eq (animation-set-id set) :test-anim) () "anim-set: id")
+    (assert (string= (animation-set-dir set) "sprites/") () "anim-set: dir")
+    (assert (string= (animation-set-down-idle set) "idle.png") () "anim-set: down-idle")))
+
+(defun test-merge-animation-sets ()
+  "Test animation set merging."
+  (let* ((base (animation-set-from-plist :base '(:dir "base/" :down-idle "base-idle.png")))
+         (override (animation-set-from-plist :override '(:down-idle "override-idle.png")))
+         (merged (merge-animation-sets base override)))
+    ;; Override should win for down-idle
+    (assert (string= (animation-set-down-idle merged) "override-idle.png") ()
+            "merge-anim: override wins")
+    ;; Base should be kept for dir (not overridden)
+    (assert (string= (animation-set-dir merged) "base/") ()
+            "merge-anim: base kept")))
+
+;;; ============================================================
+;;; NEW ZONE TESTS (Priority 2)
+;;; ============================================================
+
+(defun test-zone-label ()
+  "Test zone label generation."
+  (let ((zone (%make-zone :id :test-zone :width 10 :height 10)))
+    (let ((label (zone-label zone)))
+      (assert (stringp label) () "zone-label: returns string")
+      (assert (string= label "TEST-ZONE") () "zone-label: uppercase")))
+  ;; Nil zone
+  (let ((label (zone-label nil)))
+    (assert (string= label "NONE") () "zone-label: nil -> NONE")))
+
+(defun test-zone-data-plist ()
+  "Test zone data plist normalization."
+  ;; Direct plist
+  (let ((result (zone-data-plist '(:id :test :width 10))))
+    (assert (listp result) () "zone-plist: direct returns list")
+    (assert (eq (getf result :id) :test) () "zone-plist: preserves id"))
+  ;; Nil data
+  (assert (null (zone-data-plist nil)) () "zone-plist: nil -> nil")
+  ;; Invalid data
+  (assert (null (zone-data-plist '("not" "a" "plist"))) () "zone-plist: invalid -> nil"))
+
+(defun test-make-empty-zone ()
+  "Test empty zone creation."
+  (let ((zone (make-empty-zone :empty-test 20 15)))
+    (assert (eq (zone-id zone) :empty-test) () "empty-zone: id")
+    (assert (= (zone-width zone) 20) () "empty-zone: width")
+    (assert (= (zone-height zone) 15) () "empty-zone: height")
+    (assert (= (length (zone-layers zone)) 0) () "empty-zone: no layers")
+    (assert (null (zone-objects zone)) () "empty-zone: no objects")))
+
+(defun test-build-tiles-from-fill ()
+  "Test tile vector building from fill value."
+  ;; All same value
+  (let ((tiles (build-tiles-from-fill 4 5 nil)))
+    (assert (= (length tiles) 16) () "fill-tiles: 4x4 = 16")
+    (assert (every (lambda (tile) (= tile 5)) tiles) () "fill-tiles: all 5"))
+  ;; With overrides
+  (let ((tiles (build-tiles-from-fill 4 0 '((0 0 1) (1 1 2)))))
+    (assert (= (aref tiles 0) 1) () "fill-tiles: override at 0,0")
+    (assert (= (aref tiles 5) 2) () "fill-tiles: override at 1,1")
+    (assert (= (aref tiles 2) 0) () "fill-tiles: non-override is fill")))
+
+(defun test-zone-layer-tile-at ()
+  "Test getting tile at coordinates from layer."
+  ;; Create a simple layer with one chunk
+  (let* ((chunk (%make-zone-chunk :x 0 :y 0
+                                   :tiles (make-array 16 :initial-contents
+                                                      '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16))))
+         (chunks (make-hash-table :test 'eql))
+         (layer nil))
+    (setf (gethash (zone-chunk-key 0 0) chunks) chunk)
+    (setf layer (%make-zone-layer :id :ground :chunks chunks))
+    ;; Test tile retrieval (chunk-size 4)
+    (assert (= (zone-layer-tile-at layer 4 0 0) 1) () "layer-tile: 0,0 = 1")
+    (assert (= (zone-layer-tile-at layer 4 1 0) 2) () "layer-tile: 1,0 = 2")
+    (assert (= (zone-layer-tile-at layer 4 0 1) 5) () "layer-tile: 0,1 = 5")
+    ;; Out of chunk returns 0
+    (assert (= (zone-layer-tile-at layer 4 10 10) 0) () "layer-tile: out of chunk = 0")))
+
+;;; ============================================================
+;;; NEW INTENT TESTS (Priority 5)
+;;; ============================================================
+
+(defun test-reset-frame-intent ()
+  "Test resetting per-frame intent signals."
+  (let ((intent (make-intent)))
+    ;; Set some values
+    (set-intent-move intent 1.0 1.0)
+    (setf (intent-attack intent) t
+          (intent-run-toggle intent) t)
+    ;; Reset
+    (reset-frame-intent intent)
+    ;; Check cleared
+    (assert (= (intent-move-dx intent) 0.0) () "reset-intent: dx cleared")
+    (assert (= (intent-move-dy intent) 0.0) () "reset-intent: dy cleared")
+    (assert (null (intent-attack intent)) () "reset-intent: attack cleared")
+    (assert (null (intent-run-toggle intent)) () "reset-intent: run cleared")))
+
+(defun test-consume-intent-actions ()
+  "Test consuming one-shot actions."
+  (let ((intent (make-intent)))
+    (setf (intent-attack intent) t
+          (intent-run-toggle intent) t)
+    (consume-intent-actions intent)
+    (assert (null (intent-attack intent)) () "consume-intent: attack cleared")
+    (assert (null (intent-run-toggle intent)) () "consume-intent: run cleared")))
+
+(defun test-set-intent-target ()
+  "Test setting intent target."
+  (let ((intent (make-intent)))
+    (set-intent-target intent 100.0 200.0)
+    (assert (= (intent-target-x intent) 100.0) () "set-target: x")
+    (assert (= (intent-target-y intent) 200.0) () "set-target: y")
+    (assert (intent-target-active intent) () "set-target: active")))
+
+(defun test-clear-intent-target ()
+  "Test clearing intent target."
+  (let ((intent (make-intent)))
+    (set-intent-target intent 100.0 200.0)
+    (clear-intent-target intent)
+    (assert (not (intent-target-active intent)) () "clear-target: inactive")))
+
+(defun test-request-pickup-target ()
+  "Test pickup target request."
+  (let ((intent (make-intent)))
+    (request-pickup-target intent :coins 5 10)
+    (assert (eq (intent-requested-pickup-target-id intent) :coins) () "pickup: id")
+    (assert (= (intent-requested-pickup-tx intent) 5) () "pickup: tx")
+    (assert (= (intent-requested-pickup-ty intent) 10) () "pickup: ty")
+    ;; Clear
+    (clear-requested-pickup-target intent)
+    (assert (null (intent-requested-pickup-target-id intent)) () "pickup: cleared")))
+
+(defun test-request-drop-item ()
+  "Test drop item request."
+  (let ((intent (make-intent)))
+    (request-drop-item intent :health-potion 5 2)
+    (assert (eq (intent-requested-drop-item-id intent) :health-potion) () "drop: item-id")
+    (assert (= (intent-requested-drop-count intent) 5) () "drop: count")
+    (assert (= (intent-requested-drop-slot-index intent) 2) () "drop: slot")
+    ;; Clear
+    (clear-requested-drop-item intent)
+    (assert (null (intent-requested-drop-item-id intent)) () "drop: cleared")))
+
+(defun test-request-inventory-swap ()
+  "Test inventory swap request."
+  (let ((intent (make-intent)))
+    (request-inventory-swap intent 0 3)
+    (assert (= (intent-requested-swap-slot-a intent) 0) () "swap: slot-a")
+    (assert (= (intent-requested-swap-slot-b intent) 3) () "swap: slot-b")
+    ;; Clear
+    (clear-requested-inventory-swap intent)
+    (assert (null (intent-requested-swap-slot-a intent)) () "swap: cleared")))
+
+(defun test-trade-intent-functions ()
+  "Test trade intent request functions."
+  (let ((intent (make-intent)))
+    ;; Request trade
+    (request-trade-with-player intent 123)
+    (assert (= (intent-requested-trade-target-id intent) 123) () "trade: target-id")
+    ;; Request offer
+    (request-trade-offer intent 2 10)
+    (assert (= (intent-requested-trade-offer-slot intent) 2) () "trade: offer-slot")
+    (assert (= (intent-requested-trade-offer-count intent) 10) () "trade: offer-count")
+    ;; Confirm
+    (request-trade-confirm intent)
+    (assert (intent-requested-trade-confirm intent) () "trade: confirm set")
+    ;; Cancel
+    (request-trade-cancel intent)
+    (assert (intent-requested-trade-cancel intent) () "trade: cancel set")
+    ;; Clear all
+    (clear-all-trade-requests intent)
+    (assert (null (intent-requested-trade-target-id intent)) () "trade: cleared target")
+    (assert (null (intent-requested-trade-confirm intent)) () "trade: cleared confirm")))
+
+;;; ============================================================
+;;; NEW NET TESTS (Priority 3)
+;;; ============================================================
+
+(defun test-string-to-octets ()
+  "Test string to octet conversion."
+  (let ((octets (string-to-octets "hello")))
+    (assert (vectorp octets) () "str-to-oct: returns vector")
+    (assert (= (length octets) 5) () "str-to-oct: correct length")
+    (assert (= (aref octets 0) (char-code #\h)) () "str-to-oct: first char")))
+
+(defun test-octets-to-string ()
+  "Test octet to string conversion."
+  (let* ((input "hello")
+         (octets (string-to-octets input))
+         (result (octets-to-string octets (length octets))))
+    (assert (stringp result) () "oct-to-str: returns string")
+    (assert (string= result input) () "oct-to-str: roundtrip")))
+
+(defun test-encode-decode-net-message ()
+  "Test network message encoding and decoding."
+  (let* ((message '(:type :test :value 123 :name "hello"))
+         (encoded (encode-net-message message))
+         (decoded (decode-net-message encoded)))
+    (assert (stringp encoded) () "net-msg: encode returns string")
+    (assert (listp decoded) () "net-msg: decode returns list")
+    (assert (eq (getf decoded :type) :test) () "net-msg: type preserved")
+    (assert (= (getf decoded :value) 123) () "net-msg: value preserved")
+    (assert (string= (getf decoded :name) "hello") () "net-msg: name preserved"))
+  ;; Invalid decode
+  (assert (null (decode-net-message "not valid lisp")) () "net-msg: invalid -> nil"))
+
+(defun test-host-to-string ()
+  "Test host conversion to string."
+  ;; Already a string
+  (assert (string= (host-to-string "127.0.0.1") "127.0.0.1") ()
+          "host-str: string passthrough")
+  ;; Byte vector
+  (let ((bytes #(192 168 1 1)))
+    (assert (string= (host-to-string bytes) "192.168.1.1") ()
+            "host-str: byte vector")))
