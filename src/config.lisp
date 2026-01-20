@@ -19,6 +19,9 @@
   "Default chunk size in tiles for new zones.")
 (defparameter *world-graph-path* "data/world-graph.lisp"
   "World graph data path relative to repo.")
+(defparameter *known-zone-ids* nil
+  "Set of known zone IDs from world-graph. Used by validation to quarantine unknown zones.
+   Populated by load-world-graph, nil means zone validation is skipped.")
 (defparameter *save-filepath*
   (merge-pathnames "data/savegame.lisp"
                    (asdf:system-source-directory :mmorpg))

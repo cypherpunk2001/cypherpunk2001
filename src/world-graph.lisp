@@ -79,12 +79,20 @@
 
 (defun load-world-graph (&optional (path *world-graph-path*) (zone-root *zone-root*))
   ;; Load the world graph and index zone paths.
+  ;; Also populates *known-zone-ids* for validation (Phase 6).
   (log-verbose "Loading world graph from ~a" (or path "<default>"))
   (let* ((data (read-world-graph-data path))
          (plist (world-graph-data-plist data))
          (edges (getf plist :edges nil))
          (edges-by-zone (normalize-world-graph-edges edges))
          (zone-paths (build-zone-paths (resolve-zone-path zone-root))))
+    ;; Phase 6: Populate *known-zone-ids* for validation quarantine checks
+    (let ((zone-ids (make-hash-table :test 'eq)))
+      (maphash (lambda (id path)
+                 (declare (ignore path))
+                 (setf (gethash id zone-ids) t))
+               zone-paths)
+      (setf *known-zone-ids* zone-ids))
     (log-verbose "World graph ready: edges=~d zones=~d"
                  (hash-table-count edges-by-zone)
                  (hash-table-count zone-paths))

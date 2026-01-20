@@ -229,6 +229,8 @@
 
    Quarantine (recoverable but suspicious):
    - :zone-id not a symbol → zone data corrupt
+   - :zone-id unknown (not in *known-zone-ids*) → zone removed/renamed
+   - Inventory item-id unknown (not in *item-archetypes*) → item deprecated
    - :version much older than supported (future enhancement)"
   (let ((issues nil)
         (fixed-plist (copy-list plist))
@@ -336,7 +338,33 @@
     (let ((zone-id (getf plist :zone-id)))
       (when (and zone-id (not (symbolp zone-id)))
         (push (format nil "Zone-id is not a symbol: ~s" zone-id) issues)
+        (setf needs-quarantine t))
+      ;; Phase 6: Unknown zone check (zone removed/renamed)
+      ;; Only check if *known-zone-ids* is populated (world-graph loaded)
+      (when (and zone-id
+                 (symbolp zone-id)
+                 *known-zone-ids*
+                 (not (gethash zone-id *known-zone-ids*)))
+        (push (format nil "Unknown zone-id ~s (zone may have been removed)" zone-id) issues)
         (setf needs-quarantine t)))
+
+    ;; Phase 6: Unknown item check (item deprecated)
+    ;; Only check if game data is loaded
+    (when *game-data-loaded-p*
+      (let ((inventory (getf plist :inventory)))
+        (when (listp inventory)
+          (let ((slots (getf inventory :slots)))
+            (when (listp slots)
+              (loop for slot in slots
+                    for i from 0
+                    when slot
+                    do (let ((item-id (getf slot :item-id)))
+                         (when (and item-id
+                                    (symbolp item-id)
+                                    (not (gethash item-id *item-archetypes*)))
+                           (push (format nil "Unknown item-id ~s in inventory slot ~d (item may have been removed)"
+                                         item-id i) issues)
+                           (setf needs-quarantine t)))))))))
 
     ;; If any quarantine condition, return
     (when needs-quarantine
@@ -344,6 +372,7 @@
         (values :quarantine issues nil)))
 
     ;; === CLAMP CHECKS (safe coercions) ===
+    ;; Phase 6: Use plist-put instead of setf getf to avoid PLIST_SETF_GETF_PITFALL
 
     ;; HP clamping: < 0 → 0, > max → max
     (let ((hp (getf fixed-plist :hp)))
@@ -351,11 +380,11 @@
         (cond
           ((< hp 0)
            (push (format nil "HP ~d clamped to 0" hp) issues)
-           (setf (getf fixed-plist :hp) 0)
+           (setf fixed-plist (plist-put fixed-plist :hp 0))
            (setf needs-clamp t))
           ((> hp 99999)
            (push (format nil "HP ~d clamped to 99999" hp) issues)
-           (setf (getf fixed-plist :hp) 99999)
+           (setf fixed-plist (plist-put fixed-plist :hp 99999))
            (setf needs-clamp t)))))
 
     ;; Position clamping: out of bounds → spawn point
@@ -364,36 +393,36 @@
       (when (and x (numberp x))
         (when (or (< x -1000000.0) (> x 1000000.0))
           (push (format nil "X position ~f clamped to spawn ~f" x *default-spawn-x*) issues)
-          (setf (getf fixed-plist :x) *default-spawn-x*)
+          (setf fixed-plist (plist-put fixed-plist :x *default-spawn-x*))
           (setf needs-clamp t)))
       (when (and y (numberp y))
         (when (or (< y -1000000.0) (> y 1000000.0))
           (push (format nil "Y position ~f clamped to spawn ~f" y *default-spawn-y*) issues)
-          (setf (getf fixed-plist :y) *default-spawn-y*)
+          (setf fixed-plist (plist-put fixed-plist :y *default-spawn-y*))
           (setf needs-clamp t))))
 
     ;; Playtime clamping: < 0 → 0
     (let ((playtime (getf fixed-plist :playtime)))
       (when (and playtime (numberp playtime) (< playtime 0))
         (push (format nil "Playtime ~f clamped to 0" playtime) issues)
-        (setf (getf fixed-plist :playtime) 0)
+        (setf fixed-plist (plist-put fixed-plist :playtime 0))
         (setf needs-clamp t)))
 
     ;; Deaths clamping: < 0 → 0
     (let ((deaths (getf fixed-plist :deaths)))
       (when (and deaths (integerp deaths) (< deaths 0))
         (push (format nil "Deaths ~d clamped to 0" deaths) issues)
-        (setf (getf fixed-plist :deaths) 0)
+        (setf fixed-plist (plist-put fixed-plist :deaths 0))
         (setf needs-clamp t)))
 
     ;; Created-at: missing → current time
     (unless (getf fixed-plist :created-at)
       (push "Missing :created-at, set to current time" issues)
-      (setf (getf fixed-plist :created-at) (get-universal-time))
+      (setf fixed-plist (plist-put fixed-plist :created-at (get-universal-time)))
       (setf needs-clamp t))
 
     ;; Ensure version is set to current schema version (validator contract)
-    (setf (getf fixed-plist :version) *player-schema-version*)
+    (setf fixed-plist (plist-put fixed-plist :version *player-schema-version*))
 
     ;; Return result based on what we found
     (if needs-clamp

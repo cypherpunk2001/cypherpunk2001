@@ -71,6 +71,8 @@
                 #'test-validation-nested-stats
                 #'test-validation-nested-inventory
                 #'test-validated-load-rejects-invalid
+                ;; Phase 6: Validation Hardening
+                #'test-validation-sparse-inventory
                 ;; Session Ownership Tests (Phase 3 - Database Hardening)
                 #'test-session-claim-success
                 #'test-session-double-login-rejected
@@ -94,6 +96,11 @@
                 #'test-4way-reject-stats-not-list
                 #'test-4way-reject-stat-entry-not-list
                 #'test-4way-quarantine-invalid-zone-type
+                ;; Phase 6: Unknown zones/items validation
+                #'test-4way-quarantine-unknown-zone
+                #'test-4way-quarantine-unknown-item
+                #'test-4way-validation-skips-zone-check-when-not-loaded
+                #'test-4way-clamp-uses-plist-put
                 #'test-4way-load-valid-player
                 #'test-4way-load-clamp-hp
                 #'test-4way-load-reject-bad-type
@@ -1254,6 +1261,49 @@
       (assert-nil valid-p "String count should fail")))
   t)
 
+(defun test-validation-sparse-inventory ()
+  "Test: Validation handles sparse inventory with nil slots.
+   Phase 6: Guard against nil slots that can occur in real saved data."
+  ;; Inventory with nil slots interspersed (common in real saves)
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :inventory (:slots (nil
+                                    (:item-id :health-potion :count 5)
+                                    nil
+                                    nil
+                                    (:item-id :bones :count 1)
+                                    nil)))))
+    ;; Should pass validation (nil slots are skipped)
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-true valid-p "Sparse inventory with nil slots should pass validation")
+      (assert-nil errors "No errors expected for sparse inventory")))
+  ;; Also test 4-way validation with sparse inventory
+  ;; Note: 4-way validation needs :created-at and other fields to avoid :clamp
+  ;; Phase 6: Disable item validation during this test (items may not be in archetypes)
+  (let ((*game-data-loaded-p* nil))
+    (let ((data (list :id 1 :x 100.0 :y 200.0 :hp 50
+                      :version *player-schema-version*
+                      :created-at (get-universal-time)
+                      :lifetime-xp 0
+                      :playtime 0
+                      :deaths 0
+                      :inventory '(:slots (nil
+                                           (:item-id :health-potion :count 5)
+                                           nil)))))
+      (multiple-value-bind (action issues fixed)
+          (validate-player-plist-4way data)
+        (declare (ignore fixed))
+        (assert-equal :ok action "4-way validation should return :ok for sparse inventory")
+        (assert-nil issues "No issues expected for sparse inventory"))))
+  ;; Test with all nil slots (empty inventory)
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :inventory (:slots (nil nil nil nil nil)))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-true valid-p "All-nil inventory should pass validation")
+      (assert-nil errors "No errors expected for empty inventory")))
+  t)
+
 (defun test-validated-load-rejects-invalid ()
   "Test: db-load-player-validated rejects invalid data."
   (let* ((storage (make-instance 'memory-storage))
@@ -1563,6 +1613,85 @@
     (multiple-value-bind (action issues fixed-plist)
         (validate-player-plist-4way plist)
       (assert-equal :quarantine action "Non-symbol zone-id should return :quarantine")
+      t)))
+
+;;; Phase 6: New quarantine tests
+
+(defun test-4way-quarantine-unknown-zone ()
+  "Test: Unknown zone-id returns :quarantine when *known-zone-ids* is set."
+  (let ((plist (make-valid-test-plist))
+        (old-known-zone-ids *known-zone-ids*))
+    (unwind-protect
+        (progn
+          ;; Set up known zones (doesn't include :deleted-zone)
+          (setf *known-zone-ids* (make-hash-table :test 'eq))
+          (setf (gethash :overworld *known-zone-ids*) t)
+          (setf (gethash :dungeon *known-zone-ids*) t)
+          ;; Use an unknown zone
+          (setf (getf plist :zone-id) :deleted-zone)
+          (multiple-value-bind (action issues fixed-plist)
+              (validate-player-plist-4way plist)
+            (declare (ignore fixed-plist))
+            (assert-equal :quarantine action "Unknown zone-id should return :quarantine")
+            (assert-true (some (lambda (s) (search "Unknown zone-id" s)) issues)
+                         "Issues should mention unknown zone")
+            t))
+      (setf *known-zone-ids* old-known-zone-ids))))
+
+(defun test-4way-quarantine-unknown-item ()
+  "Test: Unknown item-id in inventory returns :quarantine when game data loaded."
+  (let ((plist (make-valid-test-plist))
+        (old-game-data-loaded-p *game-data-loaded-p*))
+    (unwind-protect
+        (progn
+          ;; Set game data loaded flag
+          (setf *game-data-loaded-p* t)
+          ;; Add inventory with unknown item
+          (setf (getf plist :inventory)
+                '(:slots ((:item-id :deprecated-sword :count 1))))
+          (multiple-value-bind (action issues fixed-plist)
+              (validate-player-plist-4way plist)
+            (declare (ignore fixed-plist))
+            (assert-equal :quarantine action "Unknown item-id should return :quarantine")
+            (assert-true (some (lambda (s) (search "Unknown item-id" s)) issues)
+                         "Issues should mention unknown item")
+            t))
+      (setf *game-data-loaded-p* old-game-data-loaded-p))))
+
+(defun test-4way-validation-skips-zone-check-when-not-loaded ()
+  "Test: Unknown zone-id does NOT quarantine when *known-zone-ids* is nil."
+  (let ((plist (make-valid-test-plist))
+        (old-known-zone-ids *known-zone-ids*))
+    (unwind-protect
+        (progn
+          ;; Ensure *known-zone-ids* is nil (world-graph not loaded)
+          (setf *known-zone-ids* nil)
+          ;; Use a zone that would be unknown if checked
+          (setf (getf plist :zone-id) :some-unknown-zone)
+          (multiple-value-bind (action issues fixed-plist)
+              (validate-player-plist-4way plist)
+            (declare (ignore issues fixed-plist))
+            ;; Should be :ok since zone check is skipped
+            (assert-equal :ok action "Should be :ok when zone check is skipped")
+            t))
+      (setf *known-zone-ids* old-known-zone-ids))))
+
+(defun test-4way-clamp-uses-plist-put ()
+  "Test: Clamp correctly adds missing fields using plist-put.
+   Verifies the PLIST_SETF_GETF_PITFALL is avoided by testing
+   that :created-at is properly added even if missing from source."
+  (let ((plist (list :id 1 :x 0.0 :y 0.0 :hp -10 :version 4
+                     :lifetime-xp 0 :playtime 0.0 :deaths 0)))
+    ;; Note: :created-at is missing from source
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Should be clamped")
+      ;; Verify :created-at was added (plist-put works, setf getf would fail)
+      (assert-true (getf fixed-plist :created-at)
+                   "Missing :created-at should be added by clamp")
+      ;; Verify :hp was clamped
+      (assert-equal 0 (getf fixed-plist :hp)
+                    "Negative HP should be clamped to 0")
       t)))
 
 ;;; db-load-player-validated integration tests
