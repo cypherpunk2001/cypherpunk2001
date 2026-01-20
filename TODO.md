@@ -3,11 +3,11 @@
 This file documents test coverage status and remaining gaps.
 
 **Updated test counts (after this session):**
-- unit-test.lisp: 130 tests (was ~98)
+- unit-test.lisp: 148 tests (was ~98)
 - persistence-test.lisp: 98 tests
 - security-test.lisp: 27 tests
 - trade-test.lisp: 14 tests
-- **Total: 269 tests**
+- **Total: 287 tests**
 
 **All tests pass:** `make tests` completes successfully.
 
@@ -77,14 +77,14 @@ The following tests were added and pass:
 
 ## Still Needs Tests (Future Work)
 
-### ai.lisp - Require World/Game State
+### ai.lisp - Mostly Complete
 These functions need a `world` struct or full game state to test properly:
 - [x] `closest-player` - Find nearest alive player to NPC (uses make-test-world helper)
-- [ ] `npc-in-perception-range-p` - Check if player within perception range
+- [x] `npc-in-perception-range-p` - Check if player within perception range
 - [ ] `update-npc-behavior` - State machine transitions (complex state)
 - [x] `npc-flee-speed-mult` - Get flee multiplier from archetype
 
-### combat.lisp - Mostly Complete
+### combat.lisp - Complete
 - [x] `format-combat-log` - Format hit/miss combat log string
 - [x] `npc-respawn-seconds` - Get respawn time from archetype
 - [x] `target-in-range-p` - Check if NPC within targeting range
@@ -93,36 +93,36 @@ These functions need a `world` struct or full game state to test properly:
 - [x] `npc-attack-damage` - Get attack damage from archetype
 - [x] `intent-attack-direction` - Choose attack direction from intent (returns nil when no input/target)
 - [x] `attack-hitbox` - Calculate attack hitbox for facing direction
-- [ ] `player-attack-target-in-range-p` - Check if target in melee hitbox
+- [x] `player-attack-target-in-range-p` - Check if target in melee hitbox
 
-### progression.lisp - Require Game Context
+### progression.lisp - Mostly Complete
 - [ ] `award-skill-xp` - Add XP and update level (requires player + dirty tracking)
-- [ ] `melee-hit-p` - Simple hit check wrapper
-- [ ] `format-skill-hud-line` - Format HUD line for skill
+- [x] `melee-hit-p` - Simple hit check wrapper
+- [x] `format-skill-hud-line` - Format HUD line for skill
 - [ ] `apply-item-modifiers` - Apply/remove equipment stat bonuses
-- [ ] `object-entry-count` - Get pickup count from object
+- [x] `object-entry-count` - Get pickup count from object
 
-### data.lisp
-- [ ] `parse-game-data-forms` - Merge data forms into sections
-- [ ] `make-npc-archetype-from-plist` - Build NPC archetype from plist
+### data.lisp - Complete
+- [x] `parse-game-data-forms` - Merge data forms into sections
+- [x] `make-npc-archetype-from-plist` - Build NPC archetype from plist
 
-### zone.lisp
-- [ ] `zone-chunk-from-spec` - Build chunk from spec
-- [ ] `zone-layer-from-spec` - Build layer from spec
-- [ ] `build-zone-collision-tiles` - Build blocked tile hash
-- [ ] `zone-wall-map` - Convert collision to wall array
-- [ ] `zone-layer-by-id` - Find layer by ID
-- [ ] `zone-to-plist` - Serialize zone for saving
-- [ ] `zone-slice` - Extract subregion of zone
-- [ ] `zone-resize` - Resize zone preserving content
+### zone.lisp - Mostly Complete
+- [x] `zone-chunk-from-spec` - Build chunk from spec
+- [x] `zone-layer-from-spec` - Build layer from spec
+- [x] `build-zone-collision-tiles` - Build blocked tile hash
+- [x] `zone-wall-map` - Convert collision to wall array
+- [x] `zone-layer-by-id` - Find layer by ID
+- [x] `zone-to-plist` - Serialize zone for saving
+- [x] `zone-slice` - Extract subregion of zone
+- [x] `zone-resize` - Resize zone preserving content
 - [ ] `load-zone` / `write-zone` roundtrip test
 
-### world-graph.lisp
+### world-graph.lisp - Mostly Complete
 - [ ] `collect-zone-files` - Find .lisp files in directory
 - [ ] `zone-id-from-file` - Read zone ID without full load
 - [ ] `build-zone-paths` - Build zone-id -> path lookup
-- [ ] `world-graph-exits` - Get exits for zone
-- [ ] `world-graph-zone-path` - Get path for zone ID
+- [x] `world-graph-exits` - Get exits for zone
+- [x] `world-graph-zone-path` - Get path for zone ID
 
 ### movement.lisp - Require Zone/Collision State
 - [ ] `get-zone-state` - Get zone state from cache

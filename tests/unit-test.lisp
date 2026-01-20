@@ -1815,3 +1815,283 @@ hello
   (let ((bytes #(192 168 1 1)))
     (assert (string= (host-to-string bytes) "192.168.1.1") ()
             "host-str: byte vector")))
+
+;;; ============================================================
+;;; ADDITIONAL AI TESTS
+;;; ============================================================
+
+(defun test-npc-in-perception-range-p ()
+  "Test NPC perception range check."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 100.0 100.0 :archetype archetype :id 1))
+         (player-near (make-player 110.0 100.0 :id 1))
+         (player-far (make-player 1000.0 1000.0 :id 2))
+         (world (make-test-world :tile-size 32.0)))
+    ;; For archetypes with perception range, player-near should be in range
+    ;; For archetypes without perception (0 tiles), nobody is in range
+    (let ((perception-tiles (npc-archetype-perception-tiles archetype)))
+      (if (and perception-tiles (> perception-tiles 0))
+          (progn
+            (assert (npc-in-perception-range-p npc player-near world) ()
+                    "perception: near player in range")
+            (assert (not (npc-in-perception-range-p npc player-far world)) ()
+                    "perception: far player not in range"))
+          ;; Zero perception means never in range
+          (assert (not (npc-in-perception-range-p npc player-near world)) ()
+                  "perception: zero perception -> never in range")))
+    ;; Nil player always returns nil
+    (assert (null (npc-in-perception-range-p npc nil world)) ()
+            "perception: nil player -> nil")))
+
+;;; ============================================================
+;;; ADDITIONAL COMBAT TESTS
+;;; ============================================================
+
+(defun test-player-attack-target-in-range-p ()
+  "Test player attack target range check."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (world (make-test-world :tile-size 32.0 :collision-half 12.0))
+         (player (make-player 100.0 100.0 :id 1))
+         (npc-close (make-npc 110.0 100.0 :archetype archetype :id 1))
+         (npc-far (make-npc 500.0 500.0 :archetype archetype :id 2)))
+    ;; Set player facing to ensure hitbox is calculated
+    (setf (player-facing player) :side
+          (player-facing-sign player) 1.0)
+    ;; Close NPC should be in attack range
+    (assert (player-attack-target-in-range-p player npc-close world) ()
+            "attack-in-range: close NPC in range")
+    ;; Far NPC should not be in range
+    (assert (not (player-attack-target-in-range-p player npc-far world)) ()
+            "attack-in-range: far NPC not in range")))
+
+;;; ============================================================
+;;; ADDITIONAL PROGRESSION TESTS
+;;; ============================================================
+
+(defun test-melee-hit-p ()
+  "Test melee hit roll wrapper."
+  (let* ((attacker (make-player 0.0 0.0 :id 1))
+         (defender (make-player 0.0 0.0 :id 2)))
+    ;; Run multiple times - should return boolean
+    (dotimes (_ 10)
+      (let ((result (melee-hit-p attacker defender)))
+        (assert (or (eq result t) (eq result nil)) ()
+                "melee-hit-p: returns boolean")))))
+
+(defun test-format-skill-hud-line ()
+  "Test skill HUD line formatting."
+  ;; Nil skill
+  (let ((line (format-skill-hud-line "ATT" nil)))
+    (assert (stringp line) () "skill-hud: returns string for nil")
+    (assert (search "--" line) () "skill-hud: nil shows --"))
+  ;; Valid skill
+  (let* ((skill (make-skill :level 5 :xp 500))
+         (line (format-skill-hud-line "ATT" skill)))
+    (assert (stringp line) () "skill-hud: returns string")
+    (assert (search "ATT" line) () "skill-hud: contains label")
+    (assert (search "5" line) () "skill-hud: contains level")))
+
+(defun test-object-entry-count ()
+  "Test object entry count extraction."
+  ;; Object with explicit count
+  (let ((obj '(:id :coins :x 0 :y 0 :count 50)))
+    (assert (= (object-entry-count obj nil) 50) () "entry-count: explicit count"))
+  ;; Object without count - falls back to archetype or 1
+  (let ((obj '(:id :coins :x 0 :y 0)))
+    (let ((count (object-entry-count obj nil)))
+      (assert (= count 1) () "entry-count: no count, no arch -> 1")))
+  ;; With archetype
+  (ensure-test-game-data)
+  (let* ((archetype (find-object-archetype :health-potion-drop))
+         (obj '(:id :health-potion-drop :x 0 :y 0)))
+    (when archetype
+      (let ((count (object-entry-count obj archetype)))
+        (assert (>= count 1) () "entry-count: archetype count")))))
+
+;;; ============================================================
+;;; ADDITIONAL DATA TESTS
+;;; ============================================================
+
+(defun test-parse-game-data-forms ()
+  "Test parsing game data forms into sections."
+  ;; Simple plist
+  (let ((result (parse-game-data-forms '((:test-key 123)))))
+    (assert (listp result) () "parse-forms: returns list"))
+  ;; Section with entries
+  (let ((result (parse-game-data-forms '(:items
+                                          (:sword (:name "Sword"))
+                                          (:shield (:name "Shield"))))))
+    (assert (listp result) () "parse-forms: sections parsed")
+    (let ((items (getf result :items)))
+      (assert (= (length items) 2) () "parse-forms: 2 items")))
+  ;; Mixed tunables and sections
+  (let ((result (parse-game-data-forms '((:player-speed 100.0)
+                                          :npcs
+                                          (:goblin (:name "Goblin"))))))
+    (assert (= (getf result :player-speed) 100.0) () "parse-forms: tunable preserved")
+    (assert (listp (getf result :npcs)) () "parse-forms: section present")))
+
+(defun test-make-npc-archetype-from-plist ()
+  "Test NPC archetype creation from plist."
+  (let ((archetype (make-npc-archetype-from-plist
+                    '(:name "Test NPC"
+                      :max-hits 10
+                      :attack-level 5
+                      :defense-level 3
+                      :combat-xp 25
+                      :move-speed 80.0
+                      :aggro-mode :always))))
+    (assert (string= (npc-archetype-name archetype) "Test NPC") ()
+            "npc-from-plist: name")
+    (assert (= (npc-archetype-max-hits archetype) 10) ()
+            "npc-from-plist: max-hits")
+    (assert (= (npc-archetype-attack-level archetype) 5) ()
+            "npc-from-plist: attack-level")
+    (assert (= (npc-archetype-combat-xp archetype) 25) ()
+            "npc-from-plist: combat-xp")
+    (assert (eq (npc-archetype-aggro-mode archetype) :always) ()
+            "npc-from-plist: aggro-mode")))
+
+;;; ============================================================
+;;; ADDITIONAL ZONE TESTS
+;;; ============================================================
+
+(defun test-zone-chunk-from-spec ()
+  "Test zone chunk creation from spec."
+  ;; With explicit tiles
+  (let* ((tiles (make-list 16 :initial-element 1))
+         (spec (list :x 2 :y 3 :tiles tiles))
+         (chunk (zone-chunk-from-spec spec 4)))
+    (assert (= (zone-chunk-x chunk) 2) () "chunk-from-spec: x")
+    (assert (= (zone-chunk-y chunk) 3) () "chunk-from-spec: y")
+    (assert (= (length (zone-chunk-tiles chunk)) 16) () "chunk-from-spec: tiles"))
+  ;; With fill value
+  (let* ((spec '(:x 0 :y 0 :fill 5))
+         (chunk (zone-chunk-from-spec spec 4)))
+    (assert (every (lambda (tile) (= tile 5)) (zone-chunk-tiles chunk)) ()
+            "chunk-from-spec: fill value")))
+
+(defun test-zone-layer-from-spec ()
+  "Test zone layer creation from spec."
+  (let* ((chunk-spec '(:x 0 :y 0 :fill 1))
+         (spec (list :id :ground
+                     :tileset :grass
+                     :collision nil
+                     :chunks (list chunk-spec)))
+         (layer (zone-layer-from-spec spec 4)))
+    (assert (eq (zone-layer-id layer) :ground) () "layer-from-spec: id")
+    (assert (eq (zone-layer-tileset-id layer) :grass) () "layer-from-spec: tileset")
+    (assert (hash-table-p (zone-layer-chunks layer)) () "layer-from-spec: chunks hash")))
+
+(defun test-build-zone-collision-tiles ()
+  "Test building collision tile hash from layers."
+  ;; Create a collision layer with some blocked tiles
+  (let* ((chunk (%make-zone-chunk :x 0 :y 0
+                                   :tiles (make-array 16 :initial-contents
+                                                      '(0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0))))
+         (chunks (make-hash-table :test 'eql))
+         (layer nil))
+    (setf (gethash (zone-chunk-key 0 0) chunks) chunk)
+    (setf layer (%make-zone-layer :id :collision :collision-p t :chunks chunks))
+    (let ((blocked (build-zone-collision-tiles (list layer) 4)))
+      (assert (hash-table-p blocked) () "collision-tiles: returns hash")
+      ;; Tile at 1,0 should be blocked (non-zero in tiles array)
+      (assert (gethash (tile-key 1 0) blocked) () "collision-tiles: 1,0 blocked")
+      ;; Tile at 0,0 should not be blocked (zero)
+      (assert (not (gethash (tile-key 0 0) blocked)) () "collision-tiles: 0,0 not blocked"))))
+
+(defun test-zone-wall-map ()
+  "Test converting collision tiles to wall map array."
+  (let* ((zone (make-empty-zone :test 10 10))
+         (collision (zone-collision-tiles zone)))
+    ;; Mark some tiles as blocked
+    (setf (gethash (tile-key 2 3) collision) t)
+    (setf (gethash (tile-key 5 5) collision) t)
+    (let ((wall-map (zone-wall-map zone)))
+      (assert (arrayp wall-map) () "wall-map: returns array")
+      (assert (= (array-dimension wall-map 0) 10) () "wall-map: height")
+      (assert (= (array-dimension wall-map 1) 10) () "wall-map: width")
+      (assert (= (aref wall-map 3 2) 1) () "wall-map: 2,3 blocked")
+      (assert (= (aref wall-map 5 5) 1) () "wall-map: 5,5 blocked")
+      (assert (= (aref wall-map 0 0) 0) () "wall-map: 0,0 not blocked"))))
+
+(defun test-zone-layer-by-id ()
+  "Test finding layer by ID."
+  (let* ((layer1 (%make-zone-layer :id :ground :chunks (make-hash-table)))
+         (layer2 (%make-zone-layer :id :collision :collision-p t :chunks (make-hash-table)))
+         (zone (%make-zone :id :test :width 10 :height 10
+                           :layers (vector layer1 layer2)
+                           :collision-tiles (make-hash-table))))
+    (assert (eq (zone-layer-by-id zone :ground) layer1) () "layer-by-id: ground")
+    (assert (eq (zone-layer-by-id zone :collision) layer2) () "layer-by-id: collision")
+    (assert (null (zone-layer-by-id zone :nonexistent)) () "layer-by-id: not found")))
+
+(defun test-zone-to-plist ()
+  "Test zone serialization to plist."
+  (let* ((zone (make-empty-zone :test-zone 20 15 :chunk-size 8)))
+    ;; Add an object
+    (push '(:id :coins :x 5 :y 5 :count 10) (zone-objects zone))
+    (let ((plist (zone-to-plist zone)))
+      (assert (listp plist) () "zone-to-plist: returns list")
+      (assert (eq (getf plist :id) :test-zone) () "zone-to-plist: id")
+      (assert (= (getf plist :width) 20) () "zone-to-plist: width")
+      (assert (= (getf plist :height) 15) () "zone-to-plist: height")
+      (assert (= (getf plist :chunk-size) 8) () "zone-to-plist: chunk-size")
+      (assert (listp (getf plist :objects)) () "zone-to-plist: objects list"))))
+
+(defun test-zone-slice ()
+  "Test extracting a subregion of a zone."
+  (let* ((zone (make-empty-zone :big-zone 100 100))
+         (sliced (zone-slice zone 10 10 20 15)))
+    (assert (= (zone-width sliced) 20) () "zone-slice: width")
+    (assert (= (zone-height sliced) 15) () "zone-slice: height")
+    (assert (eq (zone-id sliced) :big-zone) () "zone-slice: preserves id")))
+
+(defun test-zone-resize ()
+  "Test resizing a zone."
+  (let* ((zone (make-empty-zone :resizable 50 50))
+         (resized (zone-resize zone 30 25)))
+    (assert (= (zone-width resized) 30) () "zone-resize: new width")
+    (assert (= (zone-height resized) 25) () "zone-resize: new height")))
+
+;;; ============================================================
+;;; ADDITIONAL WORLD GRAPH TESTS
+;;; ============================================================
+
+(defun test-world-graph-exits ()
+  "Test getting zone exits from world graph."
+  (let* ((edges (list '(:from :zone-a :to :zone-b :edge :north)
+                      '(:from :zone-a :to :zone-c :edge :east)
+                      '(:from :zone-b :to :zone-a :edge :south)))
+         (edges-by-zone (normalize-world-graph-edges edges))
+         (graph (%make-world-graph :edges-by-zone edges-by-zone
+                                    :zone-paths (make-hash-table))))
+    ;; Zone A has 2 exits
+    (let ((exits (world-graph-exits graph :zone-a)))
+      (assert (= (length exits) 2) () "graph-exits: zone-a has 2 exits"))
+    ;; Zone B has 1 exit
+    (let ((exits (world-graph-exits graph :zone-b)))
+      (assert (= (length exits) 1) () "graph-exits: zone-b has 1 exit"))
+    ;; Zone C has no exits
+    (assert (null (world-graph-exits graph :zone-c)) () "graph-exits: zone-c has none")
+    ;; Nil graph
+    (assert (null (world-graph-exits nil :zone-a)) () "graph-exits: nil graph")))
+
+(defun test-world-graph-zone-path ()
+  "Test getting zone file path from world graph."
+  (let* ((paths (make-hash-table :test 'eq))
+         (graph nil))
+    (setf (gethash :zone-a paths) "/path/to/zone-a.lisp")
+    (setf (gethash :zone-b paths) "/path/to/zone-b.lisp")
+    (setf graph (%make-world-graph :edges-by-zone (make-hash-table)
+                                    :zone-paths paths))
+    (assert (string= (world-graph-zone-path graph :zone-a) "/path/to/zone-a.lisp") ()
+            "graph-path: zone-a")
+    (assert (string= (world-graph-zone-path graph :zone-b) "/path/to/zone-b.lisp") ()
+            "graph-path: zone-b")
+    (assert (null (world-graph-zone-path graph :nonexistent)) ()
+            "graph-path: not found")
+    (assert (null (world-graph-zone-path nil :zone-a)) ()
+            "graph-path: nil graph")))
