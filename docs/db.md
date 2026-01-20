@@ -1270,34 +1270,47 @@ username:lookup          -> HSET username player-id
 ```
 
 **Consistency Model:**
-- Sorted sets/hashes updated IN SAME TRANSACTION as blob save
-- Use Lua script to atomically update blob + indexes
-- On load, blob is authoritative; indexes are derived/cached
+- **Blob is authoritative**: The player blob (`player:{id}`) is the source of truth
+- **Leaderboards are eventually consistent**: Updated best-effort during gameplay
+- **Self-healing on login**: `register-player-session` seeds all leaderboards from blob data
+- **Real-time updates are best-effort**: Leaderboard zadd calls happen separately from blob saves
 
-**Update Pattern:**
-```lua
--- save_with_indexes.lua
--- KEYS[1] = player:{id}, KEYS[2] = leaderboard:xp, KEYS[3] = player:{id}:summary
--- ARGV[1] = player-data, ARGV[2] = lifetime-xp, ARGV[3] = player-id, ...
+This design provides eventual consistency without requiring atomic transactions:
+1. **Tier-1 blob saves** (death, level-up, trade, item destruction) use immediate writes with retry
+2. **Tier-2 blob saves** (routine state: position, HP) are batched every 30s and best-effort
+3. Leaderboard updates happen separately from blob saves (may be lost on crash)
+4. On next login, leaderboards are re-seeded from blob → self-healing
 
-redis.call('SET', KEYS[1], ARGV[1])
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
-redis.call('HSET', KEYS[3], 'name', ARGV[4], 'level', ARGV[5])
-return {ok = "SAVED_WITH_INDEXES"}
+**Update Flow:**
+```lisp
+;; On login: seed leaderboards from authoritative blob
+(register-player-session player)
+  → (db-update-leaderboard-xp player-id (player-lifetime-xp player))
+  → (db-update-leaderboard-level player-id (combat-level ...))
+  → (db-update-leaderboard-deaths player-id (player-deaths player))
+
+;; During gameplay: best-effort leaderboard updates
+(db-update-leaderboard-deaths player-id deaths)  ; After death
+(db-update-leaderboard-xp player-id xp)          ; After XP gain (if implemented)
 ```
+
+**Why not atomic saves?**
+- Simpler implementation without Lua scripts
+- Blob is always correct; leaderboards are derived/cached
+- Self-healing eliminates need for complex consistency mechanisms
+- A crash between blob save and leaderboard update only causes temporary staleness
 
 **Query Functions:**
 ```lisp
-(defun db-get-leaderboard (category &key (start 0) (count 100))
-  "Return top players for CATEGORY (:xp, :level, :kills)."
-  (let ((key (format nil "leaderboard:~a" category)))
-    (storage-zrevrange *storage* key start (+ start count -1) :withscores t)))
+(defun db-get-leaderboard (category &key (top 10) (withscores t))
+  "Return top N entries from leaderboard CATEGORY (:xp, :level, :deaths)."
+  ...)
 
 (defun db-get-online-count ()
   (storage-scard *storage* "online:players"))
 
-(defun db-lookup-player-by-name (username)
-  (storage-hget *storage* "username:lookup" (string-downcase username)))
+;; Note: username lookup (username:lookup hash) not yet implemented
+;; Note: player summary (player:{id}:summary hash) not yet implemented
 ```
 
 ### Deserialization Validation
@@ -1335,7 +1348,7 @@ return {ok = "SAVED_WITH_INDEXES"}
 
 ### Implementation Status
 
-Phases 1-6 have been implemented:
+Phases 1-7 have been implemented:
 
 | Phase | Feature | Files | Status |
 |-------|---------|-------|--------|
@@ -1345,6 +1358,7 @@ Phases 1-6 have been implemented:
 | 4 | Structured Data (Leaderboards) | `db.lisp`, `migrations.lisp` | **Complete** |
 | 5 | Trade System + Atomic Ops | `trade.lisp`, `intent.lisp` | **Complete** |
 | 6 | 4-Outcome Validation | `save.lisp`, `db.lisp` | **Complete** |
+| 7 | Index Consistency Model | `docs/db.md` | **Complete** (doc alignment)
 
 **Notes:**
 - Trade system uses coins as regular inventory items (no separate currency)
