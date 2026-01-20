@@ -181,21 +181,28 @@
           nil))))
 
 (defun admin-set-xp (id-or-username new-xp)
-  "Set player XP and recalculate level. Returns T on success, NIL on failure."
+  "Set player hitpoints XP and recalculate level. Returns T on success, NIL on failure."
   (let ((player (admin--find-player id-or-username)))
     (if player
-        (progn
-          (setf (player-xp player) (max 0 new-xp))
-          ;; Recalculate level based on XP
-          (loop while (>= (player-xp player)
-                         (xp-for-level (1+ (player-hitpoints-level player))))
-                do (incf (player-hitpoints-level player)))
-          (mark-player-dirty (player-id player))
-          (format t "~&Set XP to ~d for player ~a (ID ~d) (level: ~d)~%"
-                  (player-xp player) (player-username player) (player-id player)
-                  (player-hitpoints-level player))
-          (finish-output)
-          t)
+        (let* ((stats (player-stats player))
+               (skill (and stats (stat-block-hitpoints stats))))
+          (if skill
+              (let ((xp (max 0 (truncate new-xp))))
+                (setf (skill-xp skill) xp)
+                (multiple-value-bind (old new)
+                    (update-skill-level skill)
+                  (apply-hitpoints-level-up player old new))
+                (mark-player-hud-stats-dirty player)
+                (mark-player-dirty (player-id player))
+                (format t "~&Set XP to ~d for player ~a (ID ~d) (level: ~d)~%"
+                        xp (player-username player) (player-id player)
+                        (skill-level skill))
+                (finish-output)
+                t)
+              (progn
+                (format t "~&Player has no stats: ~a~%" id-or-username)
+                (finish-output)
+                nil)))
         (progn
           (format t "~&Player not found: ~a~%" id-or-username)
           (finish-output)
@@ -205,16 +212,25 @@
   "Set player level and adjust XP to match. Returns T on success, NIL on failure."
   (let ((player (admin--find-player id-or-username)))
     (if player
-        (progn
-          (setf (player-hitpoints-level player) (max 1 new-level))
-          ;; Set XP to minimum for this level
-          (setf (player-xp player) (xp-for-level new-level))
-          (mark-player-dirty (player-id player))
-          (format t "~&Set level to ~d for player ~a (ID ~d) (XP: ~d)~%"
-                  new-level (player-username player) (player-id player)
-                  (player-xp player))
-          (finish-output)
-          t)
+        (let* ((stats (player-stats player))
+               (skill (and stats (stat-block-hitpoints stats))))
+          (if skill
+              (let* ((level (max 1 (truncate new-level)))
+                     (xp (skill-xp-for-level level))
+                     (old (skill-level skill)))
+                (setf (skill-level skill) level
+                      (skill-xp skill) xp)
+                (apply-hitpoints-level-up player old level)
+                (mark-player-hud-stats-dirty player)
+                (mark-player-dirty (player-id player))
+                (format t "~&Set level to ~d for player ~a (ID ~d) (XP: ~d)~%"
+                        level (player-username player) (player-id player) xp)
+                (finish-output)
+                t)
+              (progn
+                (format t "~&Player has no stats: ~a~%" id-or-username)
+                (finish-output)
+                nil)))
         (progn
           (format t "~&Player not found: ~a~%" id-or-username)
           (finish-output)
