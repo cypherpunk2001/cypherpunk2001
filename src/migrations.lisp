@@ -6,7 +6,7 @@
 ;;;; Migrations run lazily on player load (default) or eagerly via admin command.
 ;;;; Each migration function takes a plist and returns the updated plist.
 
-(defparameter *player-schema-version* 3
+(defparameter *player-schema-version* 4
   "Current player schema version. Increment when changing player format.")
 
 (defun migrate-player-v1->v2 (data)
@@ -25,9 +25,17 @@
     (setf data (plist-put data :created-at (get-universal-time))))
   data)
 
+(defun migrate-player-v3->v4 (data)
+  "v3->v4: Add deaths field for leaderboard tracking.
+   deaths defaults to 0 (Phase 4 - Database Hardening)."
+  (unless (getf data :deaths)
+    (setf data (plist-put data :deaths 0)))
+  data)
+
 (defparameter *player-migrations*
   '((2 . migrate-player-v1->v2)
-    (3 . migrate-player-v2->v3))
+    (3 . migrate-player-v2->v3)
+    (4 . migrate-player-v3->v4))
   "Alist of (version . migration-function) for player data.
    Each migration takes a plist and returns the updated plist.
    Migrations are chained: v1->v2, v2->v3, etc.")

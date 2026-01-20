@@ -20,7 +20,13 @@
   requested-swap-slot-a
   requested-swap-slot-b
   requested-chat-message
-  requested-unstuck)
+  requested-unstuck
+  ;; Trade system intents (Phase 5 - Trade System)
+  requested-trade-target-id      ; player ID to initiate trade with
+  requested-trade-offer-slot     ; slot index to add/remove from offer
+  requested-trade-offer-count    ; count of items to offer from slot
+  requested-trade-confirm        ; confirm current trade offer
+  requested-trade-cancel)        ; cancel active trade
 
 (defun make-intent (&key (target-x 0.0) (target-y 0.0))
   ;; Create a reusable intent with optional target coordinates.
@@ -44,7 +50,12 @@
                 :requested-swap-slot-a nil
                 :requested-swap-slot-b nil
                 :requested-chat-message nil
-                :requested-unstuck nil))
+                :requested-unstuck nil
+                :requested-trade-target-id nil
+                :requested-trade-offer-slot nil
+                :requested-trade-offer-count 0
+                :requested-trade-confirm nil
+                :requested-trade-cancel nil))
 
 (defun reset-frame-intent (intent)
   ;; Clear per-frame intent signals without touching persistent targets.
@@ -156,3 +167,47 @@
   ;; Clear the inventory swap request.
   (setf (intent-requested-swap-slot-a intent) nil
         (intent-requested-swap-slot-b intent) nil))
+
+;;; Trade System Intents (Phase 5)
+
+(defun request-trade-with-player (intent target-player-id)
+  "Request to initiate a trade with TARGET-PLAYER-ID."
+  (setf (intent-requested-trade-target-id intent) target-player-id))
+
+(defun clear-requested-trade-target (intent)
+  "Clear the trade target request."
+  (setf (intent-requested-trade-target-id intent) nil))
+
+(defun request-trade-offer (intent slot-index count)
+  "Request to add/update item offer from SLOT-INDEX with COUNT."
+  (setf (intent-requested-trade-offer-slot intent) slot-index
+        (intent-requested-trade-offer-count intent) (or count 0)))
+
+(defun clear-requested-trade-offer (intent)
+  "Clear the trade offer request."
+  (setf (intent-requested-trade-offer-slot intent) nil
+        (intent-requested-trade-offer-count intent) 0))
+
+(defun request-trade-confirm (intent)
+  "Request to confirm the current trade offer."
+  (setf (intent-requested-trade-confirm intent) t))
+
+(defun clear-requested-trade-confirm (intent)
+  "Clear the trade confirm request."
+  (setf (intent-requested-trade-confirm intent) nil))
+
+(defun request-trade-cancel (intent)
+  "Request to cancel the active trade."
+  (setf (intent-requested-trade-cancel intent) t))
+
+(defun clear-requested-trade-cancel (intent)
+  "Clear the trade cancel request."
+  (setf (intent-requested-trade-cancel intent) nil))
+
+(defun clear-all-trade-requests (intent)
+  "Clear all trade-related intent requests."
+  (setf (intent-requested-trade-target-id intent) nil
+        (intent-requested-trade-offer-slot intent) nil
+        (intent-requested-trade-offer-count intent) 0
+        (intent-requested-trade-confirm intent) nil
+        (intent-requested-trade-cancel intent) nil))

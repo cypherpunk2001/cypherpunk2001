@@ -9,6 +9,8 @@
   click-marker-x click-marker-y click-marker-timer click-marker-kind
   anim-state facing
   facing-sign class hp lifetime-xp playtime created-at
+  ;; Deaths counter (Phase 4 - leaderboards)
+  (deaths 0)
   frame-index frame-timer
   attacking attack-timer attack-hit
   hit-active hit-timer hit-frame hit-facing hit-facing-sign

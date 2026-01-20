@@ -1,10 +1,10 @@
-.PHONY: ci smoke server client local checkparens checkdocs test-unit test-persistence test-security stress tests
+.PHONY: ci smoke server client local checkparens checkdocs test-unit test-persistence test-security test-trade stress tests
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 STRESS_CLIENTS ?= 10
 STRESS_DURATION ?= 60
 
-tests: checkparens ci test-unit test-persistence test-security checkdocs smoke
+tests: checkparens ci test-unit test-persistence test-security test-trade checkdocs smoke
 	@echo "All tests passed!"
 
 ci:
@@ -18,6 +18,9 @@ test-security:
 
 test-unit:
 	MMORPG_DB_BACKEND=memory sbcl --script scripts/test-unit.lisp
+
+test-trade:
+	MMORPG_DB_BACKEND=memory sbcl --script scripts/test-trade.lisp
 
 smoke:
 	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp

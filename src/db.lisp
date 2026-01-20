@@ -15,6 +15,208 @@
 ;;; - redis-storage: Production backend using cl-redis
 ;;; - memory-storage: In-memory backend for testing (no external deps)
 
+;;;; ========================================================================
+;;;; REDIS METRICS (Phase 2 - Database Architecture Hardening)
+;;;; See docs/db.md "Persistence Monitoring & Metrics" section
+;;;; ========================================================================
+
+(defparameter *metrics-ring-buffer-size* 100
+  "Number of samples to keep in latency ring buffers for percentile calculation.")
+
+(defparameter *metrics-p99-warn-threshold-ms* 50.0
+  "Log warning when Redis p99 latency exceeds this threshold (milliseconds).")
+
+(defparameter *metrics-log-interval-seconds* 300.0
+  "Log metrics summary every N seconds when verbose mode is enabled (5 minutes).")
+
+(defstruct redis-metrics
+  "Tracks Redis operation latencies using ring buffers for percentile calculation."
+  ;; Ring buffer for save operation latencies (milliseconds)
+  (save-latencies (make-array *metrics-ring-buffer-size* :initial-element 0.0)
+   :type simple-vector)
+  (save-head 0 :type fixnum)
+  (save-count 0 :type fixnum)
+  ;; Ring buffer for load operation latencies (milliseconds)
+  (load-latencies (make-array *metrics-ring-buffer-size* :initial-element 0.0)
+   :type simple-vector)
+  (load-head 0 :type fixnum)
+  (load-count 0 :type fixnum)
+  ;; Total operation counters (since startup)
+  (total-saves 0 :type fixnum)
+  (total-loads 0 :type fixnum)
+  (total-save-errors 0 :type fixnum)
+  (total-load-errors 0 :type fixnum)
+  ;; Last metrics log time
+  (last-log-time 0.0 :type float))
+
+(defparameter *redis-metrics* nil
+  "Global Redis metrics instance. Initialized when storage is connected.")
+
+(defun init-redis-metrics ()
+  "Initialize global Redis metrics tracking."
+  (setf *redis-metrics* (make-redis-metrics))
+  (log-verbose "Redis metrics initialized"))
+
+(defun ring-buffer-push (buffer head-accessor count-accessor value struct)
+  "Push VALUE into a ring buffer, updating head and count in STRUCT.
+   BUFFER is the array, HEAD-ACCESSOR and COUNT-ACCESSOR are slot accessors."
+  (let* ((size (length buffer))
+         (head (funcall head-accessor struct))
+         (count (funcall count-accessor struct)))
+    ;; Write value at current head position
+    (setf (aref buffer head) value)
+    ;; Advance head (circular)
+    (funcall (fdefinition `(setf ,head-accessor))
+             (mod (1+ head) size) struct)
+    ;; Increment count (up to buffer size)
+    (when (< count size)
+      (funcall (fdefinition `(setf ,count-accessor))
+               (1+ count) struct))))
+
+(defun metrics-push-save-latency (latency-ms)
+  "Record a save operation latency in metrics."
+  (when *redis-metrics*
+    (let ((buffer (redis-metrics-save-latencies *redis-metrics*))
+          (head (redis-metrics-save-head *redis-metrics*))
+          (size *metrics-ring-buffer-size*))
+      (setf (aref buffer head) latency-ms)
+      (setf (redis-metrics-save-head *redis-metrics*) (mod (1+ head) size))
+      (when (< (redis-metrics-save-count *redis-metrics*) size)
+        (incf (redis-metrics-save-count *redis-metrics*)))
+      (incf (redis-metrics-total-saves *redis-metrics*)))))
+
+(defun metrics-push-load-latency (latency-ms)
+  "Record a load operation latency in metrics."
+  (when *redis-metrics*
+    (let ((buffer (redis-metrics-load-latencies *redis-metrics*))
+          (head (redis-metrics-load-head *redis-metrics*))
+          (size *metrics-ring-buffer-size*))
+      (setf (aref buffer head) latency-ms)
+      (setf (redis-metrics-load-head *redis-metrics*) (mod (1+ head) size))
+      (when (< (redis-metrics-load-count *redis-metrics*) size)
+        (incf (redis-metrics-load-count *redis-metrics*)))
+      (incf (redis-metrics-total-loads *redis-metrics*)))))
+
+(defun metrics-record-save-error ()
+  "Increment save error counter."
+  (when *redis-metrics*
+    (incf (redis-metrics-total-save-errors *redis-metrics*))))
+
+(defun metrics-record-load-error ()
+  "Increment load error counter."
+  (when *redis-metrics*
+    (incf (redis-metrics-total-load-errors *redis-metrics*))))
+
+(defun ring-buffer-values (buffer count)
+  "Return list of valid values from ring buffer (up to COUNT elements)."
+  (let ((result nil))
+    (dotimes (i (min count (length buffer)))
+      (push (aref buffer i) result))
+    result))
+
+(defun calculate-percentile (values percentile)
+  "Calculate PERCENTILE (0-100) from list of VALUES.
+   Returns NIL if no values."
+  (when (and values (> (length values) 0))
+    (let* ((sorted (sort (copy-list values) #'<))
+           (n (length sorted))
+           (idx (min (1- n) (floor (* n (/ percentile 100.0))))))
+      (nth idx sorted))))
+
+(defun get-redis-p99-save-latency ()
+  "Return p99 save latency in milliseconds, or NIL if no data."
+  (when *redis-metrics*
+    (let ((values (ring-buffer-values
+                   (redis-metrics-save-latencies *redis-metrics*)
+                   (redis-metrics-save-count *redis-metrics*))))
+      (calculate-percentile values 99))))
+
+(defun get-redis-p99-load-latency ()
+  "Return p99 load latency in milliseconds, or NIL if no data."
+  (when *redis-metrics*
+    (let ((values (ring-buffer-values
+                   (redis-metrics-load-latencies *redis-metrics*)
+                   (redis-metrics-load-count *redis-metrics*))))
+      (calculate-percentile values 99))))
+
+(defun get-redis-p50-save-latency ()
+  "Return median (p50) save latency in milliseconds, or NIL if no data."
+  (when *redis-metrics*
+    (let ((values (ring-buffer-values
+                   (redis-metrics-save-latencies *redis-metrics*)
+                   (redis-metrics-save-count *redis-metrics*))))
+      (calculate-percentile values 50))))
+
+(defun get-redis-p50-load-latency ()
+  "Return median (p50) load latency in milliseconds, or NIL if no data."
+  (when *redis-metrics*
+    (let ((values (ring-buffer-values
+                   (redis-metrics-load-latencies *redis-metrics*)
+                   (redis-metrics-load-count *redis-metrics*))))
+      (calculate-percentile values 50))))
+
+(defun check-redis-latency-threshold ()
+  "Check if p99 latency exceeds threshold and log warning if so."
+  (when *redis-metrics*
+    (let ((p99-save (get-redis-p99-save-latency))
+          (p99-load (get-redis-p99-load-latency)))
+      (when (and p99-save (> p99-save *metrics-p99-warn-threshold-ms*))
+        (warn "Redis p99 SAVE latency ~,2fms exceeds threshold ~,2fms"
+              p99-save *metrics-p99-warn-threshold-ms*))
+      (when (and p99-load (> p99-load *metrics-p99-warn-threshold-ms*))
+        (warn "Redis p99 LOAD latency ~,2fms exceeds threshold ~,2fms"
+              p99-load *metrics-p99-warn-threshold-ms*)))))
+
+(defun maybe-log-redis-metrics ()
+  "Log metrics summary periodically when verbose mode is enabled."
+  (when (and *verbose* *redis-metrics*)
+    (let* ((now (float (get-internal-real-time) 1.0))
+           (last-log (redis-metrics-last-log-time *redis-metrics*))
+           (interval (* *metrics-log-interval-seconds*
+                        internal-time-units-per-second)))
+      (when (> (- now last-log) interval)
+        (setf (redis-metrics-last-log-time *redis-metrics*) now)
+        (let ((p50-save (get-redis-p50-save-latency))
+              (p99-save (get-redis-p99-save-latency))
+              (p50-load (get-redis-p50-load-latency))
+              (p99-load (get-redis-p99-load-latency))
+              (total-saves (redis-metrics-total-saves *redis-metrics*))
+              (total-loads (redis-metrics-total-loads *redis-metrics*))
+              (save-errors (redis-metrics-total-save-errors *redis-metrics*))
+              (load-errors (redis-metrics-total-load-errors *redis-metrics*)))
+          (log-verbose "Redis metrics: saves=~d (errors=~d) loads=~d (errors=~d)"
+                       total-saves save-errors total-loads load-errors)
+          (when p50-save
+            (log-verbose "  Save latency: p50=~,2fms p99=~,2fms" p50-save p99-save))
+          (when p50-load
+            (log-verbose "  Load latency: p50=~,2fms p99=~,2fms" p50-load p99-load))
+          ;; Check threshold
+          (check-redis-latency-threshold))))))
+
+(defmacro with-redis-timing ((operation) &body body)
+  "Execute BODY and record latency for OPERATION (:save or :load)."
+  (let ((start (gensym "START"))
+        (result (gensym "RESULT"))
+        (elapsed (gensym "ELAPSED")))
+    `(let ((,start (get-internal-real-time)))
+       (let ((,result (progn ,@body)))
+         (let ((,elapsed (/ (- (get-internal-real-time) ,start)
+                           (/ internal-time-units-per-second 1000.0))))
+           ,(case operation
+              (:save `(metrics-push-save-latency ,elapsed))
+              (:load `(metrics-push-load-latency ,elapsed))))
+         ,result))))
+
+;;;; Utility Functions
+
+(defun parse-number (string)
+  "Parse STRING as a number. Returns NIL if parsing fails."
+  (handler-case
+      (let ((*read-eval* nil))
+        (let ((value (read-from-string string)))
+          (when (numberp value) value)))
+    (error () nil)))
+
 ;;;; Storage Protocol (Abstract Interface)
 
 (defgeneric storage-load (storage key)
@@ -46,6 +248,98 @@
    KEY-DATA-PAIRS is a list of (key . data) cons cells.
    Returns number of successfully saved pairs."))
 
+;;;; ========================================================================
+;;;; SESSION OWNERSHIP (Phase 3 - Database Architecture Hardening)
+;;;; See docs/db.md "Session Ownership & Lease" section
+;;;; ========================================================================
+
+(defparameter *session-ownership-ttl-seconds* 60
+  "TTL for session ownership keys. Should be longer than heartbeat interval.")
+
+(defparameter *session-heartbeat-interval-seconds* 30.0
+  "How often to refresh session ownership TTL.")
+
+(defparameter *server-instance-id* nil
+  "Unique identifier for this server instance. Set at startup.")
+
+(defun generate-server-instance-id ()
+  "Generate a unique server instance ID."
+  (format nil "server-~a-~a" (get-universal-time) (random 1000000)))
+
+(defun session-owner-key (player-id)
+  "Return the Redis key for session ownership tracking."
+  (format nil "session:owner:~a" player-id))
+
+(defgeneric storage-setnx-with-ttl (storage key value ttl-seconds)
+  (:documentation "Set KEY to VALUE only if it doesn't exist, with TTL in seconds.
+   Returns T if key was set (claimed), NIL if key already exists."))
+
+(defgeneric storage-refresh-ttl (storage key ttl-seconds)
+  (:documentation "Refresh TTL on KEY. Returns T if key exists, NIL otherwise."))
+
+(defgeneric storage-get-raw (storage key)
+  (:documentation "Get raw string value for KEY. Returns string or NIL."))
+
+;;;; ========================================================================
+;;;; STRUCTURED DATA (Phase 4 - Database Architecture Hardening)
+;;;; Sorted sets for leaderboards, sets for online tracking
+;;;; See docs/db.md "Structured Redis Data" section
+;;;; ========================================================================
+
+;; Sorted Set operations (for leaderboards)
+(defgeneric storage-zadd (storage key score member)
+  (:documentation "Add MEMBER with SCORE to sorted set KEY. Updates if exists."))
+
+(defgeneric storage-zincrby (storage key increment member)
+  (:documentation "Increment MEMBER's score in sorted set KEY by INCREMENT.
+   Returns new score."))
+
+(defgeneric storage-zrevrange (storage key start stop &key withscores)
+  (:documentation "Return members from sorted set KEY in descending score order.
+   START and STOP are 0-based indices. If WITHSCORES, returns ((member score) ...)."))
+
+(defgeneric storage-zrank (storage key member)
+  (:documentation "Return rank of MEMBER in sorted set KEY (0-based, ascending).
+   Returns NIL if member doesn't exist."))
+
+(defgeneric storage-zrevrank (storage key member)
+  (:documentation "Return rank of MEMBER in sorted set KEY (0-based, descending).
+   Returns NIL if member doesn't exist."))
+
+(defgeneric storage-zscore (storage key member)
+  (:documentation "Return score of MEMBER in sorted set KEY. NIL if not exists."))
+
+;; Set operations (for online player tracking)
+(defgeneric storage-sadd (storage key member)
+  (:documentation "Add MEMBER to set KEY. Returns T if added, NIL if already exists."))
+
+(defgeneric storage-srem (storage key member)
+  (:documentation "Remove MEMBER from set KEY. Returns T if removed."))
+
+(defgeneric storage-scard (storage key)
+  (:documentation "Return cardinality (count) of set KEY."))
+
+(defgeneric storage-smembers (storage key)
+  (:documentation "Return all members of set KEY."))
+
+;;;; ========================================================================
+;;;; LUA SCRIPT EXECUTION (Phase 5 - Trade System & Atomic Operations)
+;;;; Enables atomic multi-key operations via Redis Lua scripting
+;;;; See docs/db.md "Atomic Operations" section
+;;;; ========================================================================
+
+(defparameter *redis-script-shas* (make-hash-table :test 'equal)
+  "Cache of script name -> SHA1 hash for EVALSHA calls.")
+
+(defgeneric storage-eval-script (storage script-name keys args)
+  (:documentation "Execute a Lua script by name with KEYS and ARGS.
+   KEYS is a list of Redis keys, ARGS is a list of additional arguments.
+   Returns the script result."))
+
+(defgeneric storage-script-load (storage script-name script-body)
+  (:documentation "Load a Lua script into Redis script cache.
+   Returns the SHA1 hash for EVALSHA calls."))
+
 ;;;; Redis Storage Implementation
 
 (defclass redis-storage ()
@@ -67,6 +361,8 @@
   ;; cl-redis uses dynamic variables for connection management
   ;; The actual connection happens in with-connection macro
   (setf (redis-storage-connected storage) t)
+  ;; Initialize metrics tracking
+  (init-redis-metrics)
   (log-verbose "Redis storage configured for ~a:~a"
                (redis-storage-host storage)
                (redis-storage-port storage))
@@ -81,13 +377,15 @@
 (defmethod storage-load ((storage redis-storage) key)
   "Load data from Redis. Returns plist or NIL if not found."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
-                              :port (redis-storage-port storage))
-        (let ((raw (red:get key)))
-          (when raw
-            (let ((*read-eval* nil)) ; Security: disable eval in read
-              (read-from-string raw)))))
+      (with-redis-timing (:load)
+        (redis:with-connection (:host (redis-storage-host storage)
+                                :port (redis-storage-port storage))
+          (let ((raw (red:get key)))
+            (when raw
+              (let ((*read-eval* nil)) ; Security: disable eval in read
+                (read-from-string raw))))))
     (error (e)
+      (metrics-record-load-error)
       (warn "Redis load error for key ~a: ~a" key e)
       nil)))
 
@@ -96,16 +394,18 @@
    Writes to a temp key first, then atomically renames to the real key.
    This prevents data corruption if the server crashes during write."
   (handler-case
-      (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
-        (redis:with-connection (:host (redis-storage-host storage)
-                                :port (redis-storage-port storage))
-          ;; Write to temporary key
-          (red:set temp-key (prin1-to-string data))
-          ;; Atomically rename temp key to real key
-          ;; RENAME overwrites the destination key if it exists
-          (red:rename temp-key key))
-        t)
+      (with-redis-timing (:save)
+        (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
+          (redis:with-connection (:host (redis-storage-host storage)
+                                  :port (redis-storage-port storage))
+            ;; Write to temporary key
+            (red:set temp-key (prin1-to-string data))
+            ;; Atomically rename temp key to real key
+            ;; RENAME overwrites the destination key if it exists
+            (red:rename temp-key key))
+          t))
     (error (e)
+      (metrics-record-save-error)
       (warn "Redis save error for key ~a: ~a" key e)
       nil)))
 
@@ -184,6 +484,205 @@
       (warn "Redis batch save error: ~a" e)
       0)))
 
+;;; Session Ownership Methods (Redis)
+
+(defmethod storage-setnx-with-ttl ((storage redis-storage) key value ttl-seconds)
+  "Atomic SET if Not eXists with TTL. Returns T if set, NIL if key exists."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        ;; SET key value NX EX ttl - atomic setnx with expiration
+        ;; Returns "OK" if set, NIL if key already exists
+        (let ((result (red:set key value :nx t :ex ttl-seconds)))
+          (not (null result))))
+    (error (e)
+      (warn "Redis SETNX error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-refresh-ttl ((storage redis-storage) key ttl-seconds)
+  "Refresh TTL on KEY. Returns T if key exists, NIL otherwise."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        ;; EXPIRE returns 1 if key exists and TTL was set, 0 otherwise
+        (let ((result (red:expire key ttl-seconds)))
+          (and (numberp result) (= result 1))))
+    (error (e)
+      (warn "Redis EXPIRE error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-get-raw ((storage redis-storage) key)
+  "Get raw string value for KEY."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:get key))
+    (error (e)
+      (warn "Redis GET error for key ~a: ~a" key e)
+      nil)))
+
+;;; Sorted Set Methods (Redis) - for leaderboards
+
+(defmethod storage-zadd ((storage redis-storage) key score member)
+  "Add member to sorted set with score."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:zadd key score member)
+        t)
+    (error (e)
+      (warn "Redis ZADD error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-zincrby ((storage redis-storage) key increment member)
+  "Increment member's score in sorted set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((result (red:zincrby key increment member)))
+          (if (stringp result)
+              (parse-number result)
+              result)))
+    (error (e)
+      (warn "Redis ZINCRBY error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-zrevrange ((storage redis-storage) key start stop &key withscores)
+  "Get members in descending score order."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (if withscores
+            ;; ZREVRANGE returns alternating member/score when WITHSCORES
+            (let ((result (red:zrevrange key start stop :withscores t)))
+              ;; Convert flat list to ((member score) ...) pairs
+              (loop for (member score) on result by #'cddr
+                    collect (list member (if (stringp score)
+                                             (parse-number score)
+                                             score))))
+            (red:zrevrange key start stop)))
+    (error (e)
+      (warn "Redis ZREVRANGE error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-zrank ((storage redis-storage) key member)
+  "Get rank of member (ascending order, 0-based)."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:zrank key member))
+    (error (e)
+      (warn "Redis ZRANK error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-zrevrank ((storage redis-storage) key member)
+  "Get rank of member (descending order, 0-based)."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:zrevrank key member))
+    (error (e)
+      (warn "Redis ZREVRANK error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-zscore ((storage redis-storage) key member)
+  "Get score of member in sorted set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((result (red:zscore key member)))
+          (when result
+            (if (stringp result)
+                (parse-number result)
+                result))))
+    (error (e)
+      (warn "Redis ZSCORE error for key ~a: ~a" key e)
+      nil)))
+
+;;; Set Methods (Redis) - for online player tracking
+
+(defmethod storage-sadd ((storage redis-storage) key member)
+  "Add member to set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((result (red:sadd key member)))
+          (and (numberp result) (> result 0))))
+    (error (e)
+      (warn "Redis SADD error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-srem ((storage redis-storage) key member)
+  "Remove member from set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((result (red:srem key member)))
+          (and (numberp result) (> result 0))))
+    (error (e)
+      (warn "Redis SREM error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-scard ((storage redis-storage) key)
+  "Get count of members in set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((result (red:scard key)))
+          (if (numberp result) result 0)))
+    (error (e)
+      (warn "Redis SCARD error for key ~a: ~a" key e)
+      0)))
+
+(defmethod storage-smembers ((storage redis-storage) key)
+  "Get all members of set."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:smembers key))
+    (error (e)
+      (warn "Redis SMEMBERS error for key ~a: ~a" key e)
+      nil)))
+
+;;; Lua Script Execution Methods (Redis)
+
+(defmethod storage-script-load ((storage redis-storage) script-name script-body)
+  "Load a Lua script into Redis and cache its SHA."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((sha (red:script-load script-body)))
+          (setf (gethash script-name *redis-script-shas*) sha)
+          (log-verbose "Loaded Redis script ~a with SHA ~a" script-name sha)
+          sha))
+    (error (e)
+      (warn "Redis SCRIPT LOAD error for ~a: ~a" script-name e)
+      nil)))
+
+(defmethod storage-eval-script ((storage redis-storage) script-name keys args)
+  "Execute a Lua script by name using EVALSHA with fallback to EVAL."
+  (let ((sha (gethash script-name *redis-script-shas*)))
+    (unless sha
+      (warn "Script ~a not loaded - call storage-script-load first" script-name)
+      (return-from storage-eval-script nil))
+    (handler-case
+        (redis:with-connection (:host (redis-storage-host storage)
+                                :port (redis-storage-port storage))
+          ;; EVALSHA sha numkeys key1 key2 ... arg1 arg2 ...
+          (let* ((num-keys (length keys))
+                 (all-args (append keys args)))
+            (apply #'red:evalsha sha num-keys all-args)))
+      (error (e)
+        ;; If NOSCRIPT error, script was flushed - reload and retry
+        (let ((err-str (format nil "~a" e)))
+          (if (search "NOSCRIPT" err-str)
+              (progn
+                (warn "Script ~a evicted from Redis cache - cannot reload at runtime" script-name)
+                nil)
+              (progn
+                (warn "Redis EVALSHA error for ~a: ~a" script-name e)
+                nil)))))))
+
 ;;;; Memory Storage Implementation (for testing)
 
 (defclass memory-storage ()
@@ -247,6 +746,203 @@
       (incf count))
     count))
 
+;;; Session Ownership Methods (Memory Storage)
+;;; Memory storage tracks TTLs using a separate hash table with expiration times.
+
+(defparameter *memory-storage-ttls* (make-hash-table :test 'equal)
+  "Hash table mapping keys to their expiration times (universal-time).")
+
+(defun memory-storage-key-expired-p (key)
+  "Check if KEY has expired in memory storage."
+  (let ((expiration (gethash key *memory-storage-ttls*)))
+    (or (null expiration)
+        (< expiration (get-universal-time)))))
+
+(defun memory-storage-cleanup-key (storage key)
+  "Remove expired key from memory storage."
+  (when (memory-storage-key-expired-p key)
+    (remhash key (memory-storage-data storage))
+    (remhash key *memory-storage-ttls*)))
+
+(defmethod storage-setnx-with-ttl ((storage memory-storage) key value ttl-seconds)
+  "Set key only if it doesn't exist or has expired, with TTL."
+  ;; Check if key exists and is not expired
+  (let ((current (gethash key (memory-storage-data storage)))
+        (expiration (gethash key *memory-storage-ttls*)))
+    (if (and current expiration (> expiration (get-universal-time)))
+        ;; Key exists and not expired - fail
+        nil
+        ;; Key doesn't exist or expired - set it
+        (progn
+          (setf (gethash key (memory-storage-data storage)) value)
+          (setf (gethash key *memory-storage-ttls*) (+ (get-universal-time) ttl-seconds))
+          t))))
+
+(defmethod storage-refresh-ttl ((storage memory-storage) key ttl-seconds)
+  "Refresh TTL on KEY. Returns T if key exists and is not expired."
+  (let ((current (gethash key (memory-storage-data storage)))
+        (expiration (gethash key *memory-storage-ttls*)))
+    (if (and current expiration (> expiration (get-universal-time)))
+        ;; Key exists and not expired - refresh TTL
+        (progn
+          (setf (gethash key *memory-storage-ttls*) (+ (get-universal-time) ttl-seconds))
+          t)
+        ;; Key doesn't exist or expired
+        nil)))
+
+(defmethod storage-get-raw ((storage memory-storage) key)
+  "Get raw value for KEY from memory storage."
+  ;; Check expiration
+  (when (memory-storage-key-expired-p key)
+    (memory-storage-cleanup-key storage key)
+    (return-from storage-get-raw nil))
+  (gethash key (memory-storage-data storage)))
+
+;;; Sorted Set Methods (Memory Storage) - for leaderboards
+;;; Uses hash table mapping key -> list of (member . score) pairs
+
+(defparameter *memory-storage-sorted-sets* (make-hash-table :test 'equal)
+  "Hash table for sorted set emulation: key -> ((member . score) ...)")
+
+(defparameter *memory-storage-sets* (make-hash-table :test 'equal)
+  "Hash table for set emulation: key -> hash-table of members")
+
+(defun memory-sorted-set-get (key)
+  "Get sorted set entries for KEY as a list sorted by score (ascending)."
+  (let ((entries (gethash key *memory-storage-sorted-sets*)))
+    (sort (copy-list entries) #'< :key #'cdr)))
+
+(defun memory-sorted-set-put (key entries)
+  "Store sorted set ENTRIES for KEY."
+  (setf (gethash key *memory-storage-sorted-sets*) entries))
+
+(defmethod storage-zadd ((storage memory-storage) key score member)
+  "Add member to sorted set with score (memory implementation)."
+  (let* ((entries (gethash key *memory-storage-sorted-sets*))
+         (existing (assoc member entries :test #'equal)))
+    (if existing
+        ;; Update existing score
+        (setf (cdr existing) score)
+        ;; Add new entry
+        (push (cons member score) entries))
+    (memory-sorted-set-put key entries)
+    t))
+
+(defmethod storage-zincrby ((storage memory-storage) key increment member)
+  "Increment member's score in sorted set (memory implementation)."
+  (let* ((entries (gethash key *memory-storage-sorted-sets*))
+         (existing (assoc member entries :test #'equal)))
+    (if existing
+        (progn
+          (incf (cdr existing) increment)
+          (cdr existing))
+        (progn
+          ;; Add new entry with increment as initial score
+          (push (cons member increment) entries)
+          (memory-sorted-set-put key entries)
+          increment))))
+
+(defmethod storage-zrevrange ((storage memory-storage) key start stop &key withscores)
+  "Get members in descending score order (memory implementation)."
+  (let* ((sorted (sort (copy-list (gethash key *memory-storage-sorted-sets*))
+                       #'> :key #'cdr))
+         (len (length sorted))
+         ;; Handle negative indices like Redis
+         (actual-stop (if (< stop 0) (+ len stop) stop))
+         (result (subseq sorted start (min (1+ actual-stop) len))))
+    (if withscores
+        (mapcar (lambda (entry) (list (car entry) (cdr entry))) result)
+        (mapcar #'car result))))
+
+(defmethod storage-zrank ((storage memory-storage) key member)
+  "Get rank of member (ascending, memory implementation)."
+  (let* ((sorted (sort (copy-list (gethash key *memory-storage-sorted-sets*))
+                       #'< :key #'cdr)))
+    (position member sorted :test #'equal :key #'car)))
+
+(defmethod storage-zrevrank ((storage memory-storage) key member)
+  "Get rank of member (descending, memory implementation)."
+  (let* ((sorted (sort (copy-list (gethash key *memory-storage-sorted-sets*))
+                       #'> :key #'cdr)))
+    (position member sorted :test #'equal :key #'car)))
+
+(defmethod storage-zscore ((storage memory-storage) key member)
+  "Get score of member (memory implementation)."
+  (let ((entry (assoc member (gethash key *memory-storage-sorted-sets*) :test #'equal)))
+    (when entry (cdr entry))))
+
+;;; Set Methods (Memory Storage) - for online player tracking
+
+(defmethod storage-sadd ((storage memory-storage) key member)
+  "Add member to set (memory implementation)."
+  (let ((set (or (gethash key *memory-storage-sets*)
+                 (setf (gethash key *memory-storage-sets*)
+                       (make-hash-table :test 'equal)))))
+    (unless (gethash member set)
+      (setf (gethash member set) t)
+      t)))
+
+(defmethod storage-srem ((storage memory-storage) key member)
+  "Remove member from set (memory implementation)."
+  (let ((set (gethash key *memory-storage-sets*)))
+    (when set
+      (remhash member set)
+      t)))
+
+(defmethod storage-scard ((storage memory-storage) key)
+  "Get count of members in set (memory implementation)."
+  (let ((set (gethash key *memory-storage-sets*)))
+    (if set (hash-table-count set) 0)))
+
+(defmethod storage-smembers ((storage memory-storage) key)
+  "Get all members of set (memory implementation)."
+  (let ((set (gethash key *memory-storage-sets*))
+        (members nil))
+    (when set
+      (maphash (lambda (k v) (declare (ignore v)) (push k members)) set))
+    members))
+
+;;; Lua Script Execution Methods (Memory Storage)
+;;; For testing, we emulate known scripts by dispatching on script name.
+
+(defparameter *memory-script-handlers* (make-hash-table :test 'equal)
+  "Hash table mapping script names to handler functions for memory storage.")
+
+(defmethod storage-script-load ((storage memory-storage) script-name script-body)
+  "No-op for memory storage - scripts are emulated via handlers."
+  (declare (ignore script-body))
+  ;; Return a fake SHA (the script name itself)
+  (setf (gethash script-name *redis-script-shas*) script-name)
+  (log-verbose "Memory storage: registered script ~a" script-name)
+  script-name)
+
+(defmethod storage-eval-script ((storage memory-storage) script-name keys args)
+  "Execute emulated script by name in memory storage."
+  (let ((handler (gethash script-name *memory-script-handlers*)))
+    (if handler
+        (funcall handler storage keys args)
+        (progn
+          (warn "Memory storage: no handler for script ~a" script-name)
+          nil))))
+
+;; Register emulated trade_complete script handler
+(setf (gethash "trade_complete" *memory-script-handlers*)
+      (lambda (storage keys args)
+        "Emulate trade_complete.lua: atomic item swap between two players.
+         KEYS: [player1-key, player2-key]
+         ARGS: [serialized-player1-data, serialized-player2-data]"
+        (declare (ignore storage))
+        (let ((key1 (first keys))
+              (key2 (second keys))
+              (data1 (first args))
+              (data2 (second args)))
+          ;; Atomically update both player records
+          ;; In memory storage, this is inherently atomic (single-threaded)
+          (when (and key1 key2 data1 data2)
+            (setf (gethash key1 (memory-storage-data *storage*)) data1)
+            (setf (gethash key2 (memory-storage-data *storage*)) data2)
+            "OK"))))
+
 ;;;; Key Schema Functions
 
 (defun player-key (player-id)
@@ -265,6 +961,21 @@
   "Generate Redis key for global ID counter."
   "server:id-counter")
 
+;;; Leaderboard Keys (Phase 4 - Structured Data)
+;;; See docs/db.md "Structured Redis Data" section
+
+(defun leaderboard-key (category)
+  "Generate Redis key for leaderboard. CATEGORY is :xp, :level, or :deaths."
+  (format nil "leaderboard:~a" (string-downcase (symbol-name category))))
+
+(defun online-players-key ()
+  "Generate Redis key for online players set."
+  "online:players")
+
+;;; Future leaderboards (stubs for later implementation):
+;;; - (defun leaderboard-kills-key () "leaderboard:pvp-kills")  ; PvP kills tracking
+;;; - (defun leaderboard-skill-key (skill) ...)                  ; Skill levels (smithing, fishing, etc.)
+
 ;;;; Global Storage Instance
 
 (defparameter *storage* nil
@@ -274,6 +985,10 @@
   "Initialize global storage backend.
    BACKEND can be :redis or :memory.
    For :redis, HOST and PORT specify the Redis server."
+  ;; Generate server instance ID for session ownership
+  (setf *server-instance-id* (generate-server-instance-id))
+  (log-verbose "Server instance ID: ~a" *server-instance-id*)
+  ;; Initialize storage backend
   (setf *storage*
         (ecase backend
           (:redis (make-instance 'redis-storage :host host :port port))
@@ -399,6 +1114,41 @@
                        player-id (getf data :version))
           (values player zone-id))))))
 
+(defun db-load-player-validated (player-id)
+  "Load player by ID with schema validation.
+   Returns (values player zone-id) or (values NIL NIL) if not found or invalid.
+
+   This is the RECOMMENDED function for loading player data. It:
+   1. Loads raw data from storage
+   2. Validates against *player-schema* (rejects invalid data)
+   3. Runs migrations if valid
+   4. Returns deserialized player or NIL
+
+   Invalid data is REJECTED entirely (returns NIL) rather than partially loaded.
+   This ensures data integrity - corrupted data should be investigated, not
+   silently loaded with missing/clamped fields."
+  (when *storage*
+    (let* ((key (player-key player-id))
+           (raw-data (storage-load *storage* key)))
+      (unless raw-data
+        (return-from db-load-player-validated (values nil nil)))
+      ;; Validate before processing
+      (multiple-value-bind (valid-p errors)
+          (validate-player-plist-deep raw-data :log-errors t)
+        (unless valid-p
+          (warn "CRITICAL: Player ~a data failed validation with ~d error(s). Data NOT loaded."
+                player-id (length errors))
+          (return-from db-load-player-validated (values nil nil))))
+      ;; Data is valid - run migrations and deserialize
+      (let ((data (migrate-player-data raw-data)))
+        (let* ((player (deserialize-player data
+                                           *inventory-size*
+                                           (length *equipment-slot-ids*)))
+               (zone-id (getf data :zone-id)))
+          (log-verbose "Loaded and validated player ~a from storage (version ~a)"
+                       player-id (getf data :version))
+          (values player zone-id))))))
+
 (defun db-delete-player (player-id)
   "Delete player from storage."
   (when *storage*
@@ -428,6 +1178,79 @@
            (data (storage-load *storage* key)))
       (when data
         (mapcar #'deserialize-object (getf data :objects))))))
+
+;;;; ========================================================================
+;;;; LEADERBOARD SYSTEM (Phase 4 - Structured Data)
+;;;; See docs/db.md "Structured Redis Data" section
+;;;; ========================================================================
+
+(defun db-update-leaderboard-xp (player-id xp)
+  "Update player's XP on the XP leaderboard."
+  (when *storage*
+    (storage-zadd *storage* (leaderboard-key :xp) xp (prin1-to-string player-id))))
+
+(defun db-update-leaderboard-level (player-id level)
+  "Update player's level on the level leaderboard."
+  (when *storage*
+    (storage-zadd *storage* (leaderboard-key :level) level (prin1-to-string player-id))))
+
+(defun db-update-leaderboard-deaths (player-id)
+  "Increment player's death count on the deaths leaderboard."
+  (when *storage*
+    (storage-zincrby *storage* (leaderboard-key :deaths) 1 (prin1-to-string player-id))))
+
+(defun db-get-leaderboard (category &key (top 10) (withscores t))
+  "Get top N entries from leaderboard CATEGORY (:xp, :level, :deaths).
+   Returns list of (player-id score) pairs if WITHSCORES, else list of player-ids."
+  (when *storage*
+    (let ((key (leaderboard-key category))
+          (result (storage-zrevrange *storage* key 0 (1- top) :withscores withscores)))
+      (if withscores
+          ;; Convert string IDs back to numbers
+          (mapcar (lambda (entry)
+                    (list (parse-integer (first entry) :junk-allowed t)
+                          (second entry)))
+                  result)
+          (mapcar (lambda (id-str)
+                    (parse-integer id-str :junk-allowed t))
+                  result)))))
+
+(defun db-get-player-rank (player-id category)
+  "Get player's rank on CATEGORY leaderboard (0-based descending).
+   Returns NIL if player not on leaderboard."
+  (when *storage*
+    (storage-zrevrank *storage* (leaderboard-key category) (prin1-to-string player-id))))
+
+(defun db-get-player-leaderboard-score (player-id category)
+  "Get player's score on CATEGORY leaderboard.
+   Returns NIL if player not on leaderboard."
+  (when *storage*
+    (storage-zscore *storage* (leaderboard-key category) (prin1-to-string player-id))))
+
+;;; Online Player Tracking
+
+(defun db-add-online-player (player-id)
+  "Add player to online players set."
+  (when *storage*
+    (storage-sadd *storage* (online-players-key) (prin1-to-string player-id))))
+
+(defun db-remove-online-player (player-id)
+  "Remove player from online players set."
+  (when *storage*
+    (storage-srem *storage* (online-players-key) (prin1-to-string player-id))))
+
+(defun db-get-online-count ()
+  "Get count of online players."
+  (if *storage*
+      (storage-scard *storage* (online-players-key))
+      0))
+
+(defun db-get-online-players ()
+  "Get list of online player IDs."
+  (when *storage*
+    (mapcar (lambda (id-str)
+              (parse-integer id-str :junk-allowed t))
+            (storage-smembers *storage* (online-players-key)))))
 
 ;;;; Dirty Flag System (for Tier-2 Batched Writes)
 
@@ -469,9 +1292,80 @@
         (setf (player-session-dirty-p session) t)
         (log-verbose "Marked player ~a as dirty" player-id)))))
 
+;;; Session Ownership Functions (Phase 3 - Database Hardening)
+
+(defun claim-session-ownership (player-id)
+  "Attempt to claim ownership of a player session.
+   Returns T if claimed successfully, NIL if session is owned elsewhere (double-login)."
+  (unless *storage*
+    (return-from claim-session-ownership t))  ; No storage = always succeed
+  ;; Ensure server instance ID exists
+  (unless *server-instance-id*
+    (setf *server-instance-id* (generate-server-instance-id)))
+  (let ((owner-key (session-owner-key player-id)))
+    (let ((claimed (storage-setnx-with-ttl *storage* owner-key *server-instance-id*
+                                           *session-ownership-ttl-seconds*)))
+      (if claimed
+          (progn
+            (log-verbose "Claimed session ownership for player ~a" player-id)
+            t)
+          ;; Check if we already own it (reconnect case)
+          (let ((current-owner (storage-get-raw *storage* owner-key)))
+            (if (and current-owner (string= current-owner *server-instance-id*))
+                (progn
+                  ;; We already own it, refresh TTL
+                  (storage-refresh-ttl *storage* owner-key *session-ownership-ttl-seconds*)
+                  (log-verbose "Refreshed existing session ownership for player ~a" player-id)
+                  t)
+                (progn
+                  (log-verbose "Session ownership claim REJECTED for player ~a (owned by ~a)"
+                               player-id current-owner)
+                  nil)))))))
+
+(defun release-session-ownership (player-id)
+  "Release session ownership for a player. Called on logout."
+  (when *storage*
+    (let ((owner-key (session-owner-key player-id)))
+      ;; Only delete if we own it
+      (let ((current-owner (storage-get-raw *storage* owner-key)))
+        (when (and current-owner *server-instance-id*
+                   (string= current-owner *server-instance-id*))
+          (storage-delete *storage* owner-key)
+          (log-verbose "Released session ownership for player ~a" player-id))))))
+
+(defun verify-session-ownership (player-id)
+  "Verify we still own the session. Returns T if we own it, NIL otherwise."
+  (unless *storage*
+    (return-from verify-session-ownership t))  ; No storage = always succeed
+  (unless *server-instance-id*
+    (return-from verify-session-ownership nil))  ; No server ID = don't own anything
+  (let* ((owner-key (session-owner-key player-id))
+         (current-owner (storage-get-raw *storage* owner-key)))
+    (and current-owner (string= current-owner *server-instance-id*))))
+
+(defun refresh-session-ownership (player-id)
+  "Refresh TTL on session ownership. Called periodically as heartbeat."
+  (when *storage*
+    (let ((owner-key (session-owner-key player-id)))
+      (storage-refresh-ttl *storage* owner-key *session-ownership-ttl-seconds*))))
+
+(defun refresh-all-session-ownerships ()
+  "Refresh TTL on all active session ownerships. Called periodically."
+  (with-player-sessions-lock
+    (maphash (lambda (player-id session)
+               (declare (ignore session))
+               (refresh-session-ownership player-id))
+             *player-sessions*)))
+
 (defun register-player-session (player &key (zone-id nil))
-  "Register a player session when they login. Thread-safe."
+  "Register a player session when they login. Thread-safe.
+   Returns T on success, NIL if session is owned elsewhere (double-login rejected)."
   (let ((player-id (player-id player)))
+    ;; Attempt to claim ownership first
+    (unless (claim-session-ownership player-id)
+      (warn "Double-login rejected for player ~a - session owned elsewhere" player-id)
+      (return-from register-player-session nil))
+    ;; Ownership claimed, register local session
     (with-player-sessions-lock
       (setf (gethash player-id *player-sessions*)
             (make-player-session :player player
@@ -479,7 +1373,14 @@
                                  :dirty-p nil
                                  :last-flush (float (get-internal-real-time) 1.0)
                                  :tier1-pending nil)))
-    (log-verbose "Registered session for player ~a in zone ~a" player-id zone-id)))
+    ;; Add to online players set (Phase 4)
+    (db-add-online-player player-id)
+    ;; Update leaderboards with current player stats (Phase 4)
+    (db-update-leaderboard-xp player-id (player-lifetime-xp player))
+    (let ((level (combat-level (player-stats player))))
+      (db-update-leaderboard-level player-id level))
+    (log-verbose "Registered session for player ~a in zone ~a" player-id zone-id)
+    t))
 
 (defun update-player-session-zone (player-id zone-id)
   "Update the zone-id for a player session (called on zone transitions). Thread-safe."
@@ -490,7 +1391,13 @@
         (log-verbose "Updated session zone for player ~a to ~a" player-id zone-id)))))
 
 (defun unregister-player-session (player-id)
-  "Unregister a player session when they logout. Thread-safe."
+  "Unregister a player session when they logout. Thread-safe.
+   Releases session ownership before removing local session."
+  ;; Remove from online players set (Phase 4)
+  (db-remove-online-player player-id)
+  ;; Release ownership first (before final save)
+  (release-session-ownership player-id)
+  ;; Remove local session
   (with-player-sessions-lock
     (remhash player-id *player-sessions*))
   (log-verbose "Unregistered session for player ~a" player-id))
@@ -543,16 +1450,23 @@
 
 (defun db-save-player-immediate (player)
   "Tier-1 immediate write: save player and wait for confirmation.
-   Use for critical operations: trade, bank, death, level-up, item destruction."
-  (db-save-player player)
-  ;; For Redis with AOF, write is durable after return
-  ;; Mark as not dirty since we just saved
-  (let ((session (gethash (player-id player) *player-sessions*)))
-    (when session
-      (setf (player-session-dirty-p session) nil)
-      (setf (player-session-last-flush session) (float (get-internal-real-time) 1.0))))
-  (log-verbose "Tier-1 immediate save for player ~a" (player-id player))
-  t)
+   Use for critical operations: trade, bank, death, level-up, item destruction.
+   Verifies session ownership before saving to prevent stale server writes."
+  (let ((player-id (player-id player)))
+    ;; Verify we still own this session (prevents stale server writes)
+    (unless (verify-session-ownership player-id)
+      (warn "REJECTED: Tier-1 save for player ~a - session not owned by this server" player-id)
+      (return-from db-save-player-immediate nil))
+    ;; Ownership verified, proceed with save
+    (db-save-player player)
+    ;; For Redis with AOF, write is durable after return
+    ;; Mark as not dirty since we just saved
+    (let ((session (gethash player-id *player-sessions*)))
+      (when session
+        (setf (player-session-dirty-p session) nil)
+        (setf (player-session-last-flush session) (float (get-internal-real-time) 1.0))))
+    (log-verbose "Tier-1 immediate save for player ~a" player-id)
+    t))
 
 ;;;; Login/Logout Operations
 

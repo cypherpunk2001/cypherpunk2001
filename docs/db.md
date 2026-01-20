@@ -900,3 +900,479 @@ INFO persistence
 INFO memory
 DBSIZE              # Number of keys
 ```
+
+---
+
+## Addendum: Production Hardening
+
+The sections below address architectural concerns for production MMO features (trades, banks, guilds, leaderboards). These build on the foundation above.
+
+### Atomic Multi-Entity Operations
+
+**Problem:** The write-then-rename pattern is atomic per-key but NOT atomic across multiple keys. Trades, bank transfers, and guild operations touch multiple players simultaneously.
+
+**Risk:** Server crash between individual writes causes:
+- Item duplication (player A loses item, crash, player B never receives)
+- Item deletion (player A's item removed, crash before player B gets gold)
+- Inconsistent state requiring manual GM intervention
+
+**Solution:** Redis Lua scripts for atomic multi-entity operations.
+
+```lisp
+;; New storage generic for atomic multi-key operations
+(defgeneric storage-execute-atomic (storage script keys args)
+  (:documentation "Execute atomic operation across multiple keys via Lua script."))
+```
+
+**Lua Script Pattern:**
+```lua
+-- trade_complete.lua: Atomic two-player item/gold swap
+-- KEYS[1] = player:A, KEYS[2] = player:B
+-- ARGV[1] = item-id, ARGV[2] = gold-amount
+
+local playerA = redis.call('GET', KEYS[1])
+local playerB = redis.call('GET', KEYS[2])
+
+-- Validation (decoded in Lua or pre-validated by server)
+if not playerA or not playerB then
+  return {err = "PLAYER_NOT_FOUND"}
+end
+
+-- Modify both atomically (Lua scripts are atomic in Redis)
+redis.call('SET', KEYS[1], modified_playerA)
+redis.call('SET', KEYS[2], modified_playerB)
+
+return {ok = "TRADE_COMPLETE"}
+```
+
+**Tier-1 Operations Requiring Atomicity:**
+
+| Operation | Keys Affected | Script |
+|-----------|---------------|--------|
+| Trade complete | 2 players | `trade_complete.lua` |
+| Bank deposit | player + bank | `bank_deposit.lua` |
+| Bank withdraw | player + bank | `bank_withdraw.lua` |
+| Guild invite accept | player + guild | `guild_join.lua` |
+| Auction purchase | buyer + seller + listing | `auction_buy.lua` |
+| Mail with attachment | sender + recipient + mail | `mail_send.lua` |
+
+**Implementation:** Scripts stored in `data/redis-scripts/`, loaded at server startup, executed via `EVALSHA`.
+
+### Session Ownership & Lease
+
+**Problem:** Two writers racing for same player key can cause lost updates:
+- Old session flush overwrites new session changes
+- Reconnect before old session cleanup completes
+- Multi-process server (future) with stale ownership
+
+**Solution:** Redis-based session lease with TTL.
+
+**Why Redis-based (not in-memory)?**
+- Survives server restart (ownership transfers cleanly)
+- Enables multi-server deployment (one server per zone cluster)
+- Prevents "ghost sessions" from crashed servers blocking logins
+- TTL auto-cleanup means no manual intervention after crashes
+
+**Key Schema:**
+```
+session:{player-id}:owner  -> server-id:session-id (TTL: 60s)
+```
+
+**Ownership Protocol:**
+```
+1. On login:
+   - SETNX session:{id}:owner with 60s TTL
+   - If fails, reject login (already owned)
+   - Start heartbeat (refresh TTL every 30s)
+
+2. On save:
+   - Check session:{id}:owner matches our session-id
+   - If mismatch, abort save (we lost ownership)
+   - If match, proceed with save
+
+3. On logout:
+   - DEL session:{id}:owner
+   - Final save
+
+4. On crash (TTL expires):
+   - Redis auto-deletes ownership key after 60s
+   - Next login can claim ownership
+```
+
+**Lua Script for Safe Save:**
+```lua
+-- safe_save.lua: Only save if we own the session
+-- KEYS[1] = session:{id}:owner, KEYS[2] = player:{id}
+-- ARGV[1] = expected-owner, ARGV[2] = player-data, ARGV[3] = timestamp
+
+local owner = redis.call('GET', KEYS[1])
+if owner ~= ARGV[1] then
+  return {err = "NOT_OWNER", actual = owner}
+end
+
+-- We own it, proceed with atomic save
+local temp_key = KEYS[2] .. ':temp:' .. ARGV[3]
+redis.call('SET', temp_key, ARGV[2])
+redis.call('RENAME', temp_key, KEYS[2])
+return {ok = "SAVED"}
+```
+
+### Persistence Monitoring & Metrics
+
+**Problem:** No visibility into Redis latency, AOF rewrite impact, or batch flush performance.
+
+**Solution:** Application-level metrics collection.
+
+#### Connection Pooling Analysis
+
+**Current State:** cl-redis uses per-operation connections via `redis:with-connection`. No built-in connection pooling (there's an unmerged PR from years ago, but the library is maintained - commits as recent as 2024).
+
+**Is this a problem?** No, for current scale targets (~500 players). Here's why:
+
+| Event | Redis Ops | Frequency |
+|-------|-----------|-----------|
+| Login | 1 load | Once per player |
+| Logout | 1 save | Once per player |
+| Batch flush | 1 pipelined connection for ALL dirty players | Every 30s |
+| Tier-1 save (death, level-up, trade) | 1 save | Rare (few/second) |
+| During gameplay | **Zero** | In-memory is authoritative |
+
+**Key insight:** Redis is NOT hit every tick. The architecture minimizes Redis operations by:
+1. Keeping authoritative state in memory during gameplay
+2. Batching dirty player saves every 30s with pipelining (1 connection for N players)
+3. Only reading on login, writing on logout/checkpoint
+
+**Rough math for 500 players:**
+- 500 logins = 500 connections (one-time, spread over time)
+- Every 30s = 1 connection (pipelined batch, even if all 500 dirty)
+- Tier-1 saves = ~10/second at peak
+
+This is trivial load. Connection pooling helps at thousands of ops/second.
+
+**When to revisit:**
+- 2,000+ concurrent players
+- Profiling shows connection overhead as bottleneck
+- Redis on remote host (network latency compounds)
+
+**If needed later:**
+1. Wrap `with-connection` in a simple application-level pool (~20 lines)
+2. Switch to a pooling-capable library
+3. Horizontal scaling (more server processes) may solve it first
+
+**Decision:** Keep current approach. Add pooling only if metrics show it's needed.
+
+**Metrics to Track:**
+
+| Metric | Collection Point | Alert Threshold |
+|--------|------------------|-----------------|
+| `redis.save.latency_ms` | Every `storage-save` | p99 > 10ms |
+| `redis.load.latency_ms` | Every `storage-load` | p99 > 5ms |
+| `redis.batch.latency_ms` | Every `flush-dirty-players` | p99 > 100ms |
+| `redis.batch.size` | Every batch flush | > 100 players |
+| `redis.connection.errors` | Every failed operation | > 10/min |
+| `redis.script.latency_ms` | Every Lua script exec | p99 > 20ms |
+
+**Implementation:**
+```lisp
+(defstruct redis-metrics
+  (save-latencies (make-ring-buffer 1000))    ; Last 1000 save times
+  (load-latencies (make-ring-buffer 1000))
+  (batch-latencies (make-ring-buffer 100))
+  (connection-errors 0)
+  (last-reset-time (get-universal-time)))
+
+(defun record-latency (metrics type start-time)
+  (let ((elapsed-ms (* 1000.0 (- (get-internal-real-time) start-time)
+                       (/ 1.0 internal-time-units-per-second))))
+    (ring-buffer-push (slot-value metrics type) elapsed-ms)))
+
+(defun get-p99-latency (metrics type)
+  (percentile (ring-buffer-values (slot-value metrics type)) 99))
+```
+
+**Logging:**
+- Log warning if p99 exceeds threshold
+- Log Redis INFO stats every 5 minutes (memory, persistence status)
+- Log AOF rewrite start/complete events
+
+### Structured Redis Data (Non-Blob)
+
+**Problem:** Pure blob storage makes queries expensive. Getting top 100 players by XP requires loading ALL player blobs.
+
+**Solution:** Maintain auxiliary Redis structures alongside blobs for query-able data.
+
+**New Key Schema:**
+```
+# Sorted Sets (for rankings)
+leaderboard:xp           -> ZADD player-id score  (score = lifetime-xp)
+leaderboard:level        -> ZADD player-id score  (score = combat-level)
+leaderboard:deaths       -> ZADD player-id score  (score = total deaths)
+
+# Future leaderboards (add when features implemented):
+# leaderboard:kills            -> ZADD player-id score  (pvp-kills, requires PvP system)
+# leaderboard:skill:smithing   -> ZADD player-id score
+# leaderboard:skill:fishing    -> ZADD player-id score
+# leaderboard:skill:mining     -> ZADD player-id score
+# etc.
+
+# Sets (for membership queries)
+online:players           -> SADD player-id        (with expiring members)
+guild:{id}:members       -> SADD player-id
+zone:{id}:players        -> SADD player-id        (for zone population)
+
+# Hashes (for quick lookups without loading full blob)
+player:{id}:summary      -> HSET name level zone-id guild-id kills deaths
+username:lookup          -> HSET username player-id
+```
+
+**Leaderboard Categories (Implemented):**
+
+| Category | Score Source | Updated When |
+|----------|--------------|--------------|
+| `leaderboard:xp` | `player-lifetime-xp` | On XP gain (batched) |
+| `leaderboard:level` | `player-combat-level` | On level up (tier-1) |
+| `leaderboard:deaths` | `player-deaths` | On death (tier-1) |
+
+**Future Leaderboard Categories (Stub):**
+
+| Category | Score Source | Requires |
+|----------|--------------|----------|
+| `leaderboard:kills` | `player-pvp-kills` | PvP combat system |
+| `leaderboard:skill:*` | Skill levels | Skilling system |
+
+**New Durable Fields Required:**
+```lisp
+;; Add to player struct (types.lisp)
+(deaths 0 :type integer)       ; Total times this player has died
+
+;; Migration v3->v4: Add deaths field
+(defun migrate-player-v3->v4 (data)
+  (unless (getf data :deaths)
+    (setf data (plist-put data :deaths 0)))
+  data)
+
+;; Future: Add pvp-kills when PvP system implemented
+;; (pvp-kills 0 :type integer)  ; Kills of other players (not NPCs)
+```
+
+**Consistency Model:**
+- Sorted sets/hashes updated IN SAME TRANSACTION as blob save
+- Use Lua script to atomically update blob + indexes
+- On load, blob is authoritative; indexes are derived/cached
+
+**Update Pattern:**
+```lua
+-- save_with_indexes.lua
+-- KEYS[1] = player:{id}, KEYS[2] = leaderboard:xp, KEYS[3] = player:{id}:summary
+-- ARGV[1] = player-data, ARGV[2] = lifetime-xp, ARGV[3] = player-id, ...
+
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+redis.call('HSET', KEYS[3], 'name', ARGV[4], 'level', ARGV[5])
+return {ok = "SAVED_WITH_INDEXES"}
+```
+
+**Query Functions:**
+```lisp
+(defun db-get-leaderboard (category &key (start 0) (count 100))
+  "Return top players for CATEGORY (:xp, :level, :kills)."
+  (let ((key (format nil "leaderboard:~a" category)))
+    (storage-zrevrange *storage* key start (+ start count -1) :withscores t)))
+
+(defun db-get-online-count ()
+  (storage-scard *storage* "online:players"))
+
+(defun db-lookup-player-by-name (username)
+  (storage-hget *storage* "username:lookup" (string-downcase username)))
+```
+
+### Deserialization Validation
+
+**Problem:** Malformed data from corrupted saves or malicious tampering can crash server or cause exploits.
+
+**Current gaps:**
+- No type checking (`:hp "ATTACK!"` accepted)
+- No bounds checking (`:hp -999999` accepted)
+- No size limits on inventory beyond array bounds
+- Missing fields silently default
+
+**Solution:** Schema validation layer before deserialization.
+
+**Validation Rules:**
+```lisp
+(defparameter *player-schema*
+  '((:id        :type integer :required t :min 1)
+    (:x         :type float   :required t :min -1000000.0 :max 1000000.0)
+    (:y         :type float   :required t :min -1000000.0 :max 1000000.0)
+    (:zone-id   :type symbol  :required t)
+    (:hp        :type integer :required t :min 0 :max 99999)
+    (:lifetime-xp :type integer :required nil :min 0 :default 0)
+    (:version   :type integer :required t :min 1)))
+
+(defun validate-player-plist (plist)
+  "Validate PLIST against *player-schema*. Returns (values valid-p errors)."
+  (let ((errors nil))
+    (dolist (rule *player-schema*)
+      (let* ((key (first rule))
+             (value (getf plist key))
+             (props (rest rule))
+             (type-spec (getf props :type))
+             (required (getf props :required))
+             (min-val (getf props :min))
+             (max-val (getf props :max)))
+        ;; Check required
+        (when (and required (null value))
+          (push (format nil "Missing required field: ~a" key) errors))
+        ;; Check type
+        (when (and value (not (typep value type-spec)))
+          (push (format nil "Invalid type for ~a: expected ~a, got ~a"
+                        key type-spec (type-of value)) errors))
+        ;; Check bounds
+        (when (and value (numberp value))
+          (when (and min-val (< value min-val))
+            (push (format nil "~a below minimum: ~a < ~a" key value min-val) errors))
+          (when (and max-val (> value max-val))
+            (push (format nil "~a above maximum: ~a > ~a" key value max-val) errors)))))
+    (values (null errors) (nreverse errors))))
+```
+
+**Size Limits:**
+```lisp
+(defparameter *max-player-blob-size* (* 64 1024))  ; 64KB max per player
+(defparameter *max-inventory-slots* 100)           ; Hard cap on slots
+(defparameter *max-stack-count* 999999)            ; Max items per stack
+
+(defun validate-blob-size (data-string)
+  (when (> (length data-string) *max-player-blob-size*)
+    (error 'blob-too-large :size (length data-string) :max *max-player-blob-size*)))
+```
+
+**Integration:**
+```lisp
+(defun db-load-player-validated (player-id)
+  "Load player with full validation."
+  (let* ((raw (storage-load *storage* (player-key player-id))))
+    (when raw
+      (validate-blob-size (prin1-to-string raw))
+      (let ((migrated (migrate-player-data raw)))
+        (multiple-value-bind (valid-p errors) (validate-player-plist migrated)
+          (unless valid-p
+            (warn "Invalid player data for ~a: ~{~a~^, ~}" player-id errors)
+            (return-from db-load-player-validated nil))
+          (deserialize-player migrated *inventory-size* (length *equipment-slot-ids*)))))))
+```
+
+**Validation Behavior: Reject, Don't Clamp**
+
+Invalid data is **rejected entirely** rather than clamped to valid ranges. Rationale:
+- Clamping hides corruption - if HP is -999999, something is very wrong
+- Rejecting surfaces bugs immediately rather than masking them
+- Players with corrupted data should be flagged for GM investigation
+- Production: Consider a "quarantine" table for corrupted player records
+
+If a player cannot load due to validation failure:
+1. Log detailed error with all validation failures
+2. Return nil (player cannot login)
+3. Admin can inspect raw Redis data and manually fix or restore from backup
+
+### Implementation Priority
+
+Phases are implemented **sequentially** in order:
+
+| Phase | Feature | Risk | Value | Status |
+|-------|---------|------|-------|--------|
+| 1 | Schema Validation | Low | High | Planned |
+| 2 | Redis Metrics | Low | Medium | Planned |
+| 3 | Session Ownership (Redis TTL) | Medium | High | Planned |
+| 4 | Structured Data (Leaderboards: xp, level, deaths) | Medium | Medium | Planned |
+| 5 | Trade System + Atomic Ops | Medium | High | Planned |
+
+**Notes:**
+- Phase 5 implements trading AND atomic operations together (no deferral)
+- Trade system uses coins as regular inventory items (no separate currency)
+- PvP kills leaderboard deferred until PvP combat system exists
+- Skill leaderboards deferred until skilling system exists
+
+### Trade System Specification
+
+**User Interaction:**
+- Right-click another player -> Context menu shows "Trade with [playername]"
+- Opens trade window for both players
+- Both players add items/gold, confirm
+- Trade completes atomically or fails entirely
+
+**Trade Flow:**
+```
+1. Player A right-clicks Player B -> sends trade request intent
+2. Server validates: both players exist, in same zone, within range (10 tiles)
+3. Server sends trade window open to both clients
+4. Players add/remove items (including coins) from offer
+5. Both players click "Confirm"
+6. Server executes atomic Lua script:
+   - Validate both inventories have items being traded
+   - Swap items atomically (coins are just another inventory item)
+7. Server sends trade complete/fail to both clients
+```
+
+**Currency:** Coins are an existing inventory item dropped by NPCs. Trading uses coins as a regular tradeable item - no separate gold/currency system needed.
+
+**Atomic Trade Lua Script:**
+```lua
+-- trade_complete.lua
+-- KEYS[1] = player:A, KEYS[2] = player:B
+-- ARGV[1] = playerA-data-with-items-removed-gold-adjusted
+-- ARGV[2] = playerB-data-with-items-removed-gold-adjusted
+
+-- Both player states are pre-computed by server with items/gold swapped
+-- This script just does the atomic write of both
+
+local existsA = redis.call('EXISTS', KEYS[1])
+local existsB = redis.call('EXISTS', KEYS[2])
+
+if existsA == 0 or existsB == 0 then
+  return {err = "PLAYER_NOT_FOUND"}
+end
+
+-- Atomic write of both players
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
+
+return {ok = "TRADE_COMPLETE"}
+```
+
+**Trade State (Ephemeral):**
+```lisp
+(defstruct trade-session
+  player-a-id           ; Initiator
+  player-b-id           ; Target
+  player-a-offer        ; List of (slot-index . count) offered by A
+  player-b-offer        ; List of (slot-index . count) offered by B
+  player-a-confirmed-p  ; A clicked confirm
+  player-b-confirmed-p  ; B clicked confirm
+  created-at            ; For timeout (60s inactivity = cancel)
+  last-activity         ; Last action timestamp
+  state)                ; :pending, :open, :confirming, :complete, :cancelled
+
+;; Trade sessions are ephemeral - stored in memory, not Redis
+;; If server crashes mid-trade, trade is cancelled (no items lost)
+(defparameter *active-trades* (make-hash-table :test 'eql))
+```
+
+**Trade Validation Rules:**
+- Both players must be online
+- Both players must be in same zone
+- Distance between players < 10 tiles
+- Neither player already in a trade
+- Items must exist in player's inventory
+- No trading equipped items (must unequip first)
+- Trade auto-cancels after 60s of inactivity
+
+**Tradeable Items:** ALL inventory items are tradeable (coins, arrows, goblin ears, whatever). No item blacklist. KISS.
+
+**Files to Create/Modify:**
+- `src/trade.lisp` (new) - Trade system implementation
+- `src/ui.lisp` - Trade window UI, context menu
+- `src/input.lisp` - Right-click context menu handling
+- `src/intent.lisp` - Trade intents (request, offer, confirm, cancel)
+- `data/redis-scripts/trade_complete.lua` - Atomic trade script
+- `tests/trade-test.lisp` (new) - Trade system tests

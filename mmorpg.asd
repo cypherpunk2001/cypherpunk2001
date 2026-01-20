@@ -20,6 +20,7 @@
                (:file "src/input")
                (:file "src/combat")
                (:file "src/chat")
+               (:file "src/trade")
                (:file "src/ai")
                (:file "src/audio")
                (:file "src/ui")

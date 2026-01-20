@@ -56,7 +56,21 @@
                 #'test-compact-npc-roundtrip
                 #'test-compact-size-reduction
                 #'test-compact-enum-encoding
-                #'test-compact-quantization)))
+                #'test-compact-quantization
+                ;; Schema Validation Tests (Phase 1 - Database Hardening)
+                #'test-validation-valid-data-passes
+                #'test-validation-missing-required-fields
+                #'test-validation-wrong-types
+                #'test-validation-out-of-bounds
+                #'test-validation-oversized-blob
+                #'test-validation-nested-stats
+                #'test-validation-nested-inventory
+                #'test-validated-load-rejects-invalid
+                ;; Session Ownership Tests (Phase 3 - Database Hardening)
+                #'test-session-claim-success
+                #'test-session-double-login-rejected
+                #'test-session-ownership-refresh
+                #'test-session-release-and-reclaim)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -690,8 +704,8 @@
     t))
 
 (defun test-migration-v1-to-v3-chain ()
-  "Test: v1 player data migrates correctly through v2 to v3 (chain migration)."
-  ;; Create v1-style data (no lifetime-xp, no playtime, no created-at)
+  "Test: v1 player data migrates correctly through full chain to current version."
+  ;; Create v1-style data (no lifetime-xp, no playtime, no created-at, no deaths)
   (let ((v1-data '(:version 1
                    :id 42
                    :x 100.0
@@ -703,15 +717,18 @@
                            :hitpoints (:xp 0 :level 1))
                    :inventory nil
                    :equipment nil)))
-    ;; Run migration chain (v1 -> v2 -> v3)
+    ;; Run migration chain (v1 -> v2 -> v3 -> v4 -> ...)
     (let ((migrated (migrate-player-data v1-data)))
-      ;; Verify version updated to current (v3)
-      (assert-equal 3 (getf migrated :version) "Version not updated to v3")
+      ;; Verify version updated to current
+      (assert-equal *player-schema-version* (getf migrated :version)
+                   (format nil "Version not updated to current (~d)" *player-schema-version*))
       ;; Verify v2 field (lifetime-xp) added
       (assert-equal 0 (getf migrated :lifetime-xp) "lifetime-xp not added by v2 migration")
       ;; Verify v3 fields (playtime, created-at) added
       (assert-equal 0 (getf migrated :playtime) "playtime not added by v3 migration")
       (assert-true (getf migrated :created-at) "created-at not added by v3 migration")
+      ;; Verify v4 field (deaths) added
+      (assert-equal 0 (getf migrated :deaths) "deaths not added by v4 migration")
       ;; Verify original fields preserved
       (assert-equal 42 (getf migrated :id) "ID not preserved")
       (assert-equal 100.0 (getf migrated :x) "X not preserved")
@@ -908,6 +925,291 @@
               (format nil "Timer ~a not preserved within 0.01 precision (got ~a)"
                       val restored))))
   t)
+
+;;;; ========================================================================
+;;;; SCHEMA VALIDATION TESTS (Phase 1 - Database Architecture Hardening)
+;;;; Tests for validate-player-plist and db-load-player-validated
+;;;; ========================================================================
+
+(defun test-validation-valid-data-passes ()
+  "Test: Valid player data passes validation."
+  (let ((valid-data '(:id 42
+                      :version 3
+                      :x 100.0
+                      :y 200.0
+                      :hp 50
+                      :lifetime-xp 1000
+                      :playtime 3600
+                      :created-at 3900000000
+                      :zone-id :zone-1
+                      :stats (:attack (:level 5 :xp 500)
+                              :strength (:level 3 :xp 200)
+                              :defense (:level 4 :xp 300)
+                              :hitpoints (:level 10 :xp 1000))
+                      :inventory (:slots ((:item-id :health-potion :count 5)))
+                      :equipment (:items (:rusty-sword nil nil)))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep valid-data :log-errors nil)
+      (assert-true valid-p "Valid data should pass validation")
+      (assert-nil errors "Valid data should have no errors")))
+  t)
+
+(defun test-validation-missing-required-fields ()
+  "Test: Missing required fields are detected."
+  ;; Missing :id
+  (let ((data '(:x 100.0 :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Missing :id should fail")
+      (assert-true (search "Missing required field: ID" (format nil "~{~a~}" errors))
+                  "Error should mention missing ID")))
+  ;; Missing :x
+  (let ((data '(:id 1 :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Missing :x should fail")))
+  ;; Missing :hp
+  (let ((data '(:id 1 :x 100.0 :y 200.0)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Missing :hp should fail")))
+  t)
+
+(defun test-validation-wrong-types ()
+  "Test: Wrong field types are detected."
+  ;; String instead of integer for :id
+  (let ((data '(:id "not-a-number" :x 100.0 :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "String :id should fail")
+      (assert-true (search "expected INTEGER" (format nil "~{~a~}" errors))
+                  "Error should mention expected INTEGER")))
+  ;; String instead of number for :x
+  (let ((data '(:id 1 :x "hundred" :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "String :x should fail")))
+  ;; Float instead of integer for :hp
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50.5)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Float :hp should fail")))
+  ;; String instead of symbol for :zone-id
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50 :zone-id "zone-1")))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "String :zone-id should fail")))
+  t)
+
+(defun test-validation-out-of-bounds ()
+  "Test: Out-of-bounds values are detected."
+  ;; Negative HP
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp -10)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Negative HP should fail")
+      (assert-true (search "out of bounds" (format nil "~{~a~}" errors))
+                  "Error should mention out of bounds")))
+  ;; HP too high
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 999999)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "HP > 99999 should fail")))
+  ;; ID of 0 (must be >= 1)
+  (let ((data '(:id 0 :x 100.0 :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "ID of 0 should fail")))
+  ;; Negative lifetime-xp
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50 :lifetime-xp -100)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Negative lifetime-xp should fail")))
+  ;; Position way out of world bounds
+  (let ((data '(:id 1 :x 9999999.0 :y 200.0 :hp 50)))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "X > 1000000 should fail")))
+  t)
+
+(defun test-validation-oversized-blob ()
+  "Test: Oversized data blobs are rejected."
+  ;; Create data that exceeds 64KB when serialized
+  (let* ((huge-inventory (loop for i from 0 below 5000
+                               collect (list :item-id (intern (format nil "ITEM-~d" i) :keyword)
+                                            :count i)))
+         (data (list :id 1 :x 100.0 :y 200.0 :hp 50
+                     :inventory (list :slots huge-inventory))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist data :log-errors nil)
+      (assert-nil valid-p "Oversized blob should fail")
+      (assert-true (search "exceeds max" (format nil "~{~a~}" errors))
+                  "Error should mention exceeds max")))
+  t)
+
+(defun test-validation-nested-stats ()
+  "Test: Nested stats structure is validated."
+  ;; Invalid level type in stats
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :stats (:attack (:level "five" :xp 0)))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "String level in stats should fail")
+      (assert-true (search "level must be integer" (format nil "~{~a~}" errors))
+                  "Error should mention level type")))
+  ;; Negative XP in stats
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :stats (:attack (:level 5 :xp -100)))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "Negative XP in stats should fail")))
+  ;; Level out of bounds (> 999)
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :stats (:attack (:level 9999 :xp 0)))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "Level > 999 should fail")))
+  t)
+
+(defun test-validation-nested-inventory ()
+  "Test: Nested inventory structure is validated."
+  ;; Invalid item-id type
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :inventory (:slots ((:item-id "not-a-symbol" :count 5))))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "String item-id should fail")
+      (assert-true (search "item-id must be symbol" (format nil "~{~a~}" errors))
+                  "Error should mention item-id type")))
+  ;; Negative count
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :inventory (:slots ((:item-id :health-potion :count -5))))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "Negative count should fail")))
+  ;; Invalid count type
+  (let ((data '(:id 1 :x 100.0 :y 200.0 :hp 50
+                :inventory (:slots ((:item-id :health-potion :count "five"))))))
+    (multiple-value-bind (valid-p errors)
+        (validate-player-plist-deep data :log-errors nil)
+      (assert-nil valid-p "String count should fail")))
+  t)
+
+(defun test-validated-load-rejects-invalid ()
+  "Test: db-load-player-validated rejects invalid data."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player-id 999))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Save invalid data directly to storage (bypass normal save path)
+          (let ((invalid-data '(:id 999 :x "not-a-number" :y 200.0 :hp 50 :version 3)))
+            (storage-save storage (player-key player-id) invalid-data))
+          ;; Try to load with validation - should return NIL
+          (multiple-value-bind (player zone-id)
+              (db-load-player-validated player-id)
+            (assert-nil player "Invalid data should not load")
+            (assert-nil zone-id "Zone-id should be NIL for invalid data"))
+          ;; Verify unvalidated load still works (for comparison)
+          (let ((player (db-load-player player-id)))
+            ;; This may succeed or produce garbage - the point is validated load rejected it
+            (declare (ignore player)))
+          t)
+      ;; Restore global state
+      (setf *storage* old-storage))))
+
+;;;; ========================================================================
+;;;; SESSION OWNERSHIP TESTS (Phase 3 - Database Architecture Hardening)
+;;;; Tests for session claim, double-login rejection, heartbeat, release
+;;;; ========================================================================
+
+(defun test-session-claim-success ()
+  "Test: Successfully claiming a session ownership."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage
+                *server-instance-id* "test-server-1")
+          (storage-connect storage)
+          ;; Claim should succeed for new player
+          (assert-true (claim-session-ownership 123) "Initial claim should succeed")
+          ;; Same server claiming again should succeed (refresh)
+          (assert-true (claim-session-ownership 123) "Re-claim by same server should succeed")
+          t)
+      ;; Cleanup
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
+
+(defun test-session-double-login-rejected ()
+  "Test: Double login from different server is rejected."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Server 1 claims the session
+          (setf *server-instance-id* "server-1")
+          (assert-true (claim-session-ownership 456) "Server 1 should claim successfully")
+          ;; Server 2 tries to claim - should fail
+          (setf *server-instance-id* "server-2")
+          (assert-nil (claim-session-ownership 456) "Server 2 should be rejected (double login)")
+          t)
+      ;; Cleanup
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
+
+(defun test-session-ownership-refresh ()
+  "Test: Session ownership TTL can be refreshed."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage
+                *server-instance-id* "test-server-refresh")
+          (storage-connect storage)
+          ;; Claim the session
+          (assert-true (claim-session-ownership 789) "Initial claim should succeed")
+          ;; Verify we own it
+          (assert-true (verify-session-ownership 789) "Should verify ownership")
+          ;; Refresh should succeed
+          (refresh-session-ownership 789)
+          ;; Should still own it
+          (assert-true (verify-session-ownership 789) "Should still own after refresh")
+          t)
+      ;; Cleanup
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
+
+(defun test-session-release-and-reclaim ()
+  "Test: Released session can be claimed by another server."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Server 1 claims the session
+          (setf *server-instance-id* "server-alpha")
+          (assert-true (claim-session-ownership 999) "Server alpha should claim")
+          ;; Server 1 releases
+          (release-session-ownership 999)
+          ;; Server 2 should now be able to claim
+          (setf *server-instance-id* "server-beta")
+          (assert-true (claim-session-ownership 999) "Server beta should claim after release")
+          ;; Server 2 should now own it
+          (assert-true (verify-session-ownership 999) "Server beta should own")
+          t)
+      ;; Cleanup
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
 
 ;;; Export for REPL usage
 (export 'run-persistence-tests)
