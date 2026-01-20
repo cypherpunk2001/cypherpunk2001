@@ -718,7 +718,8 @@
              ;; Register for persistence (session was already registered in worker for login)
              (when (eq (auth-result-type result) :register)
                (session-try-register username client))
-             (register-player-session player :zone-id zone-id)
+             (register-player-session player :zone-id zone-id
+                                      :username (string-downcase username))
              (queue-private-state client player)
              (setf (player-inventory-dirty player) nil
                    (player-hud-stats-dirty player) nil)
@@ -1666,7 +1667,8 @@
                  ;; Register session for persistence
                  (let* ((zone (world-zone world))
                         (zone-id (and zone (zone-id zone))))
-                   (register-player-session player :zone-id zone-id))
+                   (register-player-session player :zone-id zone-id
+                                            :username (string-downcase username)))
                  ;; Track active session (atomic, should always succeed for new account)
                  (session-try-register username client)
                  ;; Clear rate limit on success
@@ -1842,7 +1844,8 @@
            (setf (net-client-account-username client) (string-downcase username))
            (setf (net-client-last-heard client) elapsed)
            ;; Register session for persistence
-           (register-player-session player :zone-id zone-id)
+           (register-player-session player :zone-id zone-id
+                                    :username (string-downcase username))
            ;; Note: active session already registered atomically via session-try-register
            ;; Clear rate limit on success
            (auth-rate-record-success host)
@@ -1957,6 +1960,7 @@
            (stop-flag nil)
            (stop-reason nil)
            (last-flush-time 0.0)
+           (last-ownership-refresh-time 0.0)
            ;; Auth worker thread for non-blocking login/registration
            (auth-request-queue (make-auth-queue-instance))
            (auth-result-queue (make-auth-queue-instance))
@@ -2087,7 +2091,28 @@
                          (when (>= (- elapsed last-flush-time) *batch-flush-interval*)
                            (flush-dirty-players)
                            (setf last-flush-time elapsed))
-                         ;; 3c. Check for timed-out clients (free sessions after 30s inactivity)
+                         ;; 3c. Periodic session ownership refresh (every ~30s, half of TTL)
+                         (when (>= (- elapsed last-ownership-refresh-time) *ownership-refresh-interval*)
+                           (let ((lost-sessions (refresh-all-session-ownerships)))
+                             (when lost-sessions
+                               ;; Handle lost ownership - cleanup sessions without saving
+                               (dolist (player-id lost-sessions)
+                                 (warn "Session ownership lost for player ~a - forcing cleanup" player-id)
+                                 (let ((session (gethash player-id *player-sessions*)))
+                                   (when session
+                                     (let ((player (player-session-player session))
+                                           (username (player-session-username session)))
+                                       ;; 1. Remove from active sessions (by username)
+                                       (when username
+                                         (session-unregister username))
+                                       ;; 2. Remove from player sessions (skip ownership release - already lost)
+                                       (with-player-sessions-lock
+                                         (remhash player-id *player-sessions*))
+                                       ;; 3. Remove player from game world
+                                       (when player
+                                         (remove-player-from-game game player))))))))
+                           (setf last-ownership-refresh-time elapsed))
+                         ;; 3d. Check for timed-out clients (free sessions after 30s inactivity)
                          (setf clients (check-client-timeouts clients elapsed game))
                          ;; 4. Send snapshots to all clients
                          ;; Toggle between Prong 1 (full) and Prong 2 (delta) via *delta-compression-enabled*

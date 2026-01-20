@@ -1438,6 +1438,7 @@
   "Tracks persistence state for a connected player."
   (player nil :type (or null player))
   (zone-id nil :type (or null symbol))
+  (username nil :type (or null string))  ; For reverse lookup on ownership loss
   (dirty-p nil :type boolean)
   (last-flush 0.0 :type float)
   (tier1-pending nil :type list))
@@ -1529,16 +1530,27 @@
     (let ((owner-key (session-owner-key player-id)))
       (storage-refresh-ttl *storage* owner-key *session-ownership-ttl-seconds*))))
 
-(defun refresh-all-session-ownerships ()
-  "Refresh TTL on all active session ownerships. Called periodically."
-  (with-player-sessions-lock
-    (maphash (lambda (player-id session)
-               (declare (ignore session))
-               (refresh-session-ownership player-id))
-             *player-sessions*)))
+(defparameter *ownership-refresh-interval* 30.0
+  "Seconds between session ownership refreshes (half of TTL).
+   Refreshing at half the TTL ensures ownership never expires during normal operation.")
 
-(defun register-player-session (player &key (zone-id nil))
+(defun refresh-all-session-ownerships ()
+  "Refresh TTL on all active session ownerships. Called periodically.
+   Returns list of player-ids that failed to refresh (ownership lost)."
+  (let ((failed-ids nil))
+    (with-player-sessions-lock
+      (maphash (lambda (player-id session)
+                 (declare (ignore session))
+                 ;; Verify we still own before refreshing
+                 (if (verify-session-ownership player-id)
+                     (refresh-session-ownership player-id)
+                     (push player-id failed-ids)))
+               *player-sessions*))
+    failed-ids))
+
+(defun register-player-session (player &key (zone-id nil) (username nil))
   "Register a player session when they login. Thread-safe.
+   USERNAME is stored for reverse lookup on ownership loss cleanup.
    Returns T on success, NIL if session is owned elsewhere (double-login rejected)."
   (let ((player-id (player-id player)))
     ;; Attempt to claim ownership first
@@ -1550,6 +1562,7 @@
       (setf (gethash player-id *player-sessions*)
             (make-player-session :player player
                                  :zone-id zone-id
+                                 :username username
                                  :dirty-p nil
                                  :last-flush (float (get-internal-real-time) 1.0)
                                  :tier1-pending nil)))
