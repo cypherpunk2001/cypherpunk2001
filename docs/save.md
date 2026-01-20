@@ -58,8 +58,35 @@ When applying snapshots with multiple connected clients, `apply-player-plists` u
 - `validate-player-plist` - Validate plist against schema, returns (valid-p errors).
 - `validate-player-plist-deep` - Full validation including inventory/equipment sub-structures.
 - `*max-player-blob-size*` - Maximum serialized player size (64KB).
+- `validate-and-clamp-player-data` - Comprehensive validation with 4-way outcomes.
 
-Schema validation rejects invalid data rather than clamping - corruption should surface as errors, not silent fixes. Invalid player data prevents login until admin investigates.
+**Validation Outcomes (4-way system):**
+
+Schema validation uses a graduated response system based on data quality:
+
+| Outcome | When | Action |
+|---------|------|--------|
+| `:ok` | All data valid | Load normally |
+| `:clamp` | Minor out-of-bounds | Clamp to limits, warn, load |
+| `:quarantine` | Severe corruption | Mark account quarantined, reject login |
+| `:reject` | Structural failure | Reject login with error message |
+
+**Clampable fields** (minor issues auto-corrected):
+- `hp`, `lifetime-xp`, `playtime`, `deaths` - Clamped to [0, max]
+- Position fields (`x`, `y`) - Clamped to zone bounds
+
+**Rejection triggers** (structural failures):
+- Invalid player ID (nil or <= 0)
+- Missing/malformed stat block
+- Type mismatches in required fields
+- Blob size exceeds `*max-player-blob-size*`
+
+**Quarantine triggers** (severe corruption):
+- > 5 clamped fields in single load
+- Repeated validation failures within time window
+- Admin flag via `db-quarantine-player`
+
+Quarantined accounts cannot log in until an admin reviews and either fixes the data or calls `db-unquarantine-player`. See `docs/db.md` "Phase 6: Validation Integration" for full details.
 
 Walkthrough: save game
 1) Player triggers save action

@@ -765,7 +765,11 @@
   t)
 
 (defmethod storage-load ((storage memory-storage) key)
-  "Load data from memory hash table."
+  "Load data from memory hash table. Returns NIL for expired keys."
+  ;; Check expiration first (Phase G: TTL consistency)
+  (when (memory-storage-key-expired-p key)
+    (memory-storage-cleanup-key storage key)
+    (return-from storage-load nil))
   (gethash key (memory-storage-data storage)))
 
 (defmethod storage-save ((storage memory-storage) key data)
@@ -778,22 +782,29 @@
   (remhash key (memory-storage-data storage)))
 
 (defmethod storage-exists-p ((storage memory-storage) key)
-  "Check if key exists in memory hash table."
+  "Check if key exists in memory hash table. Returns NIL for expired keys."
+  ;; Check expiration first (Phase G: TTL consistency)
+  (when (memory-storage-key-expired-p key)
+    (memory-storage-cleanup-key storage key)
+    (return-from storage-exists-p nil))
   (nth-value 1 (gethash key (memory-storage-data storage))))
 
 (defmethod storage-keys ((storage memory-storage) pattern)
   "Return list of keys matching PATTERN from memory hash table.
-   Supports simple prefix matching: 'player:*' matches all keys starting with 'player:'."
+   Supports simple prefix matching: 'player:*' matches all keys starting with 'player:'.
+   Filters out expired keys (Phase G: TTL consistency)."
   (let* ((star-pos (position #\* pattern))
          (prefix (if star-pos (subseq pattern 0 star-pos) pattern))
          (result nil))
     (maphash (lambda (key value)
                (declare (ignore value))
-               (when (if star-pos
-                         (and (>= (length key) (length prefix))
-                              (string= prefix key :end2 (length prefix)))
-                         (string= pattern key))
-                 (push key result)))
+               ;; Skip expired keys
+               (unless (memory-storage-key-expired-p key)
+                 (when (if star-pos
+                           (and (>= (length key) (length prefix))
+                                (string= prefix key :end2 (length prefix)))
+                           (string= pattern key))
+                   (push key result))))
              (memory-storage-data storage))
     result))
 
