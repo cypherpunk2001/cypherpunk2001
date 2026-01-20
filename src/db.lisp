@@ -339,6 +339,26 @@
   (:documentation "Return all members of set KEY."))
 
 ;;;; ========================================================================
+;;;; STORAGE ERROR CONDITION (Phase 1 - Storage Failure Semantics)
+;;;; Enables retry logic by signaling failures rather than returning nil
+;;;; ========================================================================
+
+(define-condition storage-error (error)
+  ((operation :initarg :operation :reader storage-error-operation
+              :documentation "The operation that failed (e.g., :save, :load, :batch-save)")
+   (key :initarg :key :reader storage-error-key :initform nil
+        :documentation "The key(s) involved, if applicable")
+   (cause :initarg :cause :reader storage-error-cause :initform nil
+          :documentation "The underlying error that caused the failure"))
+  (:report (lambda (condition stream)
+             (format stream "Storage ~a failed~@[ for key ~a~]~@[: ~a~]"
+                     (storage-error-operation condition)
+                     (storage-error-key condition)
+                     (storage-error-cause condition))))
+  (:documentation "Condition signaled when a storage operation fails.
+   Used by retry macros to distinguish transient failures from not-found results."))
+
+;;;; ========================================================================
 ;;;; LUA SCRIPT EXECUTION (Phase 5 - Trade System & Atomic Operations)
 ;;;; Enables atomic multi-key operations via Redis Lua scripting
 ;;;; See docs/db.md "Atomic Operations" section
@@ -411,7 +431,8 @@
 (defmethod storage-save ((storage redis-storage) key data)
   "Save data to Redis using atomic write-then-rename pattern.
    Writes to a temp key first, then atomically renames to the real key.
-   This prevents data corruption if the server crashes during write."
+   This prevents data corruption if the server crashes during write.
+   Signals STORAGE-ERROR on failure (Phase 1: enables retry logic)."
   (handler-case
       (with-redis-timing (:save)
         (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
@@ -426,7 +447,8 @@
     (error (e)
       (metrics-record-save-error)
       (warn "Redis save error for key ~a: ~a" key e)
-      nil)))
+      ;; Signal storage-error for retry logic (Phase 1)
+      (error 'storage-error :operation :save :key key :cause e))))
 
 (defmethod storage-delete ((storage redis-storage) key)
   "Delete key from Redis. Returns T if existed."
@@ -476,7 +498,8 @@
 (defmethod storage-save-batch ((storage redis-storage) key-data-pairs)
   "Batch save multiple key-data pairs using Redis pipelining.
    Uses write-then-rename pattern within the pipeline for atomicity.
-   Returns count of pairs processed (errors are logged but don't stop batch)."
+   Returns count of pairs processed on success.
+   Signals STORAGE-ERROR on failure (Phase 1: enables retry and dirty flag preservation)."
   (when (null key-data-pairs)
     (return-from storage-save-batch 0))
   (handler-case
@@ -501,7 +524,9 @@
         count)
     (error (e)
       (warn "Redis batch save error: ~a" e)
-      0)))
+      ;; Signal storage-error for retry logic (Phase 1)
+      (error 'storage-error :operation :batch-save
+             :key (mapcar #'car key-data-pairs) :cause e))))
 
 ;;; Session Ownership Methods (Redis)
 
@@ -531,14 +556,17 @@
       nil)))
 
 (defmethod storage-load-raw ((storage redis-storage) key)
-  "Load raw string value for KEY (does not parse)."
+  "Load raw string value for KEY (does not parse).
+   Returns NIL if key not found. Signals STORAGE-ERROR on failure
+   (Phase 1: enables retry logic and distinguishes error from not-found)."
   (handler-case
       (redis:with-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:get key))
     (error (e)
       (warn "Redis GET error for key ~a: ~a" key e)
-      nil)))
+      ;; Signal storage-error so callers can retry (Phase 1)
+      (error 'storage-error :operation :load-raw :key key :cause e))))
 
 ;;; Validation Support Methods (Redis) - Phase 6
 
@@ -1215,7 +1243,9 @@
 ;;;; High-Level Convenience Functions
 
 (defun db-save-player (player)
-  "Save player to storage using current schema version."
+  "Save player to storage using current schema version.
+   Returns T on success. Signals STORAGE-ERROR on failure (Phase 1).
+   Callers using with-retry-exponential will automatically retry on error."
   (when (and *storage* player)
     (let* ((player-id (player-id player))
            (key (player-key player-id))
@@ -1225,7 +1255,9 @@
            (data (serialize-player player :include-visuals nil :zone-id zone-id)))
       ;; Add version to serialized data
       (setf data (plist-put data :version *player-schema-version*))
+      ;; storage-save signals storage-error on failure (Phase 1)
       (storage-save *storage* key data)
+      ;; Only update counters and log on success
       (when (boundp '*server-total-saves*)
         (incf *server-total-saves*))
       (log-verbose "Saved player ~a to storage (zone: ~a)" player-id zone-id)
@@ -1512,52 +1544,70 @@
 
 (defun claim-session-ownership (player-id)
   "Attempt to claim ownership of a player session.
-   Returns T if claimed successfully, NIL if session is owned elsewhere (double-login)."
+   Returns T if claimed successfully, NIL if session is owned elsewhere (double-login).
+   On storage error, returns NIL (safe default - treats as claim failure)."
   (unless *storage*
     (return-from claim-session-ownership t))  ; No storage = always succeed
   ;; Ensure server instance ID exists
   (unless *server-instance-id*
     (setf *server-instance-id* (generate-server-instance-id)))
-  (let ((owner-key (session-owner-key player-id)))
-    (let ((claimed (storage-setnx-with-ttl *storage* owner-key *server-instance-id*
-                                           *session-ownership-ttl-seconds*)))
-      (if claimed
-          (progn
-            (log-verbose "Claimed session ownership for player ~a" player-id)
-            t)
-          ;; Check if we already own it (reconnect case)
-          (let ((current-owner (storage-load-raw *storage* owner-key)))
-            (if (and current-owner (string= current-owner *server-instance-id*))
-                (progn
-                  ;; We already own it, refresh TTL
-                  (storage-refresh-ttl *storage* owner-key *session-ownership-ttl-seconds*)
-                  (log-verbose "Refreshed existing session ownership for player ~a" player-id)
-                  t)
-                (progn
-                  (log-verbose "Session ownership claim REJECTED for player ~a (owned by ~a)"
-                               player-id current-owner)
-                  nil)))))))
+  ;; Catch storage-error to prevent crashing server on transient Redis failures
+  (handler-case
+      (let ((owner-key (session-owner-key player-id)))
+        (let ((claimed (storage-setnx-with-ttl *storage* owner-key *server-instance-id*
+                                               *session-ownership-ttl-seconds*)))
+          (if claimed
+              (progn
+                (log-verbose "Claimed session ownership for player ~a" player-id)
+                t)
+              ;; Check if we already own it (reconnect case)
+              (let ((current-owner (storage-load-raw *storage* owner-key)))
+                (if (and current-owner (string= current-owner *server-instance-id*))
+                    (progn
+                      ;; We already own it, refresh TTL
+                      (storage-refresh-ttl *storage* owner-key *session-ownership-ttl-seconds*)
+                      (log-verbose "Refreshed existing session ownership for player ~a" player-id)
+                      t)
+                    (progn
+                      (log-verbose "Session ownership claim REJECTED for player ~a (owned by ~a)"
+                                   player-id current-owner)
+                      nil))))))
+    (storage-error (e)
+      (warn "Session ownership claim failed for player ~a (storage error): ~a" player-id e)
+      nil)))
 
 (defun release-session-ownership (player-id)
-  "Release session ownership for a player. Called on logout."
+  "Release session ownership for a player. Called on logout.
+   On storage error, logs warning but continues (cleanup still proceeds locally)."
   (when *storage*
-    (let ((owner-key (session-owner-key player-id)))
-      ;; Only delete if we own it
-      (let ((current-owner (storage-load-raw *storage* owner-key)))
-        (when (and current-owner *server-instance-id*
-                   (string= current-owner *server-instance-id*))
-          (storage-delete *storage* owner-key)
-          (log-verbose "Released session ownership for player ~a" player-id))))))
+    ;; Catch storage-error to prevent crashing server on transient Redis failures
+    (handler-case
+        (let ((owner-key (session-owner-key player-id)))
+          ;; Only delete if we own it
+          (let ((current-owner (storage-load-raw *storage* owner-key)))
+            (when (and current-owner *server-instance-id*
+                       (string= current-owner *server-instance-id*))
+              (storage-delete *storage* owner-key)
+              (log-verbose "Released session ownership for player ~a" player-id))))
+      (storage-error (e)
+        (warn "Release session ownership failed for player ~a (storage error): ~a - local cleanup continues"
+              player-id e)))))
 
 (defun verify-session-ownership (player-id)
-  "Verify we still own the session. Returns T if we own it, NIL otherwise."
+  "Verify we still own the session. Returns T if we own it, NIL otherwise.
+   On storage error, returns NIL (safe default - treat as 'unknown, don't save')."
   (unless *storage*
     (return-from verify-session-ownership t))  ; No storage = always succeed
   (unless *server-instance-id*
     (return-from verify-session-ownership nil))  ; No server ID = don't own anything
-  (let* ((owner-key (session-owner-key player-id))
-         (current-owner (storage-load-raw *storage* owner-key)))
-    (and current-owner (string= current-owner *server-instance-id*))))
+  ;; Catch storage-error to keep server loop alive on transient Redis failures
+  (handler-case
+      (let* ((owner-key (session-owner-key player-id))
+             (current-owner (storage-load-raw *storage* owner-key)))
+        (and current-owner (string= current-owner *server-instance-id*)))
+    (storage-error (e)
+      (log-verbose "Ownership check failed for player ~a (transient): ~a" player-id e)
+      nil)))
 
 (defun refresh-session-ownership (player-id)
   "Refresh TTL on session ownership. Called periodically as heartbeat."
@@ -1571,14 +1621,22 @@
 
 (defun refresh-all-session-ownerships ()
   "Refresh TTL on all active session ownerships. Called periodically.
-   Returns list of player-ids that failed to refresh (ownership lost)."
+   Returns list of player-ids that failed to refresh (ownership lost or error).
+   Catches storage-error to keep server loop alive on transient Redis failures."
   (let ((failed-ids nil))
     (with-player-sessions-lock
       (maphash (lambda (player-id session)
                  (declare (ignore session))
                  ;; Verify we still own before refreshing
+                 ;; verify-session-ownership already catches storage-error
                  (if (verify-session-ownership player-id)
-                     (refresh-session-ownership player-id)
+                     ;; Catch errors during refresh to avoid unwinding loop
+                     (handler-case
+                         (refresh-session-ownership player-id)
+                       (error (e)
+                         (log-verbose "Refresh failed for player ~a (transient): ~a" player-id e)
+                         ;; Don't mark as failed - will retry next cycle
+                         nil))
                      (push player-id failed-ids)))
                *player-sessions*))
     failed-ids))
@@ -1678,19 +1736,26 @@
       (unless *storage*
         (log-verbose "flush-dirty-players: no storage backend initialized, skipping")
         (return-from flush-dirty-players 0))
-      (let ((saved-count (storage-save-batch *storage* key-data-pairs)))
-        ;; Update session state for all flushed players (under lock)
-        (with-player-sessions-lock
-          (dolist (entry to-flush)
-            (let ((session (cdr entry)))
-              (setf (player-session-dirty-p session) nil)
-              (setf (player-session-last-flush session) (float current-time 1.0)))))
-        ;; Update stats counter
-        (when (boundp '*server-total-saves*)
-          (incf *server-total-saves* saved-count))
-        (when (> saved-count 0)
-          (log-verbose "Batch flushed ~a player(s) to storage (pipelined)" saved-count))
-        saved-count))
+      ;; Phase 1: Only clear dirty flags on successful save
+      ;; If batch save fails, flags remain set for next flush cycle to retry
+      (handler-case
+          (let ((saved-count (storage-save-batch *storage* key-data-pairs)))
+            ;; Success: Update session state for all flushed players (under lock)
+            (with-player-sessions-lock
+              (dolist (entry to-flush)
+                (let ((session (cdr entry)))
+                  (setf (player-session-dirty-p session) nil)
+                  (setf (player-session-last-flush session) (float current-time 1.0)))))
+            ;; Update stats counter
+            (when (boundp '*server-total-saves*)
+              (incf *server-total-saves* saved-count))
+            (when (> saved-count 0)
+              (log-verbose "Batch flushed ~a player(s) to storage (pipelined)" saved-count))
+            saved-count)
+        (storage-error (e)
+          ;; Failure: Keep dirty flags set so next flush cycle retries
+          (warn "Batch flush failed, dirty flags preserved for retry: ~a" e)
+          0)))
     (length to-flush)))
 
 ;;;; Tier-1 Immediate Write Operations
@@ -1698,14 +1763,17 @@
 (defun db-save-player-immediate (player)
   "Tier-1 immediate write: save player and wait for confirmation.
    Use for critical operations: trade, bank, death, level-up, item destruction.
-   Verifies session ownership before saving to prevent stale server writes."
+   Verifies session ownership before saving to prevent stale server writes.
+   Returns T on success. Signals STORAGE-ERROR on failure (Phase 1: enables retry)."
   (let ((player-id (player-id player)))
     ;; Verify we still own this session (prevents stale server writes)
     (unless (verify-session-ownership player-id)
       (warn "REJECTED: Tier-1 save for player ~a - session not owned by this server" player-id)
       (return-from db-save-player-immediate nil))
     ;; Ownership verified, proceed with save
+    ;; db-save-player signals storage-error on failure (Phase 1)
     (db-save-player player)
+    ;; Only update session state if save succeeded (we get here only on success)
     ;; For Redis with AOF, write is durable after return
     ;; Mark as not dirty since we just saved
     (let ((session (gethash player-id *player-sessions*)))
@@ -1726,12 +1794,22 @@
     player))
 
 (defun db-logout-player (player)
-  "Save player to storage on logout (tier-3 write)."
+  "Save player to storage on logout (tier-3 write).
+   Ensures session cleanup happens even if save fails (transient Redis errors)."
   (when player
     (let ((player-id (player-id player)))
-      (db-save-player-immediate player)
+      ;; Try to save, but don't let save failure block cleanup
+      ;; Cleanup must happen to prevent stale sessions
+      (handler-case
+          (db-save-player-immediate player)
+        (storage-error (e)
+          (warn "Logout save failed for player ~a (will lose unsaved progress): ~a"
+                player-id e))
+        (error (e)
+          (warn "Logout save error for player ~a: ~a" player-id e)))
+      ;; Always unregister session, even if save failed
       (unregister-player-session player-id)
-      (log-verbose "Player ~a logged out, saved to storage" player-id))))
+      (log-verbose "Player ~a logged out" player-id))))
 
 ;;;; Password Hashing (using ironclad PBKDF2-SHA256)
 

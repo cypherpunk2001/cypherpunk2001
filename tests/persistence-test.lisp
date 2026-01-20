@@ -96,7 +96,14 @@
                 #'test-4way-storage-incr
                 #'test-4way-storage-save-with-ttl
                 #'test-4way-forensic-storage
-                #'test-4way-validation-metrics)))
+                #'test-4way-validation-metrics
+                ;; Storage Failure Semantics Tests (Phase 1 - Implementation Findings Fix)
+                #'test-storage-error-signaled-on-save-failure
+                #'test-storage-error-signaled-on-batch-failure
+                #'test-dirty-flags-preserved-on-batch-failure
+                #'test-id-counter-blocked-on-persistence-failure
+                #'test-id-counter-advances-on-persistence-success
+                #'test-retry-catches-storage-error)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -1601,6 +1608,173 @@
           t)
       (setf *storage* old-storage))))
 
+;;;; ========================================================================
+;;;; STORAGE FAILURE SEMANTICS TESTS (Phase 1 - Implementation Findings Fix)
+;;;; Tests for retry integrity, dirty flag preservation, ID counter blocking
+;;;; ========================================================================
+
+;; Test helper: A failing storage backend that always signals storage-error
+(defclass failing-storage (memory-storage)
+  ((fail-saves :initarg :fail-saves :initform t :accessor failing-storage-fail-saves)
+   (fail-loads :initarg :fail-loads :initform nil :accessor failing-storage-fail-loads))
+  (:documentation "A memory storage that can be configured to fail on save/load."))
+
+(defmethod storage-save ((storage failing-storage) key data)
+  "Fail save if configured to do so."
+  (if (failing-storage-fail-saves storage)
+      (error 'storage-error :operation :save :key key :cause "Simulated failure")
+      (call-next-method)))
+
+(defmethod storage-save-batch ((storage failing-storage) key-data-pairs)
+  "Fail batch save if configured to do so."
+  (if (failing-storage-fail-saves storage)
+      (error 'storage-error :operation :batch-save
+             :key (mapcar #'car key-data-pairs) :cause "Simulated failure")
+      (call-next-method)))
+
+(defmethod storage-load-raw ((storage failing-storage) key)
+  "Fail load-raw if configured to do so."
+  (if (failing-storage-fail-loads storage)
+      (error 'storage-error :operation :load-raw :key key :cause "Simulated failure")
+      (call-next-method)))
+
+(defun test-storage-error-signaled-on-save-failure ()
+  "Test: storage-save signals storage-error on failure (Phase 1)."
+  (let* ((storage (make-instance 'failing-storage :fail-saves t))
+         (caught nil))
+    (handler-case
+        (storage-save storage "test-key" '(:data 123))
+      (storage-error (e)
+        (setf caught t)
+        (assert-equal :save (storage-error-operation e) "Operation should be :save")
+        (assert-equal "test-key" (storage-error-key e) "Key should match")))
+    (assert-true caught "storage-error should be signaled on save failure")
+    t))
+
+(defun test-storage-error-signaled-on-batch-failure ()
+  "Test: storage-save-batch signals storage-error on failure (Phase 1)."
+  (let* ((storage (make-instance 'failing-storage :fail-saves t))
+         (caught nil))
+    (handler-case
+        (storage-save-batch storage '(("key1" . (:data 1)) ("key2" . (:data 2))))
+      (storage-error (e)
+        (setf caught t)
+        (assert-equal :batch-save (storage-error-operation e) "Operation should be :batch-save")))
+    (assert-true caught "storage-error should be signaled on batch save failure")
+    t))
+
+(defun test-dirty-flags-preserved-on-batch-failure ()
+  "Test: Dirty flags remain set when batch save fails (Phase 1)."
+  (let* ((storage (make-instance 'failing-storage :fail-saves t))
+         (old-storage *storage*)
+         (old-server-id *server-instance-id*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage
+                *server-instance-id* "test-server-dirty-flags")
+          (storage-connect storage)
+          ;; Clear player sessions
+          (clrhash *player-sessions*)
+          ;; Create a test player (make-player takes positional x y)
+          (let* ((player (make-player 100.0 200.0 :id 999)))
+            (setf (player-hp player) 50)
+            ;; Set up session ownership first (so ownership verification passes)
+            ;; This writes to the underlying memory-storage, which doesn't fail
+            (storage-setnx-with-ttl storage (session-owner-key 999)
+                                    *server-instance-id* 60)
+            ;; Now manually register session
+            (setf (gethash 999 *player-sessions*)
+                  (make-player-session :player player
+                                       :zone-id :test-zone
+                                       :dirty-p t
+                                       :last-flush 0.0))
+            ;; Try to flush (should fail at save step due to failing storage)
+            (flush-dirty-players :force t)
+            ;; Check that dirty flag is STILL set (not cleared on failure)
+            (let ((session (gethash 999 *player-sessions*)))
+              (assert-true session "Session should still exist")
+              (assert-true (player-session-dirty-p session)
+                           "Dirty flag should remain set after batch save failure"))
+            t))
+      ;; Cleanup
+      (clrhash *player-sessions*)
+      (setf *storage* old-storage
+            *server-instance-id* old-server-id))))
+
+(defun test-id-counter-blocked-on-persistence-failure ()
+  "Test: ID counter does not advance when persistence fails (Phase 1)."
+  (let* ((storage (make-instance 'failing-storage :fail-saves t))
+         (old-storage *storage*)
+         ;; make-id-source takes optional positional args: (next-id persistent)
+         (id-source (make-id-source 100 t))
+         (error-signaled nil))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Attempt to allocate - should signal error due to persistence failure
+          (handler-case
+              (allocate-entity-id id-source)
+            (error (e)
+              (declare (ignore e))
+              (setf error-signaled t)))
+          (assert-true error-signaled "Allocation should signal error when persistence fails")
+          ;; ID counter should NOT have advanced
+          (assert-equal 100 (id-source-next-id id-source)
+                        "ID counter should not advance on persistence failure")
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-id-counter-advances-on-persistence-success ()
+  "Test: ID counter advances normally when persistence succeeds (Phase 1)."
+  (let* ((storage (make-instance 'failing-storage :fail-saves nil))  ; Don't fail
+         (old-storage *storage*)
+         ;; make-id-source takes optional positional args: (next-id persistent)
+         (id-source (make-id-source 100 t)))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Allocate - should succeed
+          (let ((result (allocate-entity-id id-source)))
+            (assert-equal 100 result "Allocation should return current ID")
+            ;; ID counter should have advanced
+            (assert-equal 101 (id-source-next-id id-source)
+                          "ID counter should advance on persistence success"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-retry-catches-storage-error ()
+  "Test: with-retry-exponential retries on storage-error (Phase 1)."
+  (let ((attempts 0)
+        (succeed-on-attempt 3))
+    ;; Function that fails twice then succeeds
+    (let ((result
+            (with-retry-exponential
+                (res (lambda ()
+                       (incf attempts)
+                       (if (< attempts succeed-on-attempt)
+                           (error 'storage-error :operation :test :cause "Simulated")
+                           :success))
+                 :max-retries 5
+                 :initial-delay 1
+                 :max-delay 10)
+              res)))
+      (assert-equal :success result "Should eventually succeed")
+      (assert-equal 3 attempts "Should have taken 3 attempts")
+      t)))
+
+(defun run-phase1-storage-failure-tests ()
+  "Run all Phase 1 storage failure semantics tests."
+  (format t "~&Running Phase 1 storage failure semantics tests...~%")
+  (run-test 'test-storage-error-signaled-on-save-failure)
+  (run-test 'test-storage-error-signaled-on-batch-failure)
+  (run-test 'test-dirty-flags-preserved-on-batch-failure)
+  (run-test 'test-id-counter-blocked-on-persistence-failure)
+  (run-test 'test-id-counter-advances-on-persistence-success)
+  (run-test 'test-retry-catches-storage-error)
+  (format t "~&All Phase 1 storage failure tests complete.~%"))
+
 (defun run-4way-validation-tests ()
   "Run all 4-outcome validation tests."
   (format t "~&Running 4-outcome validation tests...~%")
@@ -1630,3 +1804,4 @@
 ;;; Export for REPL usage
 (export 'run-persistence-tests)
 (export 'run-4way-validation-tests)
+(export 'run-phase1-storage-failure-tests)

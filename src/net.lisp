@@ -435,12 +435,42 @@
                                       :max-delay 200)
               created)
             ;; Account created - spawn player and link to account
-            (let* ((player (spawn-player-at-world world id-source))
-                   (player-id (player-id player))
-                   (zone (world-zone world))
-                   (zone-id (and zone (zone-id zone))))
-              ;; Link account to character (with retry)
-              (let ((linked (with-retry-exponential
+            (let* ((player (handler-case
+                               (spawn-player-at-world world id-source)
+                             (error (e)
+                               ;; ID allocation failed - rollback account creation
+                               (warn "Registration failed: ID allocation error for ~a: ~a" username e)
+                               (with-retry-exponential
+                                   (deleted (lambda () (db-delete-account username))
+                                    :max-retries 3
+                                    :initial-delay 50
+                                    :max-delay 200
+                                    :on-final-fail (lambda (e2)
+                                                     (warn "CRITICAL: Failed to delete account ~a after spawn failure: ~a"
+                                                           username e2)))
+                                 deleted)
+                               (return-from process-register-async
+                                 (make-auth-result :type :register
+                                                   :success nil
+                                                   :host host
+                                                   :port port
+                                                   :username username
+                                                   :client client
+                                                   :error-reason :internal-error))))))
+              (unless player
+                (return-from process-register-async
+                  (make-auth-result :type :register
+                                    :success nil
+                                    :host host
+                                    :port port
+                                    :username username
+                                    :client client
+                                    :error-reason :internal-error)))
+              (let* ((player-id (player-id player))
+                     (zone (world-zone world))
+                     (zone-id (and zone (zone-id zone))))
+                ;; Link account to character (with retry)
+                (let ((linked (with-retry-exponential
                                 (set-result (lambda () (db-set-character-id username player-id))
                                  :max-retries 3
                                  :initial-delay 50
@@ -476,7 +506,7 @@
                                         :port port
                                         :username username
                                         :client client
-                                        :error-reason :internal-error)))))
+                                        :error-reason :internal-error))))))
             ;; Username taken
             (progn
               (log-verbose "Registration failed from ~a:~d - username ~a already taken" host port username)
@@ -623,7 +653,30 @@
                                          :error-reason :load-failed))))))
                ;; No character yet - spawn new one
                (t
-                (setf player (spawn-player-at-world world id-source))
+                (handler-case
+                    (setf player (spawn-player-at-world world id-source))
+                  (error (e)
+                    ;; ID allocation failed - return login failure
+                    (warn "Login failed: ID allocation error for ~a: ~a" username e)
+                    (session-unregister username)
+                    (return-from process-login-async
+                      (make-auth-result :type :login
+                                        :success nil
+                                        :host host
+                                        :port port
+                                        :username username
+                                        :client client
+                                        :error-reason :internal-error))))
+                (unless player
+                  (session-unregister username)
+                  (return-from process-login-async
+                    (make-auth-result :type :login
+                                      :success nil
+                                      :host host
+                                      :port port
+                                      :username username
+                                      :client client
+                                      :error-reason :internal-error)))
                 (let ((linked (with-retry-exponential
                                   (set-result (lambda () (db-set-character-id username (player-id player)))
                                    :max-retries 3
@@ -1682,10 +1735,31 @@
          created)
        ;; Account created successfully - spawn new character
        (let* ((world (game-world game))
-              (player (spawn-player-at-world world (game-id-source game)))
-              (player-id (player-id player)))
-         ;; Link account to new character (with retry)
-         (let ((linked (with-retry-exponential
+              (player (handler-case
+                          (spawn-player-at-world world (game-id-source game))
+                        (error (e)
+                          ;; ID allocation failed (storage outage) - rollback account creation
+                          (warn "Registration failed: ID allocation error for ~a: ~a" username e)
+                          (with-retry-exponential
+                              (deleted (lambda () (db-delete-account username))
+                               :max-retries 3
+                               :initial-delay 50
+                               :max-delay 200
+                               :on-final-fail (lambda (e2)
+                                                (warn "CRITICAL: Failed to delete account ~a after spawn failure: ~a"
+                                                      username e2)))
+                            deleted)
+                          (send-net-message-with-retry socket
+                                                       (list :type :auth-fail :reason :internal-error)
+                                                       :host host :port port
+                                                       :max-retries 3
+                                                       :delay 50)
+                          (return-from handle-register-request nil)))))
+         (unless player
+           (return-from handle-register-request nil))
+         (let ((player-id (player-id player)))
+           ;; Link account to new character (with retry)
+           (let ((linked (with-retry-exponential
                            (set-result (lambda () (db-set-character-id username player-id))
                             :max-retries 3
                             :initial-delay 50
@@ -1735,7 +1809,7 @@
                                               :max-retries 3
                                               :delay 50)
                  (log-verbose "Registration failed from ~a:~d - internal error (link failure)"
-                              host port))))))
+                              host port)))))))
       (t
        ;; Username already exists - don't count as rate limit failure (could be probing)
        (send-net-message-with-retry socket
@@ -1883,7 +1957,20 @@
                  (return-from handle-login-request nil)))))
            ;; No character yet - spawn new one (shouldn't happen after registration)
            (t
-            (setf player (spawn-player-at-world world (game-id-source game)))
+            (handler-case
+                (setf player (spawn-player-at-world world (game-id-source game)))
+              (error (e)
+                ;; ID allocation failed (storage outage) - return login failure
+                (warn "Login failed: ID allocation error for ~a: ~a" username e)
+                (session-unregister username)
+                (send-net-message-with-retry socket
+                                             (list :type :auth-fail :reason :internal-error)
+                                             :host host :port port
+                                             :max-retries 3
+                                             :delay 50)
+                (return-from handle-login-request nil)))
+            (unless player
+              (return-from handle-login-request nil))
             (let ((linked (with-retry-exponential
                               (set-result (lambda () (db-set-character-id username (player-id player)))
                                :max-retries 3

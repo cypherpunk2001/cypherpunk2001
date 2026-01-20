@@ -257,20 +257,31 @@
   ;; if save fails and server restarts.
   (let ((next (id-source-next-id id-source)))
     ;; Save the NEXT value first to ensure persistence before allocation
-    (when (and (id-source-persistent id-source)
-               (boundp '*storage*)
-               *storage*)
-      ;; Use retry to handle transient failures - ID allocation is critical
-      (with-retry-exponential (saved (lambda () (db-save-id-counter (1+ next)))
-                                :max-retries 5
-                                :initial-delay 50
-                                :max-delay 200
-                                :on-final-fail (lambda (e)
-                                                 (warn "CRITICAL: ID counter save failed: ~a - IDs may collide on restart"
-                                                       e)))
-        saved))
-    (setf (id-source-next-id id-source) (1+ next))
-    next))
+    (if (and (id-source-persistent id-source)
+             (boundp '*storage*)
+             *storage*)
+        ;; Use retry to handle transient failures - ID allocation is critical
+        ;; Phase 1: Only advance ID if save succeeds (prevents ID collision on restart)
+        (let ((save-succeeded
+                (with-retry-exponential (saved (lambda () (db-save-id-counter (1+ next)))
+                                          :max-retries 5
+                                          :initial-delay 50
+                                          :max-delay 200
+                                          :on-final-fail (lambda (e)
+                                                           (warn "CRITICAL: ID counter save failed: ~a - allocation blocked"
+                                                                 e)))
+                  (when saved t))))
+          (if save-succeeded
+              (progn
+                (setf (id-source-next-id id-source) (1+ next))
+                next)
+              ;; Save failed after all retries - signal error to abort login/registration
+              ;; (returning nil would cause callers to create ID 0 players)
+              (error "ID allocation failed: persistence unavailable after retries")))
+        ;; Non-persistent mode (testing) - just increment
+        (progn
+          (setf (id-source-next-id id-source) (1+ next))
+          next))))
 
 (defun world-spawn-center (world)
   ;; Return a spawn center inside the collision bounds.
