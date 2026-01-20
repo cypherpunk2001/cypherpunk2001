@@ -1938,7 +1938,9 @@
                                #-sbcl (uiop:getenv "MMORPG_REDIS_PORT")
                                "6379"))
            (redis-port (or (ignore-errors (parse-integer redis-port-str)) 6379)))
-      (init-storage :backend backend :host redis-host :port redis-port))
+      (init-storage :backend backend :host redis-host :port redis-port)
+      ;; Load Redis Lua scripts for atomic operations (Phase 5 - Trade System)
+      (load-trade-scripts))
     ;; Initialize auth encryption (generates server keypair)
     ;; The server public key should be shared with clients for encrypted auth
     (when *auth-encryption-enabled*

@@ -163,3 +163,5 @@ Not Tested (features don't exist yet):
 - Shop exploits (no vendors)
 
 ---
+
+occasionally i can log in and notice npcs are frozen on their spawn tiles / not moving, if i walk in their region i get attacked/chasing me but they dont animate as they should. oddly, then i'll log in with another player account and walk down in to the same region to check out the frozen npcs, and i see them moving in that new client window alongside the player. so one client shows npc frozen, other client shows correctly animating.
