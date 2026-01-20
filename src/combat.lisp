@@ -41,6 +41,8 @@
     ;; to prevent logout-to-survive exploit
     ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
     (when (and (= new-hp 0) (> old-hp 0))
+      ;; Update deaths leaderboard (Phase E: leaderboard wiring)
+      (db-update-leaderboard-deaths (player-id combatant))
       (with-retry-exponential (saved (lambda () (db-save-player-immediate combatant))
                                 :max-retries 10
                                 :initial-delay 100

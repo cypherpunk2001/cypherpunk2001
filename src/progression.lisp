@@ -206,6 +206,8 @@
     (when (and stats (> xp 0))
       ;; Track lifetime XP for progression display
       (incf (player-lifetime-xp player) xp)
+      ;; Update XP leaderboard (Phase E: leaderboard wiring)
+      (db-update-leaderboard-xp (player-id player) (player-lifetime-xp player))
       (multiple-value-setq (attack-xp strength-xp defense-xp hitpoints-xp)
         (split-combat-xp player xp))
       (when (> attack-xp 0)
@@ -229,6 +231,10 @@
           (when (and old new (> new old))
             (push (cons :hitpoints new) level-ups))))
       (mark-player-hud-stats-dirty player)
+      ;; Update level leaderboard on any level-ups (Phase E: leaderboard wiring)
+      (when level-ups
+        (let ((combat-lvl (combat-level stats)))
+          (db-update-leaderboard-level (player-id player) combat-lvl)))
       ;; Tier-1 write: level-ups must be saved immediately to prevent
       ;; XP rollback past level boundary on crash/logout
       ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
