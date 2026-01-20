@@ -70,7 +70,29 @@
                 #'test-session-claim-success
                 #'test-session-double-login-rejected
                 #'test-session-ownership-refresh
-                #'test-session-release-and-reclaim)))
+                #'test-session-release-and-reclaim
+                ;; 4-Outcome Validation Tests (Phase 6 - Database Hardening)
+                #'test-4way-ok-valid-data
+                #'test-4way-clamp-hp-below-zero
+                #'test-4way-clamp-hp-above-max
+                #'test-4way-clamp-position-out-of-bounds
+                #'test-4way-clamp-missing-created-at
+                #'test-4way-clamp-negative-deaths
+                #'test-4way-reject-missing-id
+                #'test-4way-reject-negative-lifetime-xp
+                #'test-4way-reject-negative-item-count
+                #'test-4way-reject-excessive-item-count
+                #'test-4way-reject-wrong-type-x
+                #'test-4way-reject-negative-skill-xp
+                #'test-4way-quarantine-invalid-zone-type
+                #'test-4way-load-valid-player
+                #'test-4way-load-clamp-hp
+                #'test-4way-load-reject-bad-type
+                #'test-4way-load-not-found
+                #'test-4way-storage-incr
+                #'test-4way-storage-save-with-ttl
+                #'test-4way-forensic-storage
+                #'test-4way-validation-metrics)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -1211,5 +1233,360 @@
       (setf *storage* old-storage
             *server-instance-id* old-server-id))))
 
+;;;; ========================================================================
+;;;; 4-OUTCOME VALIDATION TESTS (Phase 6 - Database Architecture Hardening)
+;;;; Tests for validate-player-plist-4way and db-load-player-validated
+;;;; See docs/db.md "Phase 6: 4-Outcome Validation System"
+;;;; ========================================================================
+
+(defun make-valid-test-plist (&key (id 1) (x 100.0) (y 200.0) (hp 50))
+  "Create a valid player plist for testing validation."
+  (list :id id
+        :version *player-schema-version*
+        :x x :y y
+        :hp hp
+        :lifetime-xp 1000
+        :playtime 3600.0
+        :created-at (get-universal-time)
+        :deaths 5
+        :zone-id :overworld
+        :stats (list :attack (list :level 10 :xp 500)
+                     :strength (list :level 8 :xp 300)
+                     :defense (list :level 12 :xp 700)
+                     :hitpoints (list :level 15 :xp 1000))
+        :inventory (list :slots nil)
+        :equipment nil))
+
+;;; :ok tests - valid data should pass
+
+(defun test-4way-ok-valid-data ()
+  "Test: Valid player data returns :ok action."
+  (let ((plist (make-valid-test-plist :id 1 :x 100.0 :y 200.0 :hp 50)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :ok action "Valid data should return :ok")
+      (assert-nil fixed-plist "No fixed plist needed for :ok")
+      t)))
+
+;;; :clamp tests - safe coercions
+
+(defun test-4way-clamp-hp-below-zero ()
+  "Test: Negative HP is clamped to 0."
+  (let ((plist (make-valid-test-plist :hp -50)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Negative HP should return :clamp")
+      (assert-equal 0 (getf fixed-plist :hp) "HP should be clamped to 0")
+      (assert-true (member "HP -50 clamped to 0" issues :test #'string=)
+                   "Should report clamping")
+      t)))
+
+(defun test-4way-clamp-hp-above-max ()
+  "Test: HP above max is clamped to 99999."
+  (let ((plist (make-valid-test-plist :hp 150000)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Excessive HP should return :clamp")
+      (assert-equal 99999 (getf fixed-plist :hp) "HP should be clamped to 99999")
+      t)))
+
+(defun test-4way-clamp-position-out-of-bounds ()
+  "Test: Position out of bounds is clamped to spawn point."
+  (let ((plist (make-valid-test-plist :x 5000000.0 :y -5000000.0)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Out of bounds position should return :clamp")
+      (assert-equal *default-spawn-x* (getf fixed-plist :x) "X should be spawn")
+      (assert-equal *default-spawn-y* (getf fixed-plist :y) "Y should be spawn")
+      t)))
+
+(defun test-4way-clamp-missing-created-at ()
+  "Test: Missing :created-at is set to current time."
+  (let ((plist (make-valid-test-plist)))
+    ;; Remove :created-at
+    (remf plist :created-at)
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Missing created-at should return :clamp")
+      (assert-true (getf fixed-plist :created-at) "Should have created-at")
+      t)))
+
+(defun test-4way-clamp-negative-deaths ()
+  "Test: Negative deaths count is clamped to 0."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :deaths) -10)
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :clamp action "Negative deaths should return :clamp")
+      (assert-equal 0 (getf fixed-plist :deaths) "Deaths should be clamped to 0")
+      t)))
+
+;;; :reject tests - exploit-adjacent data
+
+(defun test-4way-reject-missing-id ()
+  "Test: Missing :id returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (remf plist :id)
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Missing ID should return :reject")
+      (assert-nil fixed-plist "No fixed plist for :reject")
+      t)))
+
+(defun test-4way-reject-negative-lifetime-xp ()
+  "Test: Negative lifetime-xp returns :reject (exploit indicator)."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :lifetime-xp) -1000)
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Negative lifetime-xp should return :reject")
+      t)))
+
+(defun test-4way-reject-negative-item-count ()
+  "Test: Negative inventory item count returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :inventory)
+          (list :slots (list (list :item-id :sword :count -5))))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Negative item count should return :reject")
+      t)))
+
+(defun test-4way-reject-excessive-item-count ()
+  "Test: Item count exceeding max returns :reject (dupe indicator)."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :inventory)
+          (list :slots (list (list :item-id :coins :count 9999999999))))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Excessive item count should return :reject")
+      t)))
+
+(defun test-4way-reject-wrong-type-x ()
+  "Test: Non-number :x returns :reject."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :x) "not-a-number")
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Non-number :x should return :reject")
+      t)))
+
+(defun test-4way-reject-negative-skill-xp ()
+  "Test: Negative skill XP returns :reject (exploit indicator)."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :stats)
+          (list :attack (list :level 10 :xp -500)))
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :reject action "Negative skill XP should return :reject")
+      t)))
+
+;;; :quarantine tests - suspicious but recoverable
+
+(defun test-4way-quarantine-invalid-zone-type ()
+  "Test: Non-symbol zone-id returns :quarantine."
+  (let ((plist (make-valid-test-plist)))
+    (setf (getf plist :zone-id) 12345)  ; number, not symbol
+    (multiple-value-bind (action issues fixed-plist)
+        (validate-player-plist-4way plist)
+      (assert-equal :quarantine action "Non-symbol zone-id should return :quarantine")
+      t)))
+
+;;; db-load-player-validated integration tests
+
+(defun test-4way-load-valid-player ()
+  "Test: Loading valid player returns :ok action."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player-id 100))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Save valid player data using quoted list (like test-validated-load-rejects-invalid)
+          (let ((plist `(:id ,player-id
+                         :version 4
+                         :x 100.0 :y 200.0
+                         :hp 50
+                         :lifetime-xp 1000
+                         :playtime 3600.0
+                         :created-at ,(get-universal-time)
+                         :deaths 5
+                         :zone-id :overworld
+                         :stats (:attack (:level 10 :xp 500))
+                         :inventory (:slots nil)
+                         :equipment nil)))
+            (storage-save storage (player-key player-id) plist))
+          ;; Load with validation
+          (multiple-value-bind (player zone-id action)
+              (db-load-player-validated player-id)
+            (assert-true player "Should load player")
+            (assert-equal :overworld zone-id "Should have zone-id")
+            (assert-equal :ok action "Should return :ok action"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-load-clamp-hp ()
+  "Test: Loading player with bad HP returns :clamp and fixes it."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player-id 101))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Save player with negative HP (should be clamped to 0)
+          (let ((plist `(:id ,player-id
+                         :version 4
+                         :x 100.0 :y 200.0
+                         :hp -100
+                         :lifetime-xp 1000
+                         :playtime 3600.0
+                         :created-at ,(get-universal-time)
+                         :deaths 5
+                         :zone-id :overworld
+                         :stats (:attack (:level 10 :xp 500))
+                         :inventory (:slots nil)
+                         :equipment nil)))
+            (storage-save storage (player-key player-id) plist))
+          ;; Load with validation
+          (multiple-value-bind (player zone-id action)
+              (db-load-player-validated player-id)
+            (assert-true player "Should load player")
+            (assert-equal :clamp action "Should return :clamp action")
+            (assert-equal 0 (player-hp player) "HP should be clamped to 0"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-load-reject-bad-type ()
+  "Test: Loading player with wrong type returns :reject."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (player-id 102))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Save invalid data directly
+          (let ((invalid-data '(:id 102 :x "not-a-number" :y 200.0 :hp 50 :version 4)))
+            (storage-save storage (player-key player-id) invalid-data))
+          ;; Load with validation - should reject
+          (multiple-value-bind (player zone-id action)
+              (db-load-player-validated player-id)
+            (assert-nil player "Should not load invalid player")
+            (assert-equal :reject action "Should return :reject action"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-load-not-found ()
+  "Test: Loading non-existent player returns :not-found."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Try to load non-existent player
+          (multiple-value-bind (player zone-id action)
+              (db-load-player-validated 99999)
+            (assert-nil player "Should not find player")
+            (assert-equal :not-found action "Should return :not-found action"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-storage-incr ()
+  "Test: storage-incr increments counters correctly."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Increment non-existent key - should create with value 1
+          (assert-equal 1 (storage-incr storage "test:counter") "First incr should return 1")
+          (assert-equal 2 (storage-incr storage "test:counter") "Second incr should return 2")
+          (assert-equal 3 (storage-incr storage "test:counter") "Third incr should return 3")
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-storage-save-with-ttl ()
+  "Test: storage-save-with-ttl saves data with expiration."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Save with TTL
+          (storage-save-with-ttl storage "test:expiring" '(:data "test") 3600)
+          ;; Should be retrievable
+          (let ((data (storage-load storage "test:expiring")))
+            (assert-equal '(:data "test") data "Should retrieve saved data"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-forensic-storage ()
+  "Test: store-corrupt-blob stores data with TTL."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Store corrupt blob
+          (store-corrupt-blob 123 "raw-data" '("error 1" "error 2"))
+          ;; Check that something was stored (key format: corrupt:123:timestamp)
+          (let ((keys (storage-keys storage "corrupt:*")))
+            (assert-true (> (length keys) 0) "Should have stored corrupt blob"))
+          t)
+      (setf *storage* old-storage))))
+
+(defun test-4way-validation-metrics ()
+  "Test: increment-validation-metric increments counters."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*))
+    (unwind-protect
+        (progn
+          (setf *storage* storage)
+          (storage-connect storage)
+          ;; Increment some metrics
+          (increment-validation-metric :ok)
+          (increment-validation-metric :ok)
+          (increment-validation-metric :clamp)
+          (increment-validation-metric :reject)
+          ;; Check counters
+          (assert-equal 2 (storage-load storage "metrics:validation:ok") "OK count")
+          (assert-equal 1 (storage-load storage "metrics:validation:clamp") "Clamp count")
+          (assert-equal 1 (storage-load storage "metrics:validation:reject") "Reject count")
+          t)
+      (setf *storage* old-storage))))
+
+(defun run-4way-validation-tests ()
+  "Run all 4-outcome validation tests."
+  (format t "~&Running 4-outcome validation tests...~%")
+  (run-test 'test-4way-ok-valid-data)
+  (run-test 'test-4way-clamp-hp-below-zero)
+  (run-test 'test-4way-clamp-hp-above-max)
+  (run-test 'test-4way-clamp-position-out-of-bounds)
+  (run-test 'test-4way-clamp-missing-created-at)
+  (run-test 'test-4way-clamp-negative-deaths)
+  (run-test 'test-4way-reject-missing-id)
+  (run-test 'test-4way-reject-negative-lifetime-xp)
+  (run-test 'test-4way-reject-negative-item-count)
+  (run-test 'test-4way-reject-excessive-item-count)
+  (run-test 'test-4way-reject-wrong-type-x)
+  (run-test 'test-4way-reject-negative-skill-xp)
+  (run-test 'test-4way-quarantine-invalid-zone-type)
+  (run-test 'test-4way-load-valid-player)
+  (run-test 'test-4way-load-clamp-hp)
+  (run-test 'test-4way-load-reject-bad-type)
+  (run-test 'test-4way-load-not-found)
+  (run-test 'test-4way-storage-incr)
+  (run-test 'test-4way-storage-save-with-ttl)
+  (run-test 'test-4way-forensic-storage)
+  (run-test 'test-4way-validation-metrics)
+  (format t "~&All 4-outcome validation tests complete.~%"))
+
 ;;; Export for REPL usage
 (export 'run-persistence-tests)
+(export 'run-4way-validation-tests)

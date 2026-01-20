@@ -97,14 +97,11 @@ Key design docs:
 ---
 
 ## Current Tasks / TODO
-adding ping hud
-investigating if 81a730d origin/master Add advanced client toggles caused tile seam glitches
 
-DONE - we made server hz and client FPS knobs more obvious in config and removed hardcodes there
+We have recently implemented a large amount of changes in database and pretty much i think all state related code, implementing the 6 phase plan of db.md. I need you to go through our entire codebase focusing on db.md spec and what we have done in the src code to ensure we are really doing what we think we are doing. A full deep code review, outputted to a file in the repo root, called something like DB_CODE_REVIEW_FINDINGS.md or similar, and also highlight issues ranked crit high med low etc. and propose fixes (but dont actually fix code in this pass through - what we want is the code review FINDINGS to be rock solid, logical and bug free.
 
-THINKING - about windowed mode resize options
-im thinking client-settings.lisp should be in data/ or something which hopefully is more compatible than ~/.mmorpg
-on OS like windows. then offer common window sizes in the same scale that we are developing with actively 1280x720 variants that scale clean all the way up to 1080p, 1440p, and 4k.
+---
+
 
 ---
 
@@ -165,7 +162,12 @@ Not Tested (features don't exist yet):
 ---
 
 occasionally i can log in and notice npcs are frozen on their spawn tiles / not moving, if i walk in their region i get attacked/chasing me but they dont animate as they should. oddly, then i'll log in with another player account and walk down in to the same region to check out the frozen npcs, and i see them moving in that new client window alongside the player. so one client shows npc frozen, other client shows correctly animating.
-
+---
 - login w 2 players right click on each other no option to trade
 
 ---
+investigating if 81a730d origin/master Add advanced client toggles caused tile seam glitches
+---
+THINKING - about windowed mode resize options
+im thinking client-settings.lisp should be in data/ or something which hopefully is more compatible than ~/.mmorpg
+on OS like windows. then offer common window sizes in the same scale that we are developing with actively 1280x720 variants that scale clean all the way up to 1080p, 1440p, and 4k.

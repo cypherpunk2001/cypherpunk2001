@@ -180,6 +180,207 @@
               (length all-errors) all-errors))
       (values (null all-errors) all-errors))))
 
+;;;; ========================================================================
+;;;; 4-OUTCOME VALIDATION SYSTEM (Phase 6)
+;;;; See docs/db.md "Phase 6: 4-Outcome Validation System" section
+;;;; ========================================================================
+
+(defparameter *default-spawn-x* 500.0
+  "Default X spawn position for clamping invalid coordinates.")
+
+(defparameter *default-spawn-y* 300.0
+  "Default Y spawn position for clamping invalid coordinates.")
+
+(defparameter *max-item-stack-size* 999999
+  "Maximum stack size for any item. Exceeding this triggers :reject.")
+
+;; clamp is already defined in utils.lisp
+
+(defun validate-player-plist-4way (plist)
+  "4-outcome validation for player data.
+   Returns (values action issues fixed-plist) where:
+   - action: :ok, :clamp, :quarantine, or :reject
+   - issues: list of warning/error strings
+   - fixed-plist: corrected data for :clamp, nil for others
+
+   This function assumes PLIST has already been migrated to current schema.
+   It validates against the current schema and classifies issues:
+   - :ok       = Data is valid, no corrections needed
+   - :clamp    = Minor issues fixed by safe coercions (HP out of range, etc.)
+   - :quarantine = Suspicious data requiring admin review (unknown zones/items)
+   - :reject   = Exploit-adjacent data, deny login (negative XP, dupes, etc.)
+
+   Field Classification Policy (from docs/db.md):
+
+   Clamp-Only (safe coercions):
+   - :hp < 0 → 0
+   - :hp > max-hp → max-hp (99999 schema limit)
+   - :x, :y out of world bounds → spawn point
+   - :playtime < 0 → 0
+   - :deaths < 0 → 0
+   - :created-at missing → current time
+
+   Reject (exploit-adjacent):
+   - :id missing → can't identify player
+   - :lifetime-xp < 0 → exploit indicator
+   - Inventory slot negative count → exploit indicator
+   - Inventory slot count > max stack → possible dupe
+   - Structure not a proper plist
+
+   Quarantine (recoverable but suspicious):
+   - :zone-id not a symbol → zone data corrupt
+   - :version much older than supported (future enhancement)"
+  (let ((issues nil)
+        (fixed-plist (copy-list plist))
+        (needs-clamp nil)
+        (needs-quarantine nil)
+        (needs-reject nil))
+
+    ;; === REJECT CHECKS (exploit-adjacent, check first) ===
+
+    ;; Missing :id is fatal - can't identify player
+    (let ((id (getf plist :id)))
+      (unless (and id (integerp id) (> id 0))
+        (push "Missing or invalid :id field" issues)
+        (setf needs-reject t)))
+
+    ;; Required field type checks - reject on wrong types (corruption/exploit)
+    (let ((x (getf plist :x))
+          (y (getf plist :y))
+          (hp (getf plist :hp)))
+      ;; :x must be a number
+      (unless (numberp x)
+        (push (format nil "Field :x has wrong type: expected number, got ~a (~s)"
+                      (type-of x) x) issues)
+        (setf needs-reject t))
+      ;; :y must be a number
+      (unless (numberp y)
+        (push (format nil "Field :y has wrong type: expected number, got ~a (~s)"
+                      (type-of y) y) issues)
+        (setf needs-reject t))
+      ;; :hp must be an integer
+      (unless (integerp hp)
+        (push (format nil "Field :hp has wrong type: expected integer, got ~a (~s)"
+                      (type-of hp) hp) issues)
+        (setf needs-reject t)))
+
+    ;; Negative lifetime-xp is exploit indicator
+    (let ((lifetime-xp (getf plist :lifetime-xp)))
+      (when (and lifetime-xp (integerp lifetime-xp) (< lifetime-xp 0))
+        (push (format nil "Negative lifetime-xp (~d) - exploit indicator" lifetime-xp) issues)
+        (setf needs-reject t)))
+
+    ;; Check inventory for exploits
+    (let ((inventory (getf plist :inventory)))
+      (when inventory
+        (let ((slots (getf inventory :slots)))
+          (when (listp slots)
+            (loop for slot in slots
+                  for i from 0
+                  when slot
+                  do (let ((count (getf slot :count))
+                           (item-id (getf slot :item-id)))
+                       ;; Negative count is exploit
+                       (when (and count (integerp count) (< count 0))
+                         (push (format nil "Inventory slot ~d has negative count (~d)" i count) issues)
+                         (setf needs-reject t))
+                       ;; Excessive count is potential dupe
+                       (when (and count (integerp count) (> count *max-item-stack-size*))
+                         (push (format nil "Inventory slot ~d count (~d) exceeds max (~d)"
+                                       i count *max-item-stack-size*)
+                               issues)
+                         (setf needs-reject t))
+                       ;; Item-id must be a symbol if present
+                       (when (and item-id (not (symbolp item-id)))
+                         (push (format nil "Inventory slot ~d has non-symbol item-id: ~s" i item-id) issues)
+                         (setf needs-reject t))))))))
+
+    ;; Stats skill XP cannot be negative (exploit indicator)
+    (let ((stats (getf plist :stats)))
+      (when stats
+        (dolist (stat-key '(:attack :strength :defense :hitpoints))
+          (let ((skill (getf stats stat-key)))
+            (when skill
+              (let ((xp (getf skill :xp)))
+                (when (and xp (integerp xp) (< xp 0))
+                  (push (format nil "Stats ~a :xp is negative (~d) - exploit indicator" stat-key xp) issues)
+                  (setf needs-reject t))))))))
+
+    ;; If any reject condition, return immediately
+    (when needs-reject
+      (return-from validate-player-plist-4way
+        (values :reject issues nil)))
+
+    ;; === QUARANTINE CHECKS (suspicious but recoverable) ===
+
+    ;; Zone-id must be a symbol (if corrupt, quarantine)
+    (let ((zone-id (getf plist :zone-id)))
+      (when (and zone-id (not (symbolp zone-id)))
+        (push (format nil "Zone-id is not a symbol: ~s" zone-id) issues)
+        (setf needs-quarantine t)))
+
+    ;; If any quarantine condition, return
+    (when needs-quarantine
+      (return-from validate-player-plist-4way
+        (values :quarantine issues nil)))
+
+    ;; === CLAMP CHECKS (safe coercions) ===
+
+    ;; HP clamping: < 0 → 0, > max → max
+    (let ((hp (getf fixed-plist :hp)))
+      (when (and hp (numberp hp))
+        (cond
+          ((< hp 0)
+           (push (format nil "HP ~d clamped to 0" hp) issues)
+           (setf (getf fixed-plist :hp) 0)
+           (setf needs-clamp t))
+          ((> hp 99999)
+           (push (format nil "HP ~d clamped to 99999" hp) issues)
+           (setf (getf fixed-plist :hp) 99999)
+           (setf needs-clamp t)))))
+
+    ;; Position clamping: out of bounds → spawn point
+    (let ((x (getf fixed-plist :x))
+          (y (getf fixed-plist :y)))
+      (when (and x (numberp x))
+        (when (or (< x -1000000.0) (> x 1000000.0))
+          (push (format nil "X position ~f clamped to spawn ~f" x *default-spawn-x*) issues)
+          (setf (getf fixed-plist :x) *default-spawn-x*)
+          (setf needs-clamp t)))
+      (when (and y (numberp y))
+        (when (or (< y -1000000.0) (> y 1000000.0))
+          (push (format nil "Y position ~f clamped to spawn ~f" y *default-spawn-y*) issues)
+          (setf (getf fixed-plist :y) *default-spawn-y*)
+          (setf needs-clamp t))))
+
+    ;; Playtime clamping: < 0 → 0
+    (let ((playtime (getf fixed-plist :playtime)))
+      (when (and playtime (numberp playtime) (< playtime 0))
+        (push (format nil "Playtime ~f clamped to 0" playtime) issues)
+        (setf (getf fixed-plist :playtime) 0)
+        (setf needs-clamp t)))
+
+    ;; Deaths clamping: < 0 → 0
+    (let ((deaths (getf fixed-plist :deaths)))
+      (when (and deaths (integerp deaths) (< deaths 0))
+        (push (format nil "Deaths ~d clamped to 0" deaths) issues)
+        (setf (getf fixed-plist :deaths) 0)
+        (setf needs-clamp t)))
+
+    ;; Created-at: missing → current time
+    (unless (getf fixed-plist :created-at)
+      (push "Missing :created-at, set to current time" issues)
+      (setf (getf fixed-plist :created-at) (get-universal-time))
+      (setf needs-clamp t))
+
+    ;; Ensure version is set to current schema version (validator contract)
+    (setf (getf fixed-plist :version) *player-schema-version*)
+
+    ;; Return result based on what we found
+    (if needs-clamp
+        (values :clamp issues fixed-plist)
+        (values :ok issues nil))))
+
 ;;; Serialization helpers
 
 (defun serialize-skill (skill)

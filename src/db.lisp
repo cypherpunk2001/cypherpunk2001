@@ -277,8 +277,24 @@
 (defgeneric storage-refresh-ttl (storage key ttl-seconds)
   (:documentation "Refresh TTL on KEY. Returns T if key exists, NIL otherwise."))
 
-(defgeneric storage-get-raw (storage key)
-  (:documentation "Get raw string value for KEY. Returns string or NIL."))
+(defgeneric storage-load-raw (storage key)
+  (:documentation "Load raw string value for KEY. Returns string or NIL.
+   Does not parse - returns the exact bytes stored in Redis.
+   Use storage-load for parsed plist, storage-load-raw for size checks before parsing."))
+
+;;;; ========================================================================
+;;;; VALIDATION SUPPORT (Phase 6 - 4-Outcome Validation System)
+;;;; See docs/db.md "Phase 6: 4-Outcome Validation System" section
+;;;; ========================================================================
+
+(defgeneric storage-incr (storage key)
+  (:documentation "Increment counter at KEY by 1. Returns new value.
+   Creates key with value 1 if it doesn't exist."))
+
+(defgeneric storage-save-with-ttl (storage key data ttl-seconds)
+  (:documentation "Save DATA at KEY with TTL expiration in seconds.
+   Key will be automatically deleted after TTL expires.
+   For forensic storage of corrupt blobs."))
 
 ;;;; ========================================================================
 ;;;; STRUCTURED DATA (Phase 4 - Database Architecture Hardening)
@@ -511,14 +527,37 @@
       (warn "Redis EXPIRE error for key ~a: ~a" key e)
       nil)))
 
-(defmethod storage-get-raw ((storage redis-storage) key)
-  "Get raw string value for KEY."
+(defmethod storage-load-raw ((storage redis-storage) key)
+  "Load raw string value for KEY (does not parse)."
   (handler-case
       (redis:with-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:get key))
     (error (e)
       (warn "Redis GET error for key ~a: ~a" key e)
+      nil)))
+
+;;; Validation Support Methods (Redis) - Phase 6
+
+(defmethod storage-incr ((storage redis-storage) key)
+  "Increment counter at KEY. Returns new value."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:incr key))
+    (error (e)
+      (warn "Redis INCR error for key ~a: ~a" key e)
+      nil)))
+
+(defmethod storage-save-with-ttl ((storage redis-storage) key data ttl-seconds)
+  "Save DATA at KEY with TTL expiration."
+  (handler-case
+      (redis:with-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (red:setex key ttl-seconds (prin1-to-string data))
+        t)
+    (error (e)
+      (warn "Redis SETEX error for key ~a: ~a" key e)
       nil)))
 
 ;;; Sorted Set Methods (Redis) - for leaderboards
@@ -753,10 +792,12 @@
   "Hash table mapping keys to their expiration times (universal-time).")
 
 (defun memory-storage-key-expired-p (key)
-  "Check if KEY has expired in memory storage."
+  "Check if KEY has expired in memory storage.
+   Returns T only if key has a TTL set AND that TTL has passed.
+   Keys without TTLs are never considered expired."
   (let ((expiration (gethash key *memory-storage-ttls*)))
-    (or (null expiration)
-        (< expiration (get-universal-time)))))
+    (and expiration
+         (< expiration (get-universal-time)))))
 
 (defun memory-storage-cleanup-key (storage key)
   "Remove expired key from memory storage."
@@ -790,13 +831,35 @@
         ;; Key doesn't exist or expired
         nil)))
 
-(defmethod storage-get-raw ((storage memory-storage) key)
-  "Get raw value for KEY from memory storage."
+(defmethod storage-load-raw ((storage memory-storage) key)
+  "Load raw string value for KEY from memory storage.
+   If stored value is already a string, return it directly.
+   Otherwise, return prin1-to-string of stored data for consistency with Redis.
+   This handles both session ownership (stores strings) and player data (stores plists)."
   ;; Check expiration
   (when (memory-storage-key-expired-p key)
     (memory-storage-cleanup-key storage key)
-    (return-from storage-get-raw nil))
-  (gethash key (memory-storage-data storage)))
+    (return-from storage-load-raw nil))
+  (let ((data (gethash key (memory-storage-data storage))))
+    (when data
+      ;; If data is already a string, return it directly (e.g., session ownership IDs)
+      ;; If data is a plist, convert to string (e.g., player data blobs)
+      (if (stringp data)
+          data
+          (prin1-to-string data)))))
+
+;;; Validation Support Methods (Memory Storage) - Phase 6
+
+(defmethod storage-incr ((storage memory-storage) key)
+  "Increment counter at KEY. Returns new value."
+  (let ((current (gethash key (memory-storage-data storage) 0)))
+    (setf (gethash key (memory-storage-data storage)) (1+ current))))
+
+(defmethod storage-save-with-ttl ((storage memory-storage) key data ttl-seconds)
+  "Save DATA at KEY with TTL expiration."
+  (setf (gethash key (memory-storage-data storage)) data)
+  (setf (gethash key *memory-storage-ttls*) (+ (get-universal-time) ttl-seconds))
+  t)
 
 ;;; Sorted Set Methods (Memory Storage) - for leaderboards
 ;;; Uses hash table mapping key -> list of (member . score) pairs
@@ -1003,6 +1066,43 @@
     (storage-disconnect *storage*)
     (setf *storage* nil)))
 
+;;;; ========================================================================
+;;;; FORENSIC STORAGE (Phase 6 - 4-Outcome Validation System)
+;;;; Store corrupt blobs for admin inspection, validation metrics
+;;;; ========================================================================
+
+(defparameter *corrupt-blob-ttl-seconds* 604800
+  "TTL for corrupt blob forensic storage (7 days = 604800 seconds).")
+
+(defun store-corrupt-blob (player-id raw-string report)
+  "Store corrupt player data for forensic inspection with TTL.
+   KEY: corrupt:{player-id}:{timestamp}
+   DATA: (:raw raw-string :report report-list :timestamp unix-time)
+   TTL: 7 days (auto-expires to prevent unbounded growth)"
+  (when *storage*
+    (let ((key (format nil "corrupt:~a:~a" player-id (get-universal-time)))
+          (data (list :raw raw-string
+                      :report report
+                      :timestamp (get-universal-time))))
+      (storage-save-with-ttl *storage* key data *corrupt-blob-ttl-seconds*)
+      (log-verbose "Stored corrupt blob for player ~a: ~{~a~^, ~}" player-id report))))
+
+(defun increment-validation-metric (action)
+  "Increment validation outcome counter.
+   ACTION should be :ok, :clamp, :quarantine, or :reject."
+  (when *storage*
+    (storage-incr *storage* (format nil "metrics:validation:~a"
+                                     (string-downcase (symbol-name action))))))
+
+(defun get-validation-metrics ()
+  "Return validation metrics as a plist.
+   Returns (:ok N :clamp N :quarantine N :reject N)"
+  (when *storage*
+    (list :ok (or (storage-load *storage* "metrics:validation:ok") 0)
+          :clamp (or (storage-load *storage* "metrics:validation:clamp") 0)
+          :quarantine (or (storage-load *storage* "metrics:validation:quarantine") 0)
+          :reject (or (storage-load *storage* "metrics:validation:reject") 0))))
+
 (defun db-save-id-counter (counter-value)
   "Save the global ID counter to storage."
   (storage-save *storage* (server-id-counter-key) counter-value))
@@ -1115,39 +1215,119 @@
           (values player zone-id))))))
 
 (defun db-load-player-validated (player-id)
-  "Load player by ID with schema validation.
-   Returns (values player zone-id) or (values NIL NIL) if not found or invalid.
+  "Load player with 4-outcome validation.
+   Returns (values player zone-id action).
 
-   This is the RECOMMENDED function for loading player data. It:
-   1. Loads raw data from storage
-   2. Validates against *player-schema* (rejects invalid data)
-   3. Runs migrations if valid
-   4. Returns deserialized player or NIL
+   PRECONDITION: Caller has already claimed session ownership for player-id.
+   This ensures that if the :clamp branch needs to save corrected data,
+   the ownership-safe save path will succeed.
 
-   Invalid data is REJECTED entirely (returns NIL) rather than partially loaded.
-   This ensures data integrity - corrupted data should be investigated, not
-   silently loaded with missing/clamped fields."
-  (when *storage*
-    (let* ((key (player-key player-id))
-           (raw-data (storage-load *storage* key)))
-      (unless raw-data
-        (return-from db-load-player-validated (values nil nil)))
-      ;; Validate before processing
-      (multiple-value-bind (valid-p errors)
-          (validate-player-plist-deep raw-data :log-errors t)
-        (unless valid-p
-          (warn "CRITICAL: Player ~a data failed validation with ~d error(s). Data NOT loaded."
-                player-id (length errors))
-          (return-from db-load-player-validated (values nil nil))))
-      ;; Data is valid - run migrations and deserialize
-      (let ((data (migrate-player-data raw-data)))
-        (let* ((player (deserialize-player data
-                                           *inventory-size*
-                                           (length *equipment-slot-ids*)))
-               (zone-id (getf data :zone-id)))
-          (log-verbose "Loaded and validated player ~a from storage (version ~a)"
-                       player-id (getf data :version))
-          (values player zone-id))))))
+   Actions returned:
+   - :ok          = Data valid, player loaded normally
+   - :clamp       = Minor issues fixed, corrected data saved, player loaded
+   - :quarantine  = Suspicious data, quarantine player returned (can't play)
+   - :reject      = Exploit-adjacent data, login denied (nil player)
+   - :not-found   = No data for player-id (nil player)
+
+   The load pipeline is:
+   1. Load raw string (storage-load-raw)
+   2. Size check BEFORE parsing (prevents allocation attacks)
+   3. Parse with read-from-string (*read-eval* nil)
+   4. Basic sanity (is it a plist? has :id? :version OK?)
+   5. Migrate to current schema
+   6. 4-way validation against current schema
+   7. Handle outcome
+
+   See docs/db.md 'Phase 6: 4-Outcome Validation System' for details."
+  (unless *storage*
+    (return-from db-load-player-validated (values nil nil :not-found)))
+
+  (let* ((key (player-key player-id))
+         (raw-string (storage-load-raw *storage* key)))
+
+    ;; No data found
+    (unless raw-string
+      (return-from db-load-player-validated (values nil nil :not-found)))
+
+    ;; 1. Size check BEFORE parsing (prevents allocation attacks)
+    (when (> (length raw-string) *max-player-blob-size*)
+      (store-corrupt-blob player-id raw-string
+                          (list (format nil "Blob size ~d exceeds max ~d bytes"
+                                        (length raw-string) *max-player-blob-size*)))
+      (increment-validation-metric :reject)
+      (return-from db-load-player-validated (values nil nil :reject)))
+
+    ;; 2. Parse with error handling
+    (let ((raw-data
+            (handler-case
+                (let ((*read-eval* nil))
+                  (multiple-value-bind (parsed-plist end-pos)
+                      (read-from-string raw-string)
+                    (declare (ignore end-pos))
+                    parsed-plist))
+              (error (e)
+                (store-corrupt-blob player-id raw-string
+                                    (list (format nil "Parse error: ~a" e)))
+                (increment-validation-metric :reject)
+                (return-from db-load-player-validated (values nil nil :reject))))))
+
+      ;; 3. Basic sanity (pre-migration) - can we migrate at all?
+      ;; - Must be a list
+      ;; - Must have :id (integer)
+      ;; - :version missing is OK (treated as 0 by migration)
+      ;; - :version present must be integer
+      (let ((version-val (getf raw-data :version)))
+        (unless (and (listp raw-data)
+                     (integerp (getf raw-data :id))
+                     (or (null version-val) (integerp version-val)))
+          (store-corrupt-blob player-id raw-string
+                              '("Malformed structure: not a valid player data"))
+          (increment-validation-metric :reject)
+          (return-from db-load-player-validated (values nil nil :reject))))
+
+      ;; 4. Migrate to current schema (adds missing fields)
+      (let ((migrated-data (migrate-player-data raw-data)))
+
+        ;; 5. Full 4-way validation (against current schema, after migration)
+        (multiple-value-bind (action issues fixed-plist)
+            (validate-player-plist-4way migrated-data)
+          (increment-validation-metric action)
+
+          (case action
+            (:ok
+             (let ((player (deserialize-player migrated-data *inventory-size*
+                                               (length *equipment-slot-ids*)))
+                   (zone-id (getf migrated-data :zone-id)))
+               (log-verbose "Loaded and validated player ~a from storage (version ~a)"
+                            player-id (getf migrated-data :version))
+               (values player zone-id :ok)))
+
+            (:clamp
+             (log-verbose "Player ~a clamped: ~{~a~^, ~}" player-id issues)
+             ;; Tier-1 save of corrected data using ownership-safe path
+             (let ((player (deserialize-player fixed-plist *inventory-size*
+                                               (length *equipment-slot-ids*))))
+               (db-save-player-immediate player)
+               (values player (getf fixed-plist :zone-id) :clamp)))
+
+            (:quarantine
+             (store-corrupt-blob player-id raw-string issues)
+             (warn "Player ~a QUARANTINED: ~{~a~^, ~}" player-id issues)
+             (values (make-quarantined-player player-id) :quarantine :quarantine))
+
+            (:reject
+             (store-corrupt-blob player-id raw-string issues)
+             (warn "Player ~a REJECTED: ~{~a~^, ~}" player-id issues)
+             (values nil nil :reject))))))))
+
+(defun make-quarantined-player (player-id)
+  "Create minimal player for quarantine state.
+   The player cannot play but their account is recoverable.
+   They are placed in the :quarantine zone (special handling)."
+  (let ((player (make-player 0.0 0.0)))
+    (setf (player-id player) player-id)
+    (setf (player-zone-id player) :quarantine)
+    player))
 
 (defun db-delete-player (player-id)
   "Delete player from storage."
@@ -1310,7 +1490,7 @@
             (log-verbose "Claimed session ownership for player ~a" player-id)
             t)
           ;; Check if we already own it (reconnect case)
-          (let ((current-owner (storage-get-raw *storage* owner-key)))
+          (let ((current-owner (storage-load-raw *storage* owner-key)))
             (if (and current-owner (string= current-owner *server-instance-id*))
                 (progn
                   ;; We already own it, refresh TTL
@@ -1327,7 +1507,7 @@
   (when *storage*
     (let ((owner-key (session-owner-key player-id)))
       ;; Only delete if we own it
-      (let ((current-owner (storage-get-raw *storage* owner-key)))
+      (let ((current-owner (storage-load-raw *storage* owner-key)))
         (when (and current-owner *server-instance-id*
                    (string= current-owner *server-instance-id*))
           (storage-delete *storage* owner-key)
@@ -1340,7 +1520,7 @@
   (unless *server-instance-id*
     (return-from verify-session-ownership nil))  ; No server ID = don't own anything
   (let* ((owner-key (session-owner-key player-id))
-         (current-owner (storage-get-raw *storage* owner-key)))
+         (current-owner (storage-load-raw *storage* owner-key)))
     (and current-owner (string= current-owner *server-instance-id*))))
 
 (defun refresh-session-ownership (player-id)
