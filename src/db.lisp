@@ -1598,9 +1598,12 @@
 (defun flush-dirty-players (&key force)
   "Flush all dirty players to storage (tier-2 batched writes). Thread-safe.
    Uses pipelined batch save for efficiency (up to 300x faster than sequential).
-   If FORCE is T, flush all players regardless of dirty flag."
+   If FORCE is T, flush all players regardless of dirty flag.
+   Verifies session ownership before saving - players with lost ownership are
+   NOT saved (to prevent stale server overwrites) and their sessions are cleaned up."
   (let ((to-flush nil)
         (key-data-pairs nil)
+        (lost-player-ids nil)
         (current-time (get-internal-real-time)))
     ;; Collect players that need flushing and build save data (under lock)
     (with-player-sessions-lock
@@ -1614,14 +1617,27 @@
                           dirty
                           (> (- current-time last-flush)
                              (* *batch-flush-interval* internal-time-units-per-second))))
-             (push (cons player-id session) to-flush)
-             ;; Build save data while under lock to get consistent snapshot
-             (let* ((zone-id (player-session-zone-id session))
-                    (key (player-key player-id))
-                    (data (serialize-player player :include-visuals nil :zone-id zone-id)))
-               (setf data (plist-put data :version *player-schema-version*))
-               (push (cons key data) key-data-pairs)))))
+             ;; Check ownership BEFORE adding to flush list
+             (if (verify-session-ownership player-id)
+                 (progn
+                   (push (cons player-id session) to-flush)
+                   ;; Build save data while under lock to get consistent snapshot
+                   (let* ((zone-id (player-session-zone-id session))
+                          (key (player-key player-id))
+                          (data (serialize-player player :include-visuals nil :zone-id zone-id)))
+                     (setf data (plist-put data :version *player-schema-version*))
+                     (push (cons key data) key-data-pairs)))
+                 ;; Lost ownership - track for cleanup (don't save - would overwrite)
+                 (push player-id lost-player-ids)))))
        *player-sessions*))
+    ;; Handle lost ownership outside lock (cleanup requires its own locking)
+    (when lost-player-ids
+      (warn "Batch flush: lost ownership for ~d players, skipping save and cleaning up: ~a"
+            (length lost-player-ids) lost-player-ids)
+      (dolist (player-id lost-player-ids)
+        ;; Clean up session - cannot save since we don't own it
+        ;; unregister-player-session releases ownership and removes from *player-sessions*
+        (unregister-player-session player-id)))
     ;; Execute batch save outside lock (IO can be slow)
     (when to-flush
       (unless *storage*
