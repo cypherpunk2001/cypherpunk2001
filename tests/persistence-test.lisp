@@ -40,6 +40,7 @@
                 ;; Tier-1 Immediate Save Tests
                 #'test-death-triggers-immediate-save
                 #'test-level-up-triggers-immediate-save
+                #'test-item-consume-triggers-immediate-save
                 ;; Currency Invariant Tests
                 #'test-coins-never-negative
                 ;; Schema Migration Tests
@@ -646,6 +647,51 @@
                        (saved-attack (getf saved-stats :attack))
                        (saved-xp (getf saved-attack :xp)))
                   (assert-true (> saved-xp 0) "XP not saved after level-up")))))
+          t)
+      ;; Restore global state
+      (setf *storage* old-storage)
+      (clrhash *player-sessions*)
+      (maphash (lambda (k v) (setf (gethash k *player-sessions*) v)) old-sessions))))
+
+(defun test-item-consume-triggers-immediate-save ()
+  "Test: Item consumption triggers tier-1 immediate save.
+   Phase 4: Item destruction (drop/sell/consume) is tier-1 per docs/db.md."
+  (ensure-test-game-data)
+  (let* ((storage (make-instance 'memory-storage))
+         (player (make-test-player :id 88))
+         (inventory (player-inventory player))
+         (old-storage *storage*)
+         (old-sessions (make-hash-table :test 'eql)))
+    ;; Copy existing sessions
+    (maphash (lambda (k v) (setf (gethash k old-sessions) v)) *player-sessions*)
+    (unwind-protect
+        (progn
+          ;; Set up test storage and session
+          (setf *storage* storage)
+          (storage-connect storage)
+          (clrhash *player-sessions*)
+          (register-player-session player)
+          ;; Give player some items
+          (grant-inventory-item player :bones 5)
+          (let ((initial-count (count-inventory-item inventory :bones)))
+            (assert-equal 5 initial-count "Should have 5 bones initially")
+            ;; Consume items - this should trigger immediate save (Phase 4)
+            (consume-inventory-item player :bones 2)
+            ;; Verify items were consumed
+            (assert-equal 3 (count-inventory-item inventory :bones) "Should have 3 bones after consume")
+            ;; Verify save was written to storage immediately
+            (let* ((key (player-key (player-id player)))
+                   (loaded (storage-load storage key)))
+              (assert-true loaded "Player not saved after item consume")
+              ;; Verify inventory was saved with correct count
+              ;; Inventory format: (:slots ((:item-id :bones :count N) ...))
+              ;; Bones have stack-size 1, so count all bones across all slots
+              (let* ((saved-inventory (getf loaded :inventory))
+                     (saved-slots (getf saved-inventory :slots))
+                     (saved-bones-total (loop for slot in saved-slots
+                                              when (eq (getf slot :item-id) :bones)
+                                              sum (getf slot :count 0))))
+                (assert-equal 3 saved-bones-total "Saved inventory should have 3 bones total"))))
           t)
       ;; Restore global state
       (setf *storage* old-storage)

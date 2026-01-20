@@ -467,16 +467,27 @@
         amount)))
 
 (defun consume-inventory-item (player item-id count &optional slot-index)
-  ;; Authoritatively remove items from PLAYER's inventory.
-  ;; If SLOT-INDEX is provided, only remove from that specific slot.
+  "Authoritatively remove items from PLAYER's inventory.
+   If SLOT-INDEX is provided, only remove from that specific slot.
+   Phase 4: Item destruction is tier-1 (immediate save with retry).
+   This prevents item duplication on crash - destroyed items stay destroyed."
   (let* ((inventory (and player (player-inventory player)))
          (amount (max 0 (truncate count))))
     (if inventory
         (let ((leftover (inventory-remove inventory item-id amount slot-index)))
           (when (< leftover amount)
             (mark-player-inventory-dirty player)
-            ;; Tier-2 write: inventory changes should be marked dirty for batched saves
-            (mark-player-dirty (player-id player)))
+            ;; Phase 4: Tier-1 write - item destruction saved immediately
+            ;; (drop/sell/consume are tier-1 per docs/db.md)
+            (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                      :max-retries 5
+                                      :initial-delay 100
+                                      :max-delay 500
+                                      :on-final-fail (lambda (e)
+                                                       (warn "CRITICAL: Item consume save failed for player ~d item ~a: ~a - using dirty flag"
+                                                             (player-id player) item-id e)
+                                                       (mark-player-dirty (player-id player))))
+              saved))
           leftover)
         amount)))
 
