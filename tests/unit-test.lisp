@@ -119,6 +119,7 @@
                 test-request-drop-item
                 test-request-inventory-swap
                 test-trade-intent-functions
+                test-apply-intent-plist-rejects-bad-pickup
                 ;; Net Tests
                 test-string-to-octets
                 test-octets-to-string
@@ -152,7 +153,30 @@
                 test-calculate-percentile
                 test-calculate-percentile-edge-cases
                 test-ring-buffer-values
-                test-metrics-push-latency)))
+                test-metrics-push-latency
+                ;; Additional AI Tests
+                test-npc-in-perception-range-p
+                ;; Additional Combat Tests
+                test-player-attack-target-in-range-p
+                ;; Additional Progression Tests
+                test-melee-hit-p
+                test-format-skill-hud-line
+                test-object-entry-count
+                ;; Additional Data Tests
+                test-parse-game-data-forms
+                test-make-npc-archetype-from-plist
+                ;; Additional Zone Tests
+                test-zone-chunk-from-spec
+                test-zone-layer-from-spec
+                test-build-zone-collision-tiles
+                test-zone-wall-map
+                test-zone-layer-by-id
+                test-zone-to-plist
+                test-zone-slice
+                test-zone-resize
+                ;; Additional World Graph Tests
+                test-world-graph-exits
+                test-world-graph-zone-path)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -646,6 +670,24 @@
     (assert (= (intent-face-dy intent) 1.0) () "intent-face: down dy")
     (set-intent-face intent 1.0 0.0)
     (assert (= (intent-face-dx intent) 1.0) () "intent-face: side dx")))
+
+(defun test-apply-intent-plist-rejects-bad-pickup ()
+  "Ensure malformed pickup/drop intent fields are sanitized."
+  (let ((intent (make-intent)))
+    (apply-intent-plist intent (list :requested-pickup-target-id :arrows
+                                     :requested-pickup-tx "bad"
+                                     :requested-pickup-ty -3
+                                     :requested-drop-slot-index "oops"))
+    (assert (null (intent-requested-pickup-tx intent)) () "pickup-tx invalid -> nil")
+    (assert (null (intent-requested-pickup-ty intent)) () "pickup-ty invalid -> nil")
+    (assert (null (intent-requested-drop-slot-index intent)) () "drop-slot invalid -> nil")
+    (apply-intent-plist intent (list :requested-pickup-target-id :arrows
+                                     :requested-pickup-tx 2
+                                     :requested-pickup-ty 3
+                                     :requested-drop-slot-index 1))
+    (assert (= (intent-requested-pickup-tx intent) 2) () "pickup-tx valid -> 2")
+    (assert (= (intent-requested-pickup-ty intent) 3) () "pickup-ty valid -> 3")
+    (assert (= (intent-requested-drop-slot-index intent) 1) () "drop-slot valid -> 1")))
 
 ;;; ============================================================
 ;;; SAVE.LISP TESTS

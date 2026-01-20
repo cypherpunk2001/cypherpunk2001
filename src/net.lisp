@@ -1018,6 +1018,13 @@
       value
       default))
 
+(defun %nonneg-int-or (value default)
+  ;; Return VALUE as non-negative integer, otherwise DEFAULT.
+  (let ((int (%int-or value default)))
+    (if (and (integerp int) (>= int 0))
+        int
+        default)))
+
 (defun %sanitize-chat-message (value)
   ;; Sanitize chat message: ensure string and enforce length limit.
   ;; Security: Prevents oversized messages from malicious clients.
@@ -1063,15 +1070,15 @@
           (intent-requested-pickup-target-id intent)
           (getf plist :requested-pickup-target-id nil)
           (intent-requested-pickup-tx intent)
-          (getf plist :requested-pickup-tx nil)
+          (%nonneg-int-or (getf plist :requested-pickup-tx) nil)
           (intent-requested-pickup-ty intent)
-          (getf plist :requested-pickup-ty nil)
+          (%nonneg-int-or (getf plist :requested-pickup-ty) nil)
           (intent-requested-drop-item-id intent)
           (getf plist :requested-drop-item-id nil)
           (intent-requested-drop-count intent)
           (%int-or (getf plist :requested-drop-count) 0)
           (intent-requested-drop-slot-index intent)
-          (getf plist :requested-drop-slot-index nil)
+          (%nonneg-int-or (getf plist :requested-drop-slot-index) nil)
           (intent-requested-swap-slot-a intent)
           (%int-or (getf plist :requested-swap-slot-a) nil)
           (intent-requested-swap-slot-b intent)
