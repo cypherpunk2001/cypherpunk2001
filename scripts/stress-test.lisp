@@ -125,8 +125,9 @@
         ;; Fixed rate mode - spawn at constant rate
         (let ((delay (/ 1.0 *rate*)))  ; seconds between spawns
           (loop
-            (sb-thread:make-thread (lambda () (run-client host port)))
-            (incf total)
+            (when (< total 300)
+              (sb-thread:make-thread (lambda () (run-client host port)))
+              (incf total))
             ;; Log every 10 clients
             (when (zerop (mod total 10))
               (format t "[STRESS] Total: ~d | Active: ~d~%" total (get-active))
@@ -136,19 +137,19 @@
         ;; Exponential growth mode (original behavior)
         (let ((batch 10))
           (loop
-            ;; Spawn batch (staggered if enabled)
-            (dotimes (i batch)
-              (sb-thread:make-thread (lambda () (run-client host port)))
-              (when *stagger*
-                (sleep *stagger-delay*)))
-            (incf total batch)
-
-            ;; Log
-            (format t "[STRESS] +~d spawned | Total: ~d | Active: ~d~%" batch total (get-active))
-            (finish-output)
-
-            ;; Grow batch by 1.2x each round (doubles every ~40 seconds)
-            (setf batch (max batch (truncate (* batch 1.2))))
+            ;; Spawn batch (staggered if enabled), stop at 300
+            (when (< total 300)
+              (let ((to-spawn (min batch (- 300 total))))
+                (dotimes (i to-spawn)
+                  (sb-thread:make-thread (lambda () (run-client host port)))
+                  (when *stagger*
+                    (sleep *stagger-delay*)))
+                (incf total to-spawn)
+                ;; Log
+                (format t "[STRESS] +~d spawned | Total: ~d | Active: ~d~%" to-spawn total (get-active))
+                (finish-output)
+                ;; Grow batch by 1.2x each round (doubles every ~40 seconds)
+                (setf batch (max batch (truncate (* batch 1.2))))))
 
             ;; Wait 10 seconds (minus stagger time already spent)
             (let ((wait (- 10 (if *stagger* (* batch *stagger-delay*) 0))))
