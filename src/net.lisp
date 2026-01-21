@@ -484,16 +484,19 @@
                                                   (warn "Failed to set character-id for ~a: ~a" username e)))
                               set-result)))
                 (if linked
-                    ;; Return success result
-                    (make-auth-result :type :register
-                                      :success t
-                                      :host host
-                                      :port port
-                                      :username username
-                                      :client client
-                                      :player player
-                                      :player-id player-id
-                                      :zone-id zone-id)
+                    ;; Register session atomically in worker thread (prevents race with concurrent logins)
+                    (progn
+                      (session-try-register username client)
+                      ;; Return success result
+                      (make-auth-result :type :register
+                                        :success t
+                                        :host host
+                                        :port port
+                                        :username username
+                                        :client client
+                                        :player player
+                                        :player-id player-id
+                                        :zone-id zone-id))
                     (progn
                       (warn "Registration rollback: unable to link character for ~a" username)
                       (with-retry-exponential
@@ -574,8 +577,7 @@
                              :error-reason :bad-credentials))
           ;; Check session availability (already thread-safe)
           ((not (session-try-register username client))
-           (log-verbose "Login rejected: session-try-register failed for ~a (active-sessions: ~d)"
-                        username (hash-table-count *active-sessions))
+           (log-verbose "Login rejected: session-try-register failed for ~a" username)
            (make-auth-result :type :login
                              :success nil
                              :host host
@@ -764,9 +766,17 @@
 (defun start-auth-worker (request-queue result-queue game)
   "Start auth worker thread. Returns thread object."
   #+sbcl
-  (sb-thread:make-thread
-   (lambda () (auth-worker-loop request-queue result-queue game))
-   :name "auth-worker")
+  ;; Capture special variables in closure to ensure visibility in child thread
+  ;; (works around SBCL special variable visibility edge cases in some contexts)
+  (let ((sessions *active-sessions*)
+        (lock *session-lock*))
+    (sb-thread:make-thread
+     (lambda ()
+       ;; Re-bind for thread-local access
+       (let ((*active-sessions* sessions)
+             (*session-lock* lock))
+         (auth-worker-loop request-queue result-queue game)))
+     :name "auth-worker"))
   #-sbcl
   nil)
 
@@ -813,9 +823,7 @@
              (setf (net-client-authenticated-p client) t)
              (setf (net-client-account-username client) (string-downcase username))
              (setf (net-client-last-heard client) elapsed)
-             ;; Register for persistence (session was already registered in worker for login)
-             (when (eq (auth-result-type result) :register)
-               (session-try-register username client))
+             ;; Register for persistence (session was already registered in worker thread)
              (register-player-session player :zone-id zone-id
                                       :username (string-downcase username))
              (queue-private-state client player)

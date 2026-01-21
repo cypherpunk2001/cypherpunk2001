@@ -5232,12 +5232,14 @@ hello
              ;; Should receive auth-fail with :already-logged-in
              (let* ((deadline (+ (get-internal-real-time)
                                  (floor (* 2 internal-time-units-per-second))))
-                    (got-rejection nil))
+                    (got-rejection nil)
+                    (all-messages nil))
                (loop :while (and (not got-rejection) (< (get-internal-real-time) deadline))
                      :do (multiple-value-bind (message _h _p)
                              (receive-net-message socket2 buffer2)
                            (declare (ignore _h _p))
                            (when message
+                             (push message all-messages)
                              (case (getf message :type)
                                (:auth-fail
                                 (when (eq (getf message :reason) :already-logged-in)
@@ -5246,7 +5248,8 @@ hello
                                 (error "Double login was allowed!")))))
                          (sleep 0.01))
                (unless got-rejection
-                 (error "No :already-logged-in rejection received"))))
+                 (error "No :already-logged-in rejection received. Got messages: ~a"
+                        (nreverse all-messages)))))
         (usocket:socket-close socket1)
         (usocket:socket-close socket2)))
     (sb-thread:join-thread server-thread)))
