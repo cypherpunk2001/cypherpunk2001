@@ -91,12 +91,11 @@ Individual test targets (run by `make tests` in this order):
 make checkparens        # 1st - Syntax error testing (balanced parens)
 make ci                 # 2nd - Compile-time error testing, UDP handshake testing
 make smoke              # 3rd - Full client/server smoke test with window (2s default)
-make test-unit          # Unit tests (pure functions, game logic)
-make test-persistence   # Data integrity tests (serialization, migrations)
-make test-security      # Security tests (auth, input validation)
-make test-trade         # Trade system tests (player-to-player trading)
+make test-unit          # All unit tests (game logic, persistence, security, trade)
 make checkdocs          # Verify docs exist for each src file
 ```
+
+**Note:** All test types (unit, persistence, security, trade) are now consolidated into a single `make test-unit` target for simplicity. The single test file is `tests/unit-test.lisp`.
 
 Test env overrides:
 - `MMORPG_NET_TEST_PORT` - UDP port (default 1337)

@@ -134,6 +134,11 @@
   #-sbcl
   `(progn ,@body))
 
+(defun session-clear-all ()
+  "Clear all active sessions. Called during server shutdown/startup for clean state."
+  (with-session-lock
+    (clrhash *active-sessions*)))
+
 (defun session-try-register (username client)
   "Atomically check if USERNAME is available and register CLIENT.
    Returns T if registered, NIL if already logged in."
@@ -569,7 +574,8 @@
                              :error-reason :bad-credentials))
           ;; Check session availability (already thread-safe)
           ((not (session-try-register username client))
-           (log-verbose "Login failed from ~a:~d - account ~a already logged in" host port username)
+           (log-verbose "Login rejected: session-try-register failed for ~a (active-sessions: ~d)"
+                        username (hash-table-count *active-sessions))
            (make-auth-result :type :login
                              :success nil
                              :host host
@@ -590,6 +596,8 @@
                (character-id
                 ;; Claim session ownership FIRST (required by db-load-player-validated)
                 (unless (claim-session-ownership character-id)
+                  (log-verbose "Login rejected: claim-session-ownership failed for player ~d (Redis ownership conflict)"
+                               character-id)
                   (session-unregister username)
                   (return-from process-login-async
                     (make-auth-result :type :login
@@ -2110,6 +2118,14 @@
       (init-storage :backend backend :host redis-host :port redis-port)
       ;; Load Redis Lua scripts for atomic operations (Phase 5 - Trade System)
       (load-trade-scripts))
+    ;; Clear any stale session state from previous REPL runs
+    ;; (Important when restarting server without restarting the Lisp process)
+    (log-verbose "Clearing stale sessions (active=~d, player=~d)"
+                 (hash-table-count *active-sessions*)
+                 (hash-table-count *player-sessions*))
+    (session-clear-all)
+    (clear-all-player-sessions)
+    (log-verbose "Sessions cleared")
     ;; Initialize auth encryption (generates server keypair)
     ;; The server public key should be shared with clients for encrypted auth
     (when *auth-encryption-enabled*

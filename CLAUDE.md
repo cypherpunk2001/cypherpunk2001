@@ -30,12 +30,11 @@ Individual test targets (run by `make tests` in this order):
 make checkparens        # 1st - Verify balanced parentheses in all .lisp files
 make ci                 # 2nd - Cold compile + UDP handshake test (no GPU needed)
 make smoke              # 3rd - Full client/server smoke test with window (2s default)
-make test-unit          # Unit tests (pure functions, game logic, utilities)
-make test-persistence   # Data integrity tests (serialization, migrations, invariants)
-make test-security      # Security tests (input validation, exploit prevention)
-make test-trade         # Trade system tests (player-to-player trading, validation)
+make test-unit          # All tests (unit, persistence, security, trade) in single file
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 ```
+
+**Test consolidation:** All test types (unit, persistence, security, trade) are now in a single file `tests/unit-test.lisp` and run via `make test-unit` for simplicity.
 
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
 
@@ -107,19 +106,22 @@ We aim for 99% test coverage. Tests prevent regressions and catch bugs early. Ev
 4. Can it fail? → Test error conditions
 5. Does it interact with state? → Test state before/after
 
-**Test categories by file:**
+**Test categories (all in `tests/unit-test.lisp`):**
 
-| Test File | What to Test |
-|-----------|--------------|
-| `tests/unit-test.lisp` | Pure functions, utilities, game logic, AI decisions |
-| `tests/persistence-test.lisp` | Serialization, migrations, database operations |
-| `tests/security-test.lisp` | Input validation, exploit prevention, auth |
-| `tests/trade-test.lisp` | Trade system, offer/accept flow, gold/item validation |
+| Test Category | What to Test |
+|---------------|--------------|
+| Unit Tests | Pure functions, utilities, game logic, AI decisions |
+| Persistence Tests | Serialization, migrations, database operations |
+| Security Tests | Input validation, exploit prevention, auth |
+| Trade Tests | Trade system, offer/accept flow, gold/item validation |
+
+All test categories are consolidated into a single file for simplicity.
 
 **How to implement:**
 1. Write the test BEFORE or ALONGSIDE the implementation
-2. Run `make test-unit` (or appropriate target) to verify
-3. If a function is hard to test, refactor it to be testable (extract pure logic)
+2. Add your test function to the appropriate section in `tests/unit-test.lisp`
+3. Run `make test-unit` to verify
+4. If a function is hard to test, refactor it to be testable (extract pure logic)
 
 **When NOT to write tests (the ONLY exceptions):**
 - Code that directly calls raylib (rendering, textures, fonts)
@@ -497,8 +499,8 @@ Before marking a feature complete that adds persistent state:
 - [ ] Updated `deserialize-player` in save.lisp?
 - [ ] Updated `apply-player-plist` in save.lisp?
 - [ ] Added field to struct in types.lisp?
-- [ ] Wrote migration test in persistence-test.lisp?
-- [ ] Ran `make test-persistence` and all pass?
+- [ ] Wrote migration test in unit-test.lisp (Persistence Tests section)?
+- [ ] Ran `make test-unit` and all pass?
 
 ## Code Style Rules
 
@@ -690,10 +692,10 @@ Key design docs:
 ## Important Reminders
 
 - **GIT: READ-ONLY**: Never run git commands that modify state (commit, stash, reset, checkout, push, add, etc.) without explicit user permission. Read-only commands (status, log, diff, show) are fine. The user manages version control.
-- **ALL TESTS MUST PASS**: Before claiming work complete, run `make tests` which runs ALL test targets in the correct order. If running individually, you MUST follow this order: `make checkparens && make ci && make smoke && make test-unit && make test-persistence && make test-security && make test-trade && make checkdocs`. The first three (checkparens, ci, smoke) MUST run in that exact order - no exceptions.
+- **ALL TESTS MUST PASS**: Before claiming work complete, run `make tests` which runs ALL test targets in the correct order. If running individually, you MUST follow this order: `make checkparens && make ci && make smoke && make test-unit && make checkdocs`. The first three (checkparens, ci, smoke) MUST run in that exact order - no exceptions.
 - **Never commit with unbalanced parens**: Run `make checkparens` before committing
 - **CI must pass**: `make ci` runs cold compile + UDP handshake test
-- **Data integrity tests must pass**: `make test-persistence` ensures no save corruption
+- **All tests must pass**: `make test-unit` runs all tests (unit, persistence, security, trade)
 - **Docs must be complete**: `make checkdocs` verifies every src file has matching documentation
 - **Smoke test must work**: `make smoke` tests actual client/server with graphics
 - **Storage abstraction is mandatory**: Never call Redis/database directly from game logic

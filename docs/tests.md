@@ -1,23 +1,40 @@
 # Tests
 
-Documentation for the MMORPG test suites.
+Documentation for the MMORPG test suite.
 
-## Test Suites Overview
+## Test Suite Overview
 
-| Suite | File | Purpose |
-|-------|------|---------|
-| **Unit** | `tests/unit-test.lisp` | Pure functions, game logic, utilities |
-| **Persistence** | `tests/persistence-test.lisp` | Data integrity (serialization, migrations, invariants, storage) |
-| **Security** | `tests/security-test.lisp` (run via `scripts/test-security.lisp`) | Input validation, exploit prevention |
-| **Trade** | `tests/trade-test.lisp` | Atomic trade execution, ownership checks, backend parity |
+All tests are consolidated into a single file: `tests/unit-test.lisp`
+
+| Suite | Section | Purpose |
+|-------|---------|---------|
+| **Unit** | Unit Tests | Pure functions, game logic, utilities |
+| **Persistence** | Persistence Tests | Data integrity (serialization, migrations, invariants, storage) |
+| **Security** | Security Tests | Input validation, exploit prevention |
+| **Trade** | Trade Tests | Atomic trade execution, ownership checks, backend parity |
+
+## Running Tests
+
+```bash
+make test-unit           # Run all tests (unit, persistence, security, trade)
+make tests               # Run full test suite (checkparens, ci, smoke, test-unit, checkdocs)
+```
+
+The full test order:
+```bash
+make checkparens && make ci && make smoke && make test-unit && make checkdocs
+```
+
+**Critical test order**: The first three tests MUST run in this exact order:
+1. `make checkparens` - Verify balanced parentheses (fastest, catches syntax errors)
+2. `make ci` - Cold compile + UDP handshake (catches compile errors)
+3. `make smoke` - Full client/server smoke test (catches runtime errors early)
 
 ---
 
 # Persistence Tests
 
-Documentation for `tests/persistence-test.lisp`.
-
-Data integrity test suite for the MMORPG project.
+Data integrity test suite covering serialization, migrations, invariants, and storage backends.
 
 ## Purpose
 
@@ -38,17 +55,6 @@ Strategic, focused testing that prevents player data corruption. Tests cover ser
 - ❌ Helper functions (utils that don't touch persistence)
 
 **Rule of thumb:** If a bug loses player progress or corrupts their save → write a test. If it's just annoying or ugly → manual testing is fine.
-
-## Running Tests
-
-```bash
-make test-persistence    # Run all data integrity tests
-```
-
-Should be run as part of the CI pipeline:
-```bash
-make checkparens && make ci && make test-unit && make test-persistence && make test-security && make test-trade && make checkdocs && make smoke
-```
 
 ## Test Coverage (98 tests)
 
@@ -122,9 +128,9 @@ When implementing features that touch player data, add tests if ANY of these app
 
 ## Implementation Details
 
-- **File**: `tests/persistence-test.lisp`
+- **File**: `tests/unit-test.lisp` (Persistence Tests section)
 - **Package**: `mmorpg` (tests run in main package for access to internals)
-- **Test runner**: `scripts/test-persistence.lisp`
+- **Test runner**: `scripts/test-unit.lisp`
 - **Framework**: Custom lightweight test harness (no external dependencies)
 - **Exit codes**: 0 on success, 1 on failure (CI-friendly)
 
@@ -136,16 +142,6 @@ When implementing features that touch player data, add tests if ANY of these app
 - Remove obsolete tests when features removed
 - Document why a test exists (prevents premature deletion)
 
-## Future Expansion
-
-As the codebase grows, consider adding:
-- Schema migration chain tests (v1→v2→v3)
-- Invariant tests for new game systems (crafting, trading, etc.)
-- Corruption scenario tests (partial saves, crashes mid-write)
-- Trade system duplication exploit tests
-
-Remember: Tests should prevent bugs, not create busywork. Only add tests that catch real data corruption risks.
-
 ## Notes
 
 **Bug fix discovered during test development:** The death-triggers-immediate-save test revealed a bug in `combatant-apply-hit` where the tier-1 save condition `(and (= new-hp 0) (> hp 0))` was logically impossible (if new-hp=0, then hp≤0). Fixed by capturing `old-hp` before damage calculation and checking `(> old-hp 0)` instead.
@@ -154,35 +150,21 @@ Remember: Tests should prevent bugs, not create busywork. Only add tests that ca
 
 # Unit Tests
 
-Documentation for `tests/unit-test.lisp` (runner: `scripts/test-unit.lisp`).
-
 Purpose: validate pure functions, game logic, and utilities that do not touch persistence.
 
-```bash
-make test-unit
-```
-
-Current coverage: 74 tests spanning utils, combat math, progression helpers, movement math, AI helpers, data parsing, zone helpers, intent helpers, and serialization helpers.
+Current coverage: 173 tests spanning utils, combat math, progression helpers, movement math, AI helpers, data parsing, zone helpers, intent helpers, and serialization helpers.
 
 ---
 
 # Trade Tests
 
-Documentation for `tests/trade-test.lisp` (runner: `scripts/test-trade.lisp`).
-
 Purpose: validate trade session validation and atomic swap logic across backends.
-
-```bash
-make test-trade
-```
 
 Current coverage: 14 tests covering trade validation rules, Redis Lua script behavior, and memory-backend parity.
 
 ---
 
 # Security Tests
-
-Documentation for `tests/security-test.lisp` (runner: `scripts/test-security.lisp`).
 
 Security test suite that verifies the server properly validates and sanitizes client input.
 
@@ -204,18 +186,7 @@ Tests that verify the server is resilient against malicious or malformed client 
 - DDoS resilience (infrastructure concern)
 - Encryption (optional, not covered by the security suite)
 
-## Running Tests
-
-```bash
-make test-security    # Run all security tests
-```
-
-Should be run as part of the CI pipeline:
-```bash
-make checkparens && make ci && make test-unit && make test-persistence && make test-security && make test-trade && make checkdocs && make smoke
-```
-
-## Test Coverage (23 tests)
+## Test Coverage (24 tests)
 
 ### 1. Authentication Tests
 - **test-unauthenticated-intent-rejected**: Server ignores intents from clients that haven't completed auth flow
@@ -246,7 +217,7 @@ Each test:
 5. Cleans up (closes sockets, joins thread)
 
 Key helpers:
-- `with-test-server` - Spawns server, yields socket, cleans up
+- `with-test-server` - Spawns server, yields socket, cleans up (security tests only)
 - `authenticate-client` - Completes auth flow for a socket
 - `receive-with-timeout` - Non-blocking receive with deadline
 
@@ -269,7 +240,47 @@ Good candidates for new tests:
 
 ## Implementation Details
 
-- **File**: `tests/security-test.lisp` (runner: `scripts/test-security.lisp`)
+- **File**: `tests/unit-test.lisp` (Security Tests section)
 - **Package**: `mmorpg` (tests run in main package)
-- **Ports**: Each test uses a unique port (1337-1343) to avoid conflicts
+- **Test macro**: `define-security-test` - Custom macro for security test boilerplate
+- **Ports**: Tests spin up temporary servers on configurable ports
 - **Exit codes**: 0 on success, 1 on failure (CI-friendly)
+
+---
+
+# File Organization
+
+All tests are now consolidated into a single file for simplicity:
+
+```
+tests/
+└── unit-test.lisp          # All tests (unit, persistence, security, trade)
+
+scripts/
+└── test-unit.lisp          # Test runner script
+```
+
+To add a new test:
+1. Open `tests/unit-test.lisp`
+2. Find the appropriate section (Unit, Persistence, Security, or Trade)
+3. Add your test function following the existing patterns
+4. Add the test name to the `run-*-tests-internal` function in that section
+5. Run `make test-unit` to verify
+
+---
+
+# Test Philosophy
+
+**Write tests for:**
+- ✅ Pure functions (take input, return output, no side effects)
+- ✅ Game logic (combat, XP, movement, AI decisions)
+- ✅ Data integrity (serialization, migrations, invariants)
+- ✅ Security (input validation, exploit prevention)
+- ✅ Edge cases (boundaries, empty inputs, max values)
+
+**Skip tests for:**
+- ❌ Rendering code (requires GPU)
+- ❌ Audio code (requires audio device)
+- ❌ Real-time input (tested via smoke test)
+
+**Rule of thumb:** If a function has logic that could break, write a test. The only exception is code that requires hardware (GPU, audio, input devices).

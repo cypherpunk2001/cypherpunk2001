@@ -531,14 +531,17 @@
 ;;; Session Ownership Methods (Redis)
 
 (defmethod storage-setnx-with-ttl ((storage redis-storage) key value ttl-seconds)
-  "Atomic SET if Not eXists with TTL. Returns T if set, NIL if key exists."
+  "SET if Not eXists with TTL. Returns T if set, NIL if key exists.
+   Uses SETNX + EXPIRE (not atomic but sufficient for session ownership)."
   (handler-case
       (redis:with-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
-        ;; SET key value NX EX ttl - atomic setnx with expiration
-        ;; Returns "OK" if set, NIL if key already exists
-        (let ((result (red:set key value :nx t :ex ttl-seconds)))
-          (not (null result))))
+        ;; SETNX returns T or 1 if set, NIL or 0 if key exists (cl-redis varies)
+        (let ((result (red:setnx key value)))
+          (when (or (eq result t) (eql result 1))
+            ;; Key was set, now add TTL
+            (red:expire key ttl-seconds)
+            t)))
     (error (e)
       (warn "Redis SETNX error for key ~a: ~a" key e)
       nil)))
@@ -1551,6 +1554,11 @@
   #-sbcl
   `(progn ,@body))
 
+(defun clear-all-player-sessions ()
+  "Clear all player sessions. Called during server shutdown/startup for clean state."
+  (with-player-sessions-lock
+    (clrhash *player-sessions*)))
+
 (defparameter *batch-flush-interval* 30.0
   "Seconds between batch flushes for tier-2 writes.
    TRADEOFF: Server crash loses up to 30s of routine state (XP, position, HP).
@@ -2146,10 +2154,14 @@
 (defun db-shutdown-flush ()
   "Gracefully flush all data during server shutdown.
    1. Flush all dirty players
-   2. Trigger Redis BGSAVE
-   3. Close storage connection"
+   2. Clear in-memory session state (for REPL restarts)
+   3. Trigger Redis BGSAVE
+   4. Close storage connection"
   (log-verbose "Starting graceful shutdown flush")
   (flush-dirty-players :force t)
+  ;; Clear in-memory session state to prevent stale sessions on REPL restart
+  (clear-all-player-sessions)
+  (session-clear-all)  ; Clear *active-sessions* (username -> client)
   (when *storage*
     (storage-flush *storage*))
   (shutdown-storage)
