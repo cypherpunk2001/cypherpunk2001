@@ -2,17 +2,31 @@
 (in-package #:mmorpg)
 
 (defun spawn-player-at-world (world id-source)
-  ;; Spawn a player at the world spawn center on a valid open tile.
-  ;; Sets player's zone-id to the world's current zone.
-  (let ((zone (world-zone world)))
-    (multiple-value-bind (center-x center-y)
-        (world-spawn-center world)
-      (multiple-value-bind (spawn-x spawn-y)
-          (world-open-position world center-x center-y)
-        (make-player spawn-x spawn-y
-                     :id (when id-source
-                           (allocate-entity-id id-source))
-                     :zone-id (and zone (zone-id zone)))))))
+  ;; Spawn a player at a valid open tile in the starting zone.
+  ;; Uses zone-state collision for correct per-zone spawn coordinates (Phase 1).
+  (let* ((zone-path (zone-path-for-id world *starting-zone-id*))
+         (zone-state (when zone-path
+                       (get-or-create-zone-state *starting-zone-id* zone-path))))
+    (if zone-state
+        ;; Use zone-state for per-zone spawn position
+        (multiple-value-bind (spawn-x spawn-y)
+            (zone-state-spawn-position zone-state)
+          (make-player spawn-x spawn-y
+                       :id (when id-source
+                             (allocate-entity-id id-source))
+                       :zone-id *starting-zone-id*))
+        ;; Fallback to global world collision if zone-state unavailable
+        (progn
+          (warn "spawn-player-at-world: zone-state unavailable for ~a, using global collision"
+                *starting-zone-id*)
+          (multiple-value-bind (center-x center-y)
+              (world-spawn-center world)
+            (multiple-value-bind (spawn-x spawn-y)
+                (world-open-position world center-x center-y)
+              (make-player spawn-x spawn-y
+                           :id (when id-source
+                                 (allocate-entity-id id-source))
+                           :zone-id *starting-zone-id*)))))))
 
 (defun make-sim-state (&key (server-mode nil))
   ;; Build authoritative simulation state without client-only subsystems.

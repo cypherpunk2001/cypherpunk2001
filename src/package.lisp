@@ -27,6 +27,9 @@
            #:admin-broadcast
            #:admin-save-all
            #:admin-player-count
-           #:admin-server-stats))
+           #:admin-server-stats
+           ;; Zone helpers (Phase 1)
+           #:zone-path-for-id
+           #:zone-path-for-id-exists-p))
 
 (in-package #:mmorpg)

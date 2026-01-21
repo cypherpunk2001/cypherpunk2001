@@ -89,6 +89,7 @@
     (:zone-default-chunk-size . *zone-default-chunk-size*)
     (:world-graph-path . *world-graph-path*)
     (:zone-loading-seconds . *zone-loading-seconds*)
+    (:starting-zone-id . *starting-zone-id*)
     (:editor-tileset-paths . *editor-tileset-paths*)
     (:editor-tileset-root . *editor-tileset-root*)
     (:editor-tileset-preview-padding . *editor-tileset-preview-padding*)

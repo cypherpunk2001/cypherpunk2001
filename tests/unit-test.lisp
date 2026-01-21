@@ -234,6 +234,11 @@
                 test-find-open-tile
                 test-player-is-stuck-p
                 test-world-exit-edge
+                ;; Zone-state spawn helpers (Phase 1)
+                test-wall-blocked-p-zero-origin
+                test-blocked-at-p-with-map
+                test-find-open-position-with-map
+                test-zone-state-spawn-position
                 ;; Final Net Tests
                 test-session-try-register
                 test-session-unregister
@@ -2535,6 +2540,122 @@ hello
     (set-intent-move intent -1.0 0.0)
     (let ((edge (world-exit-edge world player)))
       (assert (null edge) () "exit-edge: center -> nil"))))
+
+(defun test-wall-blocked-p-zero-origin ()
+  "Test zero-origin wall-map collision checking."
+  (let ((wall-map (make-array '(10 10) :initial-element 0)))
+    ;; Set some blocked tiles
+    (setf (aref wall-map 3 5) 1)  ; (5, 3) blocked
+    (setf (aref wall-map 0 0) 1)  ; (0, 0) blocked
+    ;; Test blocked tiles
+    (assert (wall-blocked-p-zero-origin wall-map 5 3) ()
+            "wall-blocked-zero: blocked tile returns t")
+    (assert (wall-blocked-p-zero-origin wall-map 0 0) ()
+            "wall-blocked-zero: origin blocked returns t")
+    ;; Test open tiles
+    (assert (not (wall-blocked-p-zero-origin wall-map 1 1)) ()
+            "wall-blocked-zero: open tile returns nil")
+    (assert (not (wall-blocked-p-zero-origin wall-map 9 9)) ()
+            "wall-blocked-zero: corner open returns nil")
+    ;; Test out of bounds (should return t = blocked)
+    (assert (wall-blocked-p-zero-origin wall-map -1 0) ()
+            "wall-blocked-zero: negative x returns t")
+    (assert (wall-blocked-p-zero-origin wall-map 0 -1) ()
+            "wall-blocked-zero: negative y returns t")
+    (assert (wall-blocked-p-zero-origin wall-map 10 5) ()
+            "wall-blocked-zero: x >= width returns t")
+    (assert (wall-blocked-p-zero-origin wall-map 5 10) ()
+            "wall-blocked-zero: y >= height returns t")
+    ;; Test nil wall-map
+    (assert (not (wall-blocked-p-zero-origin nil 5 5)) ()
+            "wall-blocked-zero: nil map returns nil")))
+
+(defun test-blocked-at-p-with-map ()
+  "Test collision checking with zero-origin wall-map."
+  (let ((wall-map (make-array '(10 10) :initial-element 0))
+        (tile-size 32.0)
+        (half-w 12.0)
+        (half-h 12.0))
+    ;; Block tile (3, 3)
+    (setf (aref wall-map 3 3) 1)
+    ;; Test blocked at tile center
+    (let ((cx (+ (* 3 tile-size) (/ tile-size 2.0)))
+          (cy (+ (* 3 tile-size) (/ tile-size 2.0))))
+      (assert (blocked-at-p-with-map wall-map cx cy half-w half-h tile-size) ()
+              "blocked-at-map: center of blocked tile -> t"))
+    ;; Test open at different tile
+    (let ((cx (+ (* 5 tile-size) (/ tile-size 2.0)))
+          (cy (+ (* 5 tile-size) (/ tile-size 2.0))))
+      (assert (not (blocked-at-p-with-map wall-map cx cy half-w half-h tile-size)) ()
+              "blocked-at-map: open tile -> nil"))
+    ;; Test nil wall-map (should return nil - not blocked)
+    (assert (not (blocked-at-p-with-map nil 100.0 100.0 half-w half-h tile-size)) ()
+            "blocked-at-map: nil map -> nil")))
+
+(defun test-find-open-position-with-map ()
+  "Test finding open spawn position with wall-map."
+  (let ((wall-map (make-array '(10 10) :initial-element 0))
+        (tile-size 32.0)
+        (half-w 12.0)
+        (half-h 12.0))
+    ;; Test open position returns same
+    (let ((x (+ (* 5 tile-size) (/ tile-size 2.0)))
+          (y (+ (* 5 tile-size) (/ tile-size 2.0))))
+      (multiple-value-bind (rx ry)
+          (find-open-position-with-map wall-map x y half-w half-h tile-size)
+        (assert (= rx x) () "find-open-map: open -> same x")
+        (assert (= ry y) () "find-open-map: open -> same y")))
+    ;; Block center tile and verify we find adjacent
+    (setf (aref wall-map 5 5) 1)
+    (let ((x (+ (* 5 tile-size) (/ tile-size 2.0)))
+          (y (+ (* 5 tile-size) (/ tile-size 2.0))))
+      (multiple-value-bind (rx ry)
+          (find-open-position-with-map wall-map x y half-w half-h tile-size)
+        (assert (not (and (= (floor rx tile-size) 5)
+                          (= (floor ry tile-size) 5))) ()
+                "find-open-map: blocked -> finds different tile")))
+    ;; Test max radius extends to map size
+    (let ((small-map (make-array '(5 5) :initial-element 1)))
+      ;; All blocked except corner
+      (setf (aref small-map 4 4) 0)
+      (let ((cx (+ (* 0 tile-size) (/ tile-size 2.0)))
+            (cy (+ (* 0 tile-size) (/ tile-size 2.0))))
+        (multiple-value-bind (rx ry)
+            (find-open-position-with-map small-map cx cy half-w half-h tile-size)
+          ;; Should find the one open tile at (4, 4)
+          (assert (= (floor rx tile-size) 4) ()
+                  "find-open-map: finds distant open tile x")
+          (assert (= (floor ry tile-size) 4) ()
+                  "find-open-map: finds distant open tile y"))))))
+
+(defun test-zone-state-spawn-position ()
+  "Test zone-state spawn position calculation."
+  ;; Create a minimal zone-state with wall-map
+  (let* ((wall-map (make-array '(10 10) :initial-element 0))
+         (zone-state (make-zone-state :zone-id :test-zone
+                                       :zone nil
+                                       :wall-map wall-map
+                                       :npcs (make-array 0)))
+         (*tile-size* 16)
+         (*tile-scale* 2.0)
+         (*player-collision-scale* 0.85)
+         (*wall-origin-x* 0)
+         (*wall-origin-y* 0))
+    ;; Open map - should spawn near center
+    (multiple-value-bind (x y)
+        (zone-state-spawn-position zone-state)
+      (assert (numberp x) () "zone-spawn: returns numeric x")
+      (assert (numberp y) () "zone-spawn: returns numeric y")
+      (assert (> x 0) () "zone-spawn: x > 0")
+      (assert (> y 0) () "zone-spawn: y > 0"))
+    ;; Block center - should still find open position
+    (setf (aref wall-map 5 5) 1)
+    (multiple-value-bind (x y)
+        (zone-state-spawn-position zone-state)
+      (let ((tile-size (* (float *tile-size* 1.0) *tile-scale*)))
+        (assert (not (and (= (floor x tile-size) 5)
+                          (= (floor y tile-size) 5))) ()
+                "zone-spawn: blocked center -> different tile")))))
 
 ;;; ============================================================
 ;;; FINAL NET TESTS

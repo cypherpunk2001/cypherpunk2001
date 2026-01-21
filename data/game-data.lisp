@@ -6,6 +6,7 @@
  (:zone-default-chunk-size 8)
  (:world-graph-path "data/world-graph.lisp")
  (:zone-loading-seconds 0.35)
+ (:starting-zone-id :zone-1)
  (:minimap-width 220)
  (:minimap-height 220)
  (:minimap-padding 12)

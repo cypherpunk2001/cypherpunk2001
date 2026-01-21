@@ -108,6 +108,7 @@
 
 (defun wall-blocked-p (wall-map tx ty)
   ;; Treat walls and out-of-bounds tiles as blocked for collision.
+  ;; Uses global *wall-origin-x/y* for coordinate translation.
   (if (not wall-map)
       nil
       (let* ((local-x (- tx *wall-origin-x*))
@@ -120,6 +121,20 @@
                 (>= local-y height))
             t
             (not (zerop (aref wall-map local-y local-x)))))))
+
+(defun wall-blocked-p-zero-origin (wall-map tx ty)
+  "Test if tile (TX, TY) is blocked in WALL-MAP assuming zero origin.
+   Used for zone-state wall-maps which are stored without offset."
+  (if (not wall-map)
+      nil
+      (let* ((width (array-dimension wall-map 1))
+             (height (array-dimension wall-map 0)))
+        (if (or (< tx 0)
+                (>= tx width)
+                (< ty 0)
+                (>= ty height))
+            t
+            (not (zerop (aref wall-map ty tx)))))))
 
 (defun world-blocked-tile-p (world tx ty)
   ;; Return true when a tile coordinate blocks movement.
@@ -369,6 +384,48 @@
                            (world-collision-half-width world)
                            (world-collision-half-height world)))
 
+;;; Zone-state spawn helpers (Phase 1 - per-zone collision)
+
+(defun find-open-position-with-map (wall-map x y half-w half-h tile-size)
+  "Find nearest open position using WALL-MAP (zero-origin).
+   Mirrors find-open-tile spiral search pattern."
+  (if (not (blocked-at-p-with-map wall-map x y half-w half-h tile-size))
+      (values x y)
+      ;; Spiral search for open tile - use map dimensions as max radius
+      (let ((max-radius (if wall-map
+                            (max (array-dimension wall-map 0)
+                                 (array-dimension wall-map 1))
+                            20)))
+        (loop :for radius :from 1 :to max-radius
+              :do (loop :for dy :from (- radius) :to radius
+                        :do (loop :for dx :from (- radius) :to radius
+                                  :for tx = (+ (floor x tile-size) dx)
+                                  :for ty = (+ (floor y tile-size) dy)
+                                  :for cx = (+ (* tx tile-size) (/ tile-size 2.0))
+                                  :for cy = (+ (* ty tile-size) (/ tile-size 2.0))
+                                  :when (not (blocked-at-p-with-map wall-map cx cy half-w half-h tile-size))
+                                  :do (return-from find-open-position-with-map (values cx cy))))
+              :finally (return (values x y))))))  ; Fallback to original position
+
+(defun zone-state-spawn-position (zone-state)
+  "Return valid spawn (x, y) using ZONE-STATE's wall-map.
+   Used for spawning players in a specific zone without relying on global world collision."
+  (let* ((wall-map (zone-state-wall-map zone-state))
+         (tile-dest-size (* (float *tile-size* 1.0) *tile-scale*))
+         ;; Match make-world formula for player collision
+         (collision-half (* (/ tile-dest-size 2.0) *player-collision-scale*))
+         (width (if wall-map (array-dimension wall-map 1) 64))
+         (height (if wall-map (array-dimension wall-map 0) 64)))
+    ;; Calculate zone bounds (same formula as zone-bounds-from-dimensions)
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (zone-bounds-from-dimensions tile-dest-size width height collision-half collision-half)
+      ;; Start from center of zone
+      (let ((center-x (/ (+ min-x max-x) 2.0))
+            (center-y (/ (+ min-y max-y) 2.0)))
+        ;; Find open position from center
+        (find-open-position-with-map wall-map center-x center-y
+                                     collision-half collision-half tile-dest-size)))))
+
 (defun ensure-npcs-open-spawn (npcs world)
   ;; Move NPCs to open tiles and reset their home positions.
   (loop :for npc :across npcs
@@ -399,6 +456,23 @@
     (loop :for ty :from ty1 :to ty2
           :thereis (loop :for tx :from tx1 :to tx2
                          :thereis (world-blocked-tile-p world tx ty)))))
+
+(defun blocked-at-p-with-map (wall-map x y half-w half-h tile-size)
+  "Test collider bounds against blocked tiles using WALL-MAP (zero-origin).
+   Factored from blocked-at-p to support per-zone collision checking."
+  (let* ((left (- x half-w))
+         (right (+ x half-w))
+         (top (- y half-h))
+         (bottom (+ y half-h))
+         (right-edge (- right *collision-edge-epsilon*))
+         (bottom-edge (- bottom *collision-edge-epsilon*))
+         (tx1 (floor left tile-size))
+         (tx2 (floor right-edge tile-size))
+         (ty1 (floor top tile-size))
+         (ty2 (floor bottom-edge tile-size)))
+    (loop :for ty :from ty1 :to ty2
+          :thereis (loop :for tx :from tx1 :to tx2
+                         :thereis (wall-blocked-p-zero-origin wall-map tx ty)))))
 
 (defun attempt-move (world x y dx dy step half-w half-h tile-size)
   ;; Resolve movement per axis and cancel movement when blocked.
