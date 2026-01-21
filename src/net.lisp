@@ -107,6 +107,8 @@
   ;; Delta compression (see docs/net.md Prong 2)
   last-acked-seq        ; Sequence number client confirmed receiving
   needs-full-resync     ; T after zone change or reconnect
+  ;; Zone tracking (Phase 5) - detect zone changes and trigger resync
+  zone-id               ; Last known zone-id for this client (nil until auth)
   ;; Private state (inventory/equipment/stats) owner-only updates
   private-state
   private-retries)
@@ -823,6 +825,9 @@
              (setf (net-client-authenticated-p client) t)
              (setf (net-client-account-username client) (string-downcase username))
              (setf (net-client-last-heard client) elapsed)
+             ;; Phase 5: Initialize zone tracking - first snapshot is always full
+             (setf (net-client-zone-id client) zone-id)
+             (setf (net-client-needs-full-resync client) t)
              ;; Register for persistence (session was already registered in worker thread)
              (register-player-session player :zone-id zone-id
                                       :username (string-downcase username))
@@ -1228,6 +1233,20 @@
    ANTI-STARVATION GUARD: If a client's zone-id has no valid zone-path,
    we fall back to *starting-zone-id* instead of skipping. This ensures
    clients always receive snapshots even with corrupted zone data."
+  ;; PHASE 5: Detect zone changes and trigger full resync
+  ;; This runs BEFORE grouping so resync flag is set before partition
+  (dolist (client clients)
+    (let ((player (net-client-player client)))
+      (when player
+        (let ((player-zone (player-zone-id player))
+              (client-zone (net-client-zone-id client)))
+          ;; If zone changed, trigger full resync and update cached zone
+          (when (and player-zone (not (eq player-zone client-zone)))
+            (log-verbose "Zone change detected: player ~d zone ~a -> ~a"
+                         (player-id player) client-zone player-zone)
+            (setf (net-client-needs-full-resync client) t)
+            (setf (net-client-zone-id client) player-zone))))))
+  ;; Now proceed with zone-grouped broadcast
   (let ((zone-groups (group-clients-by-zone clients))
         (any-sent nil)
         (world (game-world game)))
@@ -2079,6 +2098,10 @@
       ;; Clear authentication first to prevent further state changes
       (setf (net-client-authenticated-p client) nil)
       (setf (net-client-account-username client) nil)
+      ;; Phase 5: Reset zone tracking to prevent stale state on reconnect
+      (setf (net-client-zone-id client) nil)
+      (setf (net-client-player client) nil)
+      (setf (net-client-needs-full-resync client) nil)
       (when player
         ;; Save and unregister session BEFORE removing from active sessions
         ;; This ensures all state changes are persisted
@@ -2103,6 +2126,10 @@
               ;; Clear auth first to prevent further state changes
               (setf (net-client-authenticated-p client) nil)
               (setf (net-client-account-username client) nil)
+              ;; Phase 5: Reset zone tracking to prevent stale state on reconnect
+              (setf (net-client-zone-id client) nil)
+              (setf (net-client-player client) nil)
+              (setf (net-client-needs-full-resync client) nil)
               (when player
                 ;; Save BEFORE removing from active sessions
                 (db-logout-player player)
