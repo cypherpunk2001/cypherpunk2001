@@ -869,9 +869,11 @@
           ((and (null local-player) local-id (plusp local-id) (> (length players) 0))
            (log-verbose "Client player ID ~d not found in snapshot (~d players). Keeping current."
                         local-id (length players)))
-          ;; No valid local ID set yet and players exist - use first player on initial connection
+          ;; No valid local ID set yet - keep current game-player
+          ;; The auth-ok message sets game-net-player-id, so this case
+          ;; should only happen before authentication completes
           ((and (or (null local-id) (zerop local-id)) (> (length players) 0))
-           (setf (game-player game) (aref players 0)))))
+           (log-verbose "No local player ID set, keeping current game-player"))))
       (when players-changed
         (setf (game-entities game)
               (make-entities (game-players game) (game-npcs game)))))))
