@@ -2659,6 +2659,9 @@ hello
                 #'test-compact-size-reduction
                 #'test-compact-enum-encoding
                 #'test-compact-quantization
+                ;; Zone-Filtered Delta Serialization Tests
+                #'test-delta-for-zone-filters-players
+                #'test-delta-for-zone-nil-player-zone
                 ;; Schema Validation Tests (Phase 1 - Database Hardening)
                 #'test-validation-valid-data-passes
                 #'test-validation-missing-required-fields
@@ -3692,6 +3695,71 @@ hello
       (assert (< (abs (- val restored)) 0.01) nil
               (format nil "Timer ~a not preserved within 0.01 precision (got ~a)"
                       val restored))))
+  t)
+
+(defun test-delta-for-zone-filters-players ()
+  "Test that serialize-game-state-delta-for-zone filters players by zone-id."
+  ;; Use %make-game to create minimal game without loading assets
+  (let* ((players (make-array 4 :initial-element nil))
+         (game (%make-game :players players))
+         ;; Create 4 players: 2 in zone-1, 2 in zone-2
+         (p1 (make-player 100.0 100.0 :id 1))
+         (p2 (make-player 200.0 200.0 :id 2))
+         (p3 (make-player 300.0 300.0 :id 3))
+         (p4 (make-player 400.0 400.0 :id 4)))
+    ;; Set zones
+    (setf (player-zone-id p1) :zone-1
+          (player-zone-id p2) :zone-1
+          (player-zone-id p3) :zone-2
+          (player-zone-id p4) :zone-2)
+    ;; Mark all dirty
+    (setf (player-snapshot-dirty p1) t
+          (player-snapshot-dirty p2) t
+          (player-snapshot-dirty p3) t
+          (player-snapshot-dirty p4) t)
+    ;; Store in array
+    (setf (aref players 0) p1
+          (aref players 1) p2
+          (aref players 2) p3
+          (aref players 3) p4)
+    ;; Serialize delta for zone-1 only
+    (let ((delta (serialize-game-state-delta-for-zone game :zone-1 nil 1)))
+      ;; Should only have 2 players (zone-1)
+      (assert-equal 2 (length (getf delta :changed-players))
+                    "Delta should only have zone-1 players")
+      ;; Zone-id should be zone-1
+      (assert-equal :zone-1 (getf delta :zone-id)
+                    "Delta zone-id should be zone-1")
+      ;; Format should be delta-v3
+      (assert-equal :delta-v3 (getf delta :format)
+                    "Delta format should be delta-v3"))
+    ;; Serialize delta for zone-2
+    (let ((delta (serialize-game-state-delta-for-zone game :zone-2 nil 2)))
+      (assert-equal 2 (length (getf delta :changed-players))
+                    "Delta should only have zone-2 players")
+      (assert-equal :zone-2 (getf delta :zone-id)
+                    "Delta zone-id should be zone-2")))
+  t)
+
+(defun test-delta-for-zone-nil-player-zone ()
+  "Test that nil player-zone-id is treated as *starting-zone-id*."
+  ;; Use %make-game to create minimal game without loading assets
+  (let* ((players (make-array 2 :initial-element nil))
+         (game (%make-game :players players))
+         (p1 (make-player 100.0 100.0 :id 1))
+         (p2 (make-player 200.0 200.0 :id 2)))
+    ;; p1 has nil zone-id (should be treated as *starting-zone-id*)
+    (setf (player-zone-id p1) nil
+          (player-zone-id p2) :zone-2)
+    (setf (player-snapshot-dirty p1) t
+          (player-snapshot-dirty p2) t)
+    (setf (aref players 0) p1
+          (aref players 1) p2)
+    ;; With *starting-zone-id* = :zone-1, p1 should appear in zone-1 delta
+    (let ((*starting-zone-id* :zone-1))
+      (let ((delta (serialize-game-state-delta-for-zone game :zone-1 nil 1)))
+        (assert-equal 1 (length (getf delta :changed-players))
+                      "Nil zone player should be in starting zone delta"))))
   t)
 
 ;;;; ========================================================================

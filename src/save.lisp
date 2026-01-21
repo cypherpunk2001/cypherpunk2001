@@ -1125,10 +1125,11 @@
          (player-vectors nil)
          (npc-vectors nil)
          (object-list nil))
-    ;; Serialize only players in this zone
+    ;; Serialize only players in this zone (treat nil player-zone-id as *starting-zone-id*)
     (when players
       (loop :for player :across players
-            :when (and player (eq (player-zone-id player) zone-id))
+            :for player-zone = (or (player-zone-id player) *starting-zone-id*)
+            :when (and player (eq player-zone zone-id))
             :do (push (serialize-player-compact player) player-vectors)))
     ;; Serialize NPCs for this zone
     (when npcs
@@ -1216,6 +1217,43 @@
           :seq seq
           :baseline-seq baseline-seq
           :zone-id (and zone (zone-id zone))
+          :changed-players (coerce (nreverse changed-players) 'vector)
+          :changed-npcs (coerce (nreverse changed-npcs) 'vector)
+          :objects (nreverse object-list))))
+
+(defun serialize-game-state-delta-for-zone (game zone-id zone-state seq)
+  "Serialize delta snapshot filtered to ZONE-ID.
+   Only includes dirty players in that zone and NPCs from zone-state.
+   SEQ is current snapshot sequence number."
+  (let* ((players (game-players game))
+         (npcs (if zone-state (zone-state-npcs zone-state) nil))
+         (zone (if zone-state (zone-state-zone zone-state) nil))
+         (objects (and zone (zone-objects zone)))
+         (changed-players nil)
+         (changed-npcs nil)
+         (object-list nil))
+    ;; Filter dirty players by zone (treat nil player-zone-id as *starting-zone-id*)
+    (when players
+      (loop :for player :across players
+            :for player-zone = (or (player-zone-id player) *starting-zone-id*)
+            :when (and player
+                       (player-snapshot-dirty player)
+                       (eq player-zone zone-id))
+            :do (push (serialize-player-compact player) changed-players)))
+    ;; Collect dirty NPCs from zone-state only
+    (when npcs
+      (loop :for npc :across npcs
+            :when (and npc (npc-snapshot-dirty npc))
+            :do (push (serialize-npc-compact npc) changed-npcs)))
+    ;; Zone objects
+    (when objects
+      (dolist (object objects)
+        (push (serialize-object object) object-list)))
+    ;; Build delta with EXPLICIT zone-id (matches existing delta-v3 format)
+    (list :format :delta-v3
+          :seq seq
+          :baseline-seq nil  ; Keep shape stable with existing delta-v3
+          :zone-id zone-id
           :changed-players (coerce (nreverse changed-players) 'vector)
           :changed-npcs (coerce (nreverse changed-npcs) 'vector)
           :objects (nreverse object-list))))

@@ -108,3 +108,13 @@
   ;; Return the zone file path for ZONE-ID.
   (when (and graph zone-id)
     (gethash zone-id (world-graph-zone-paths graph))))
+
+(defun zone-path-for-id (world zone-id)
+  "Return file path for ZONE-ID from WORLD's graph, or nil."
+  (let ((graph (world-world-graph world)))
+    (when graph
+      (world-graph-zone-path graph zone-id))))
+
+(defun zone-path-for-id-exists-p (world zone-id)
+  "Return T if ZONE-ID has a valid path in WORLD's graph."
+  (not (null (zone-path-for-id world zone-id))))

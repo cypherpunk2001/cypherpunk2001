@@ -22,6 +22,8 @@
 (defparameter *known-zone-ids* nil
   "Set of known zone IDs from world-graph. Used by validation to quarantine unknown zones.
    Populated by load-world-graph, nil means zone validation is skipped.")
+(defparameter *starting-zone-id* :zone-1
+  "Zone where new players spawn. Must exist in world-graph.")
 (defparameter *save-filepath*
   (merge-pathnames "data/savegame.lisp"
                    (asdf:system-source-directory :mmorpg))

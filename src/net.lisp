@@ -1251,11 +1251,10 @@
                (setf (net-client-needs-full-resync c) nil))
              (setf any-sent t)))
 
-         ;; Send delta snapshot to synced clients in this zone
-         ;; NOTE: Delta compression currently uses full game state - future optimization
-         ;; could filter deltas by zone as well
+         ;; Send zone-filtered delta snapshot to synced clients
          (when delta-clients
-           (let ((delta-state (serialize-game-state-delta game current-seq nil)))
+           (let ((delta-state (serialize-game-state-delta-for-zone
+                               game zone-id zone-state current-seq)))
              (log-verbose "Zone ~a: delta ~d clients" zone-id (length delta-clients))
              (send-snapshots-parallel socket delta-clients delta-state event-plists 1)
              (setf any-sent t)))))
