@@ -981,7 +981,10 @@
                        current-zone-id
                        (zone-id zone)
                        edge)
-          (setf *zone-path* target-path)
+          ;; Only set *zone-path* for client/local mode, not server
+          ;; Server doesn't need global zone-path tracking
+          (when (not (eq (game-net-role game) :server))
+            (setf *zone-path* target-path))
           (apply-zone-to-world world zone)
           (setf (world-zone-label world) (zone-label zone))
           (multiple-value-bind (raw-x raw-y)
