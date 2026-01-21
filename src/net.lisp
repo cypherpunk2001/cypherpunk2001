@@ -709,16 +709,25 @@
                                         :client client
                                         :error-reason :internal-error)))
                   (log-verbose "Created new character ~d for account ~a" (player-id player) username))))
-             ;; Return success if we have a player
-             (make-auth-result :type :login
-                               :success t
-                               :host host
-                               :port port
-                               :username username
-                               :client client
-                               :player player
-                               :player-id (player-id player)
-                               :zone-id zone-id))))
+             ;; Phase 2.5: Clamp nil/unknown zone-id to starting zone
+             ;; Use player's zone-id (not global world zone) and validate it exists
+             (let ((player-zone (player-zone-id player)))
+               (when (null player-zone)
+                 (warn "Player ~d has nil zone-id, clamping to ~a"
+                       (player-id player) *starting-zone-id*)
+                 (setf (player-zone-id player) *starting-zone-id*)
+                 (setf player-zone *starting-zone-id*)
+                 (mark-player-dirty (player-id player)))  ; Persist the fix
+               ;; Return success with player's zone-id (now guaranteed non-nil)
+               (make-auth-result :type :login
+                                 :success t
+                                 :host host
+                                 :port port
+                                 :username username
+                                 :client client
+                                 :player player
+                                 :player-id (player-id player)
+                                 :zone-id player-zone)))))
       (error (e)
         (warn "Login error for ~a: ~a" username e)
         ;; Clean up session registration on error
