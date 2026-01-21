@@ -2662,6 +2662,9 @@ hello
                 ;; Zone-Filtered Delta Serialization Tests
                 #'test-delta-for-zone-filters-players
                 #'test-delta-for-zone-nil-player-zone
+                #'test-delta-for-zone-with-npcs
+                #'test-delta-for-zone-nil-zone-state
+                #'test-group-clients-clamps-nil-zone
                 ;; Schema Validation Tests (Phase 1 - Database Hardening)
                 #'test-validation-valid-data-passes
                 #'test-validation-missing-required-fields
@@ -3760,6 +3763,83 @@ hello
       (let ((delta (serialize-game-state-delta-for-zone game :zone-1 nil 1)))
         (assert-equal 1 (length (getf delta :changed-players))
                       "Nil zone player should be in starting zone delta"))))
+  t)
+
+(defun test-delta-for-zone-with-npcs ()
+  "Test that serialize-game-state-delta-for-zone includes dirty NPCs from zone-state."
+  (let* ((players (make-array 1 :initial-element nil))
+         (game (%make-game :players players))
+         (p1 (make-player 100.0 100.0 :id 1))
+         ;; Create NPCs with dirty flags (make-npc takes :id and :archetype, not :name)
+         (npc1 (make-npc 50.0 50.0 :id 101))
+         (npc2 (make-npc 60.0 60.0 :id 102))
+         (npcs (make-array 2 :initial-contents (list npc1 npc2)))
+         ;; Create a zone-state with NPCs
+         (zone-state (make-zone-state :zone-id :zone-1
+                                       :zone nil
+                                       :npcs npcs
+                                       :wall-map nil
+                                       :objects nil)))
+    ;; Setup player in zone-1
+    (setf (player-zone-id p1) :zone-1
+          (player-snapshot-dirty p1) t)
+    (setf (aref players 0) p1)
+    ;; Mark only npc1 as dirty
+    (setf (npc-snapshot-dirty npc1) t
+          (npc-snapshot-dirty npc2) nil)
+    ;; Serialize delta with zone-state
+    (let ((delta (serialize-game-state-delta-for-zone game :zone-1 zone-state 1)))
+      ;; Should have 1 player and 1 dirty NPC
+      (assert-equal 1 (length (getf delta :changed-players))
+                    "Delta should have 1 player")
+      (assert-equal 1 (length (getf delta :changed-npcs))
+                    "Delta should have 1 dirty NPC")))
+  t)
+
+(defun test-delta-for-zone-nil-zone-state ()
+  "Test that nil zone-state returns empty NPCs/objects (no crash)."
+  (let* ((players (make-array 1 :initial-element nil))
+         (game (%make-game :players players))
+         (p1 (make-player 100.0 100.0 :id 1)))
+    (setf (player-zone-id p1) :zone-1
+          (player-snapshot-dirty p1) t)
+    (setf (aref players 0) p1)
+    ;; Serialize delta with nil zone-state
+    (let ((delta (serialize-game-state-delta-for-zone game :zone-1 nil 1)))
+      ;; Should have 1 player, 0 NPCs, 0 objects (empty vectors/lists)
+      (assert-equal 1 (length (getf delta :changed-players))
+                    "Delta should have 1 player")
+      (assert-equal 0 (length (getf delta :changed-npcs))
+                    "Delta with nil zone-state should have 0 NPCs")
+      (assert-nil (getf delta :objects)
+                  "Delta with nil zone-state should have nil/empty objects")))
+  t)
+
+(defun test-group-clients-clamps-nil-zone ()
+  "Test that group-clients-by-zone clamps nil zone-id to *starting-zone-id*."
+  ;; Create mock clients with players
+  ;; make-net-client takes (host port player) positional args
+  (let* ((p1 (make-player 100.0 100.0 :id 1))
+         (p2 (make-player 200.0 200.0 :id 2))
+         (c1 (make-net-client "127.0.0.1" 5001 p1))
+         (c2 (make-net-client "127.0.0.1" 5002 p2)))
+    ;; p1 has nil zone-id, p2 has :zone-2
+    (setf (player-zone-id p1) nil
+          (player-zone-id p2) :zone-2)
+    ;; Mark clients as authenticated (required for grouping)
+    (setf (net-client-authenticated-p c1) t
+          (net-client-authenticated-p c2) t)
+    (let ((*starting-zone-id* :zone-1))
+      (let ((groups (group-clients-by-zone (list c1 c2))))
+        ;; c1 should be grouped under :zone-1 (clamped from nil)
+        (assert-equal 1 (length (gethash :zone-1 groups))
+                      "Client with nil zone should be grouped under starting-zone-id")
+        ;; c2 should be grouped under :zone-2
+        (assert-equal 1 (length (gethash :zone-2 groups))
+                      "Client with zone-2 should be grouped under zone-2")
+        ;; No nil key should exist
+        (assert-nil (gethash nil groups)
+                    "No nil key should exist in zone groups"))))
   t)
 
 ;;;; ========================================================================

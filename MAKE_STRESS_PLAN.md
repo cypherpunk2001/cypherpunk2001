@@ -8,6 +8,26 @@
 
 ---
 
+## Latest Review Findings (2026-01-21) - ADDRESSED
+
+| Severity | Finding | Resolution | Phase |
+|----------|---------|------------|-------|
+| **CRITICAL** | Full resync is still unfiltered when zone-state is nil - `serialize-game-state-compact` used as fallback (net.lisp:1241-1244) | Two-tier fallback (primary zone → starting zone → panic). NEVER skip sending. Remove unfiltered fallback paths entirely. | 3.2, 3.3 |
+| **HIGH** | Zone states never created in Phase 3 - only fetched with `get-zone-state`. Zones not loaded fall into unfiltered branch. | Always use `get-or-create-zone-state` with zone-path lookup. Use `zone-path-for-id` helpers (previously dead code). | 3.2 |
+| **HIGH** | Nil player-zone handling incomplete - serialization clamps but grouping uses raw nil, causing empty snapshots | THREE-LAYER DEFENSE: (1) Clamp at login (source fix), (2) Clamp in grouping (defense-in-depth), (3) Clamp in serialization (last resort) | 2.5 |
+| **MEDIUM** | Missing tests for zone-state nil behavior and NPC/object filtering | Added 7 new required test cases covering nil zone-state, NPC filtering, object filtering, and nil zone-id clamping | Testing Plan |
+| **LOW** | `zone-path-for-id` helpers added but not exported/used - dead code | Now used in Phase 3.2 for zone lookup with fallback | 3.2 |
+
+### Open Questions - ANSWERED
+
+**Q: Should Phase 3 include zone-state creation + zone-path fallback now?**
+**A: YES.** Phase 3.2 now includes two-tier fallback. This closes the resync leak.
+
+**Q: Should nil zone-id clamping be enforced in Phase 2 (login) or broadcast-time?**
+**A: BOTH, as defense-in-depth.** Primary fix is at login (Step 2.5). Grouping and serialization provide fallback layers.
+
+---
+
 ## Architecture Decision (CONFIRMED)
 
 **Chosen: Option B - Multi-Zone Single Process**
@@ -253,18 +273,25 @@ Zone-state creation happens in `broadcast-snapshots-with-delta` (Phase 3), NOT i
 
 This keeps `*zone-states*` access on the main thread only.
 
-### Step 2.5: Clamp nil/unknown zone-id at login (HIGH PRIORITY)
+### Step 2.5: Clamp nil/unknown zone-id at login (HIGH PRIORITY - CRITICAL FIX)
 
-**Problem:** Returning players with nil or corrupted zone-id create nil zone groups in broadcast, causing full-resync loops with fallback. This masks data corruption instead of fixing it.
+**Problem:** Returning players with nil or corrupted zone-id create nil zone groups in broadcast. Current implementation has a bug:
+- `group-clients-by-zone` gets the zone-id from `(player-zone-id player)`
+- If player-zone-id is nil, the group key is nil
+- Clients in nil group may receive wrong-zone data or empty snapshots
 
-**Solution:** Clamp at login time, mark player dirty to persist the fix.
+**Root cause:** The player struct itself has nil zone-id. All downstream clamping (grouping, serialization) is just masking the corruption.
+
+**Solution:** THREE-LAYER DEFENSE (all required):
+
+#### Layer 1: Clamp at login (SOURCE FIX) - MOST IMPORTANT
 
 In `process-login-async` (net.lisp:539+), after loading player:
 ```lisp
 (let ((player-zone (player-zone-id loaded-player)))
   ;; Clamp nil/unknown zone-id to starting zone
   (when (or (null player-zone)
-            (not (zone-path-for-id-exists-p player-zone)))  ; validate zone exists
+            (not (zone-path-for-id-exists-p world player-zone)))  ; validate zone exists
     (warn "Player ~d has invalid zone-id ~a, clamping to ~a"
           (player-id loaded-player) player-zone *starting-zone-id*)
     (setf (player-zone-id loaded-player) *starting-zone-id*)
@@ -273,13 +300,54 @@ In `process-login-async` (net.lisp:539+), after loading player:
   (make-auth-result ... :zone-id (player-zone-id loaded-player) ...))
 ```
 
-**Why at login instead of broadcast fallback:**
+**NOTE:** `zone-path-for-id-exists-p` needs `world` parameter. In auth worker thread, we may not have world access. Options:
+- Pass world to auth worker (breaks thread isolation)
+- Only check for nil at login, defer unknown-zone validation to main thread
+- Cache valid zone-ids at startup
+
+**Recommendation:** At login, only check `(null player-zone)`. Main thread broadcast (Step 3.2) handles unknown zones via fallback.
+
+#### Layer 2: Clamp in grouping (DEFENSE-IN-DEPTH)
+
+In `group-clients-by-zone` (net.lisp:1205+):
+```lisp
+(defun group-clients-by-zone (clients)
+  "Group authenticated clients by their player's zone-id.
+   Nil zone-ids are clamped to *starting-zone-id* as defense-in-depth."
+  (let ((groups (make-hash-table :test 'eq)))
+    (dolist (c clients)
+      (when (and (net-client-authenticated-p c)
+                 (net-client-player c))
+        (let* ((player (net-client-player c))
+               ;; CRITICAL: Clamp nil to starting zone
+               (zone-id (or (player-zone-id player) *starting-zone-id*)))
+          (push c (gethash zone-id groups)))))
+    groups))
+```
+
+**VERIFY THIS IS IMPLEMENTED:** Current code should already have `(or (player-zone-id player) *starting-zone-id*)` - if not, add it!
+
+#### Layer 3: Clamp in serialization (LAST RESORT)
+
+Already implemented in save.lisp:1131 and save.lisp:1238:
+```lisp
+:for player-zone = (or (player-zone-id player) *starting-zone-id*)
+```
+
+**Why all three layers:**
+| Layer | When it helps | What it catches |
+|-------|--------------|-----------------|
+| Login (L1) | On connect | Persisted nil zone-id (data corruption) |
+| Grouping (L2) | Every broadcast | Race condition or bug setting nil after login |
+| Serialization (L3) | Per-snapshot | Edge cases where player reaches serialization with nil |
+
+**Why login clamping is primary fix:**
 - Fixes the data at source (player struct)
-- Persists correction via dirty flag
-- Avoids repeated fallback logic on every broadcast
+- Persists correction via dirty flag (fixes DB permanently)
+- Layers 2-3 should never trigger if Layer 1 works
 - Makes corrupted data visible via warning log
 
-**References:** net.lisp:539 (`process-login-async`), net.lisp:613 (auth result creation), save.lisp:359 (player serialization).
+**References:** net.lisp:539 (`process-login-async`), net.lisp:1205 (`group-clients-by-zone`), save.lisp:1131, save.lisp:1238.
 
 ---
 
@@ -331,14 +399,23 @@ Add zone-filtered delta serialization (save.lisp). Note: Keep same signature pat
           :objects (nreverse object-list))))
 ```
 
-### Step 3.2: Update broadcast to use zone-filtered deltas
+### Step 3.2: Update broadcast to use zone-filtered deltas (CRITICAL FIX)
 
-In `broadcast-snapshots-with-delta` (net.lisp:1217-1266), modify the zone-group loop to use zone-filtered delta. Use existing `send-snapshots-parallel`:
+**CRITICAL BUG IN CURRENT IMPLEMENTATION (net.lisp:1238-1248):**
+The current code has TWO failure paths that leave clients in limbo:
+1. When `zone-path` is nil: sets `needs-full-resync` but sends nothing
+2. When `zone-state` is nil: sets `needs-full-resync` but sends nothing
+
+These clients never receive snapshots and loop forever needing resync!
+
+**FIX:** Always ensure zone-state exists via fallback to `*starting-zone-id*`. Never skip sending - if zone lookup fails, fall back to starting zone.
+
+In `broadcast-snapshots-with-delta` (net.lisp:1217-1266):
 
 **IMPORTANT:** Preserve existing behavior:
 1. Track `any-sent` flag across all zone groups
 2. Call `clear-snapshot-dirty-flags` AFTER all sends complete (once at end)
-3. Handle unknown/nil zone-id with fallback
+3. **NEW: Never skip clients** - always fall back to starting zone if zone lookup fails
 
 ```lisp
 (defun broadcast-snapshots-with-delta (socket clients game current-seq event-plists)
@@ -347,72 +424,109 @@ In `broadcast-snapshots-with-delta` (net.lisp:1217-1266), modify the zone-group 
 
   ;; THEN: zone-group broadcast
   (let ((zone-groups (group-clients-by-zone clients))
-        (any-sent nil)  ; <-- Track this for dirty flag clearing
+        (any-sent nil)
         (world (game-world game)))
     (maphash
      (lambda (zone-id zone-clients)
-       ;; Handle unknown/nil zone-id: warn + fallback to starting zone
-       (let* ((effective-zone-id (or zone-id *starting-zone-id*))
-              (zone-path (zone-path-for-id world effective-zone-id)))
-         (unless zone-id
-           (warn "Client with nil zone-id, falling back to ~a" effective-zone-id))
-         (unless zone-path
-           (warn "Unknown zone-id ~a, no path in world-graph" effective-zone-id)
-           ;; Force full resync for these clients to try recovery
-           (dolist (c zone-clients)
-             (setf (net-client-needs-full-resync c) t))
-           (return-from nil))  ; Skip this zone group
+       ;; CRITICAL FIX: Always resolve to a valid zone-state
+       ;; Step 1: Try requested zone
+       ;; Step 2: If that fails, fall back to *starting-zone-id*
+       ;; Step 3: If THAT fails (starting zone invalid?), panic and skip
+       (let* ((zone-path (zone-path-for-id world zone-id))
+              (effective-zone-id zone-id)
+              (zone-state nil))
+         ;; Try primary zone
+         (if zone-path
+             (setf zone-state (get-or-create-zone-state zone-id zone-path))
+             ;; Primary failed - try fallback to starting zone
+             (let ((fallback-path (zone-path-for-id world *starting-zone-id*)))
+               (when fallback-path
+                 (warn "Zone ~a: unknown zone-id, falling back to ~a"
+                       zone-id *starting-zone-id*)
+                 (setf effective-zone-id *starting-zone-id*)
+                 (setf zone-state (get-or-create-zone-state *starting-zone-id* fallback-path))
+                 ;; Force resync since we changed their zone
+                 (dolist (c zone-clients)
+                   (setf (net-client-needs-full-resync c) t)))))
 
-         (let ((zone-state (get-or-create-zone-state effective-zone-id zone-path)))
-           ;; Split clients: those needing resync vs normal delta
-           (let ((resync-clients nil)
-                 (delta-clients nil))
-             (dolist (c zone-clients)
-               (if (net-client-needs-full-resync c)
-                   (push c resync-clients)
-                   (push c delta-clients)))
-             ;; Full resync for clients that need it
-             (when resync-clients
-               (let ((full-state (serialize-game-state-for-zone game effective-zone-id zone-state)))
-                 (setf full-state (plist-put full-state :seq current-seq))
-                 (send-snapshots-parallel socket resync-clients full-state event-plists 1)
-                 (setf any-sent t)  ; <-- Mark sent
-                 (dolist (c resync-clients)
-                   (setf (net-client-needs-full-resync c) nil))))
-             ;; Zone-filtered delta for normal clients
-             (when delta-clients
-               (let ((zone-delta (serialize-game-state-delta-for-zone
-                                  game effective-zone-id zone-state current-seq)))
-                 (send-snapshots-parallel socket delta-clients zone-delta event-plists 1)
-                 (setf any-sent t)))))))  ; <-- Mark sent
+         ;; CRITICAL: If zone-state is STILL nil, starting zone is broken - panic
+         (unless zone-state
+           (warn "CRITICAL: Cannot create zone-state for ~a or fallback ~a - skipping ~d clients!"
+                 zone-id *starting-zone-id* (length zone-clients))
+           (return-from nil))  ; This should never happen in production
+
+         ;; Now we ALWAYS have a valid zone-state - proceed with zone-filtered sends
+         (let ((resync-clients nil)
+               (delta-clients nil))
+           (dolist (c zone-clients)
+             (if (client-needs-full-resync-p c current-seq)
+                 (push c resync-clients)
+                 (push c delta-clients)))
+
+           ;; Full resync for clients that need it - ALWAYS zone-filtered
+           (when resync-clients
+             (let ((full-state (serialize-game-state-for-zone game effective-zone-id zone-state)))
+               (setf full-state (plist-put full-state :seq current-seq))
+               (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
+                            effective-zone-id (length resync-clients) current-seq
+                            (length (getf full-state :players)))
+               (send-snapshots-parallel socket resync-clients full-state event-plists 1)
+               (dolist (c resync-clients)
+                 (setf (net-client-needs-full-resync c) nil))
+               (setf any-sent t)))
+
+           ;; Zone-filtered delta for synced clients
+           (when delta-clients
+             (let ((zone-delta (serialize-game-state-delta-for-zone
+                                game effective-zone-id zone-state current-seq)))
+               (log-verbose "Zone ~a: delta ~d clients" effective-zone-id (length delta-clients))
+               (send-snapshots-parallel socket delta-clients zone-delta event-plists 1)
+               (setf any-sent t))))))
      zone-groups)
 
-    ;; Clear dirty flags AFTER all sends complete (preserve existing behavior)
+    ;; Clear dirty flags AFTER all sends complete
     (when any-sent
       (clear-snapshot-dirty-flags game))))
 ```
 
+**Key changes from current code:**
+1. Two-tier fallback: primary zone → starting zone → panic
+2. NEVER just set `needs-full-resync` and skip sending
+3. Always reach `serialize-game-state-for-zone` or `serialize-game-state-delta-for-zone`
+4. `zone-path-for-id` helpers are NOW USED (previously dead code)
+
 **Reference:** net.lisp:1264-1266 (existing dirty flag clearing pattern).
 
-### Step 3.3: Fix full snapshot fallback to always use zone-filtered
+### Step 3.3: Remove unfiltered fallback paths entirely
 
-Ensure no code path falls back to unfiltered `serialize-game-state-compact`:
+**CRITICAL:** The original leak exists because of fallback to `serialize-game-state-compact`:
 
 ```lisp
-;; OLD: (if zone-state
-;;          (serialize-game-state-for-zone ...)
-;;          (serialize-game-state-compact ...))  ; UNFILTERED!
-;; NEW: Always ensure zone-state exists first, then always use zone-filtered
-(let* ((zone-path (zone-path-for-id world zone-id))
-       (zone-state (get-or-create-zone-state zone-id zone-path)))
-  (serialize-game-state-for-zone game zone-id zone-state))
+;; CURRENT BUG (save.lisp:1117-1123, net.lisp:1241-1244):
+;; When zone-state is nil, these functions fall back to game-wide data:
+(npcs (if zone-state (zone-state-npcs zone-state) (game-npcs game)))  ; LEAK!
+(zone (if zone-state (zone-state-zone zone-state) (world-zone world))) ; LEAK!
 ```
 
-**Zone fallback policy:** If `zone-path` is nil (unknown zone):
-- Log warning
-- Fallback to `*starting-zone-id*`
-- Force full-resync for affected clients
-- This prevents client starvation while alerting to the issue
+**FIX:** Remove all fallbacks to global game state in zone-filtered functions:
+
+In `serialize-game-state-for-zone` (save.lisp:1117-1123):
+```lisp
+;; OLD - Falls back to global on nil zone-state:
+(npcs (if zone-state (zone-state-npcs zone-state) (game-npcs game)))
+(zone (if zone-state (zone-state-zone zone-state) (world-zone world)))
+
+;; NEW - No fallback, zone-state is REQUIRED (caller ensures it):
+(npcs (when zone-state (zone-state-npcs zone-state)))
+(zone (when zone-state (zone-state-zone zone-state)))
+;; If zone-state is nil, we get empty NPCs/objects - which is correct for
+;; an unloaded zone (better than leaking wrong-zone data!)
+```
+
+**Policy change:** If `zone-state` is nil:
+- Return empty NPCs and objects (not wrong-zone data)
+- This should never happen in production (Step 3.2 ensures zone-state exists)
+- But if it does, empty > leak
 
 ---
 
@@ -701,10 +815,77 @@ New behavior requires doc updates per CLAUDE.md guidelines:
 ### New test cases:
 - `test-new-player-spawns-in-starting-zone`
 - `test-returning-player-loads-saved-zone`
-- `test-delta-snapshot-zone-filtered`
+- `test-delta-snapshot-zone-filtered` (DONE - tests player filtering)
 - `test-auth-uses-player-zone-not-global`
 - `test-zone-transition-triggers-full-resync`
 - `test-session-zone-updates-on-transition`
+
+### CRITICAL: Missing test coverage (from review feedback)
+
+**These tests MUST be added before Phase 3 is complete:**
+
+#### 1. Zone-state nil behavior tests
+```lisp
+(defun test-delta-for-zone-with-nil-zone-state ()
+  "Test that nil zone-state produces empty NPCs/objects, not wrong-zone data."
+  ;; Create game with players in zone-1 but pass nil zone-state
+  ;; Should return: players in zone-1, EMPTY npcs, EMPTY objects
+  ;; NOT: all game NPCs (the original leak)
+  ...)
+
+(defun test-full-snapshot-with-nil-zone-state ()
+  "Test that serialize-game-state-for-zone with nil zone-state returns empty."
+  ;; Same principle - nil zone-state should NOT fall back to global game data
+  ...)
+```
+
+#### 2. NPC filtering tests
+```lisp
+(defun test-delta-for-zone-filters-npcs ()
+  "Test that NPCs from zone-state are included, not global game NPCs."
+  ;; Create game with global NPCs array
+  ;; Create zone-state with different NPCs
+  ;; Serialize delta for zone
+  ;; Should contain ONLY zone-state NPCs, not game NPCs
+  ...)
+
+(defun test-full-snapshot-uses-zone-state-npcs ()
+  "Test that full snapshot uses zone-state NPCs, not game-npcs."
+  ;; Same verification for serialize-game-state-for-zone
+  ...)
+```
+
+#### 3. Object filtering tests
+```lisp
+(defun test-delta-for-zone-filters-objects ()
+  "Test that objects from zone-state's zone are included."
+  ;; Create zone-state with zone containing objects
+  ;; Serialize delta
+  ;; Should contain zone-state's zone objects
+  ...)
+```
+
+#### 4. Nil zone-id clamping tests
+```lisp
+(defun test-group-clients-by-zone-clamps-nil ()
+  "Test that nil player-zone-id is clamped to *starting-zone-id* in grouping."
+  ;; Create client with player having nil zone-id
+  ;; Call group-clients-by-zone
+  ;; Should be in *starting-zone-id* group, NOT nil group
+  ...)
+
+(defun test-login-clamps-nil-zone-id ()
+  "Test that login process clamps nil zone-id and marks dirty."
+  ;; Simulate player load with nil zone-id
+  ;; Process through login flow
+  ;; Player should have *starting-zone-id* and be marked dirty
+  ...)
+```
+
+**Rationale:** The existing tests (`test-delta-for-zone-filters-players`, `test-delta-for-zone-nil-player-zone`, `test-delta-for-zone-with-npcs`) cover player filtering but don't verify:
+- What happens when zone-state is nil (the critical leak path)
+- That NPCs come from zone-state, not game-npcs
+- That grouping properly clamps nil zone-ids
 
 ---
 

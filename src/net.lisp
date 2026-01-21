@@ -1204,13 +1204,15 @@
 
 (defun group-clients-by-zone (clients)
   "Group authenticated clients by their player's zone-id.
-   Returns hash table: zone-id -> list of clients."
+   Returns hash table: zone-id -> list of clients.
+   Nil zone-ids are clamped to *starting-zone-id* to ensure clients
+   always receive zone-filtered snapshots (never empty)."
   (let ((groups (make-hash-table :test 'eq)))
     (dolist (c clients)
       (when (and (net-client-authenticated-p c)
                  (net-client-player c))
         (let* ((player (net-client-player c))
-               (zone-id (player-zone-id player)))
+               (zone-id (or (player-zone-id player) *starting-zone-id*)))
           (push c (gethash zone-id groups)))))
     groups))
 
@@ -1221,43 +1223,73 @@
    players/NPCs in their zone. This enables true multi-zone gameplay.
 
    For efficiency, clients are grouped by zone and snapshots are encoded
-   once per zone (maintaining the 'encode once, send to many' optimization)."
+   once per zone (maintaining the 'encode once, send to many' optimization).
+
+   ANTI-STARVATION GUARD: If a client's zone-id has no valid zone-path,
+   we fall back to *starting-zone-id* instead of skipping. This ensures
+   clients always receive snapshots even with corrupted zone data."
   (let ((zone-groups (group-clients-by-zone clients))
-        (any-sent nil))
+        (any-sent nil)
+        (world (game-world game)))
     ;; Process each zone group
     (maphash
      (lambda (zone-id zone-clients)
-       (let ((resync-clients nil)
-             (delta-clients nil)
-             ;; Get zone-state for this zone (may be nil for legacy/current zone)
-             (zone-state (get-zone-state zone-id)))
-         ;; Partition by resync vs delta
-         (dolist (c zone-clients)
-           (if (client-needs-full-resync-p c current-seq)
-               (push c resync-clients)
-               (push c delta-clients)))
+       ;; GUARD: Resolve zone-path with fallback to starting zone
+       (let* ((zone-path (zone-path-for-id world zone-id))
+              (effective-zone-id zone-id)
+              (fell-back nil))
+         ;; If zone-path is nil, fall back to starting zone (anti-starvation)
+         (unless zone-path
+           (setf zone-path (zone-path-for-id world *starting-zone-id*))
+           (setf effective-zone-id *starting-zone-id*)
+           (setf fell-back t)
+           (warn "Zone ~a: unknown, forcing fallback to ~a for ~d clients"
+                 zone-id *starting-zone-id* (length zone-clients)))
 
-         ;; Send full snapshot to clients needing resync in this zone
-         (when resync-clients
-           (let ((full-state (if zone-state
-                                 (serialize-game-state-for-zone game zone-id zone-state)
-                                 (serialize-game-state-compact game))))
-             (setf full-state (plist-put full-state :seq current-seq))
-             (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
-                          zone-id (length resync-clients) current-seq
-                          (length (getf full-state :players)))
-             (send-snapshots-parallel socket resync-clients full-state event-plists 1)
-             (dolist (c resync-clients)
-               (setf (net-client-needs-full-resync c) nil))
-             (setf any-sent t)))
+         ;; Now get-or-create zone-state (should always succeed for starting zone)
+         (let ((zone-state (when zone-path
+                             (get-or-create-zone-state effective-zone-id zone-path))))
+           (cond
+             ;; Starting zone itself is broken - log and skip (shouldn't happen)
+             ((null zone-state)
+              (warn "CRITICAL: Cannot create zone-state for ~a - skipping ~d clients"
+                    effective-zone-id (length zone-clients)))
 
-         ;; Send zone-filtered delta snapshot to synced clients
-         (when delta-clients
-           (let ((delta-state (serialize-game-state-delta-for-zone
-                               game zone-id zone-state current-seq)))
-             (log-verbose "Zone ~a: delta ~d clients" zone-id (length delta-clients))
-             (send-snapshots-parallel socket delta-clients delta-state event-plists 1)
-             (setf any-sent t)))))
+             ;; Valid zone-state: proceed with zone-filtered serialization
+             (t
+              ;; Force full resync if we fell back to a different zone
+              (when fell-back
+                (dolist (c zone-clients)
+                  (setf (net-client-needs-full-resync c) t)))
+
+              (let ((resync-clients nil)
+                    (delta-clients nil))
+                ;; Partition by resync vs delta
+                (dolist (c zone-clients)
+                  (if (client-needs-full-resync-p c current-seq)
+                      (push c resync-clients)
+                      (push c delta-clients)))
+
+                ;; Send zone-filtered full snapshot to clients needing resync
+                (when resync-clients
+                  (let ((full-state (serialize-game-state-for-zone
+                                     game effective-zone-id zone-state)))
+                    (setf full-state (plist-put full-state :seq current-seq))
+                    (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
+                                 effective-zone-id (length resync-clients) current-seq
+                                 (length (getf full-state :players)))
+                    (send-snapshots-parallel socket resync-clients full-state event-plists 1)
+                    (dolist (c resync-clients)
+                      (setf (net-client-needs-full-resync c) nil))
+                    (setf any-sent t)))
+
+                ;; Send zone-filtered delta snapshot to synced clients
+                (when delta-clients
+                  (let ((delta-state (serialize-game-state-delta-for-zone
+                                      game effective-zone-id zone-state current-seq)))
+                    (log-verbose "Zone ~a: delta ~d clients" effective-zone-id (length delta-clients))
+                    (send-snapshots-parallel socket delta-clients delta-state event-plists 1)
+                    (setf any-sent t)))))))))
      zone-groups)
 
     ;; Clear dirty flags after ALL sends complete
