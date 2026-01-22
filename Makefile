@@ -1,4 +1,4 @@
-.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests
+.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests profile
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 STRESS_CLIENTS ?= 10
@@ -33,3 +33,6 @@ checkdocs:
 
 stress:
 	sbcl --script scripts/stress-test.lisp $(STRESS_CLIENTS) $(STRESS_DURATION)
+
+profile:
+	MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 sbcl --script scripts/server.lisp

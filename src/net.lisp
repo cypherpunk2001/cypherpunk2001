@@ -1605,7 +1605,8 @@
 
 (defun interpolate-remote-entities (game)
   ;; Interpolate positions for all remote entities (not local player).
-  (let ((buffer (game-interpolation-buffer game))
+  (with-timing (:interpolate)
+    (let ((buffer (game-interpolation-buffer game))
         (delay (or (game-interpolation-delay game) *interpolation-delay-seconds*))
         (current-time (or (game-client-time game) 0.0))
         (local-id (or (game-net-player-id game) 0)))
@@ -1637,7 +1638,7 @@
                                   (pb (gethash (- id) pos-b)))
                               (when (and pa pb)
                                 (setf (npc-x npc) (lerp (first pa) (first pb) alpha)
-                                      (npc-y npc) (lerp (second pa) (second pb) alpha))))))))))))))
+                                      (npc-y npc) (lerp (second pa) (second pb) alpha)))))))))))))))
 
 ;;;; Client-Side Prediction
 
@@ -2249,6 +2250,20 @@
       (init-storage :backend backend :host redis-host :port redis-port)
       ;; Load Redis Lua scripts for atomic operations (Phase 5 - Trade System)
       (load-trade-scripts))
+    ;; Initialize profiling from environment variables (Phase 6)
+    ;; MMORPG_PROFILE: "1" to enable timing hooks
+    ;; MMORPG_VERBOSE_GC: "1" to log GC stats per frame
+    (let ((profile-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_PROFILE")
+                           #-sbcl (uiop:getenv "MMORPG_PROFILE")))
+          (gc-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_VERBOSE_GC")
+                      #-sbcl (uiop:getenv "MMORPG_VERBOSE_GC"))))
+      (when (and profile-str (string= profile-str "1"))
+        (setf *profile-enabled* t)
+        (init-profile-log 10000)
+        (format t "~&SERVER: Profiling enabled~%"))
+      (when (and gc-str (string= gc-str "1"))
+        (setf *verbose-gc* t)
+        (format t "~&SERVER: GC monitoring enabled~%")))
     ;; Clear any stale session state from previous REPL runs
     ;; (Important when restarting server without restarting the Lisp process)
     (log-verbose "Clearing stale sessions (active=~d, player=~d)"

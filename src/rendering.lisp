@@ -1592,7 +1592,8 @@
 
 (defun draw-game (game)
   ;; Render a full frame: world, entities, HUD, and menu.
-  (let* ((player (game-player game))
+  (with-timing (:draw-game)
+    (let* ((player (game-player game))
          (npcs (game-npcs game))
          (entities (game-entities game))
          (world (game-world game))
@@ -1630,4 +1631,4 @@
       (draw-editor-ui-overlay editor ui)
       (draw-editor-tileset-preview editor render)
       (when (ui-menu-open ui)
-        (draw-menu ui audio editor)))))
+        (draw-menu ui audio editor))))))

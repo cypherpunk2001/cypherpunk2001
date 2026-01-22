@@ -23,6 +23,169 @@
                            (log-fatal-error ,context e))))
      ,@body))
 
+;;; Profiling Infrastructure (Task 6.1)
+;;; Optional timing macros for measuring hot path performance.
+
+(defvar *profile-enabled* nil
+  "When T, with-timing macro collects timing data.")
+
+(defvar *profile-log* nil
+  "Ring buffer of (name . elapsed-ms) timing samples. Created on first use.")
+
+(defvar *profile-log-size* 1000
+  "Maximum number of samples to keep in profile log.")
+
+(defvar *profile-log-index* 0
+  "Current write position in profile log.")
+
+(defun init-profile-log (&optional (size 1000))
+  "Initialize the profile log ring buffer with SIZE slots."
+  (setf *profile-log-size* size
+        *profile-log* (make-array size :initial-element nil)
+        *profile-log-index* 0))
+
+(defun get-profile-log ()
+  "Get or create the profile log ring buffer."
+  (or *profile-log*
+      (setf *profile-log* (make-array *profile-log-size* :initial-element nil)
+            *profile-log-index* 0)))
+
+(defun record-profile-sample (name elapsed-ms)
+  "Record a timing sample to the profile log."
+  (let ((log (get-profile-log)))
+    (setf (aref log *profile-log-index*) (cons name elapsed-ms))
+    (setf *profile-log-index* (mod (1+ *profile-log-index*) *profile-log-size*))))
+
+(defmacro with-timing ((name) &body body)
+  "Execute BODY and record timing if *profile-enabled*.
+   NAME is a keyword or symbol identifying this timing point."
+  (let ((start (gensym "START"))
+        (result (gensym "RESULT")))
+    `(if *profile-enabled*
+         (let ((,start (get-internal-real-time)))
+           (let ((,result (progn ,@body)))
+             (record-profile-sample
+              ,name
+              (* 1000.0 (/ (- (get-internal-real-time) ,start)
+                           internal-time-units-per-second)))
+             ,result))
+         (progn ,@body))))
+
+(defun profile-summary (&key (top 10))
+  "Print summary of profile data: mean, min, max, count for each timed section.
+   TOP limits output to the TOP most expensive sections by mean time."
+  (let ((log (get-profile-log))
+        (stats (make-hash-table :test 'eq)))
+    ;; Collect stats per name
+    (loop :for entry :across log
+          :when entry
+          :do (let* ((name (car entry))
+                     (ms (cdr entry))
+                     (stat (or (gethash name stats)
+                               (setf (gethash name stats)
+                                     (list 0 0.0 most-positive-single-float 0.0)))))
+                ;; stat = (count sum min max)
+                (incf (first stat))
+                (incf (second stat) ms)
+                (setf (third stat) (min (third stat) ms))
+                (setf (fourth stat) (max (fourth stat) ms))))
+    ;; Sort by mean time descending
+    (let ((sorted nil))
+      (maphash (lambda (name stat)
+                 (let ((count (first stat))
+                       (sum (second stat)))
+                   (push (list name (/ sum count) (first stat)
+                               (third stat) (fourth stat))
+                         sorted)))
+               stats)
+      (setf sorted (sort sorted #'> :key #'second))
+      ;; Print top N
+      (format t "~&=== Profile Summary (top ~d by mean) ===~%" top)
+      (format t "~20a ~10a ~8a ~10a ~10a~%" "Name" "Mean(ms)" "Count" "Min(ms)" "Max(ms)")
+      (format t "~20a ~10a ~8a ~10a ~10a~%" "----" "--------" "-----" "-------" "-------")
+      (loop :for (name mean count min max) :in sorted
+            :for i :from 0 :below top
+            :do (format t "~20a ~10,3f ~8d ~10,3f ~10,3f~%"
+                        name mean count min max)))))
+
+(defun clear-profile-log ()
+  "Clear all profile samples."
+  (when *profile-log*
+    (fill *profile-log* nil)
+    (setf *profile-log-index* 0)))
+
+;;; GC Pressure Monitoring (Task 6.2)
+;;; Track allocation, GC runtime, and GC count to identify memory-heavy code.
+
+(defvar *verbose-gc* nil
+  "When T, log allocation and GC statistics per frame.")
+
+(defvar *gc-stats-last-bytes* 0
+  "Last recorded bytes consed.")
+
+(defvar *gc-stats-last-runtime* 0
+  "Last recorded GC runtime (internal time units).")
+
+(defvar *gc-stats-frame-count* 0
+  "GC count within current frame (reset each frame).")
+
+(defvar *gc-stats-total-count* 0
+  "Total GC count since startup.")
+
+(defun get-bytes-consed ()
+  "Return total bytes allocated (SBCL only)."
+  #+sbcl (sb-ext:get-bytes-consed)
+  #-sbcl 0)
+
+(defun get-gc-runtime ()
+  "Return cumulative GC runtime in internal time units (SBCL only)."
+  #+sbcl sb-ext:*gc-run-time*
+  #-sbcl 0)
+
+(defun gc-hook-increment-count ()
+  "Hook called after each GC to track count."
+  (incf *gc-stats-frame-count*)
+  (incf *gc-stats-total-count*))
+
+;; Register GC hook on load (SBCL only)
+#+sbcl
+(pushnew 'gc-hook-increment-count sb-ext:*after-gc-hooks*)
+
+(defun reset-gc-stats ()
+  "Reset allocation/GC stats tracking for delta measurement."
+  (setf *gc-stats-last-bytes* (get-bytes-consed))
+  (setf *gc-stats-last-runtime* (get-gc-runtime))
+  (setf *gc-stats-frame-count* 0))
+
+(defun log-gc-delta ()
+  "Log allocation and GC stats since last reset when *verbose-gc* enabled."
+  (when *verbose-gc*
+    (let* ((current-bytes (get-bytes-consed))
+           (delta-bytes (- current-bytes *gc-stats-last-bytes*))
+           (current-runtime (get-gc-runtime))
+           (delta-runtime (- current-runtime *gc-stats-last-runtime*))
+           (gc-ms (/ (* 1000.0 delta-runtime) internal-time-units-per-second)))
+      ;; Log if significant allocation or any GC occurred
+      (when (or (> delta-bytes 10000) (> *gc-stats-frame-count* 0))
+        (format t "~&[GC] ~,1f KB alloc"
+                (/ delta-bytes 1024.0))
+        (when (> *gc-stats-frame-count* 0)
+          (format t ", ~d GCs (~,2f ms)" *gc-stats-frame-count* gc-ms))
+        (format t "~%"))
+      (setf *gc-stats-last-bytes* current-bytes)
+      (setf *gc-stats-last-runtime* current-runtime))))
+
+(defun gc-summary ()
+  "Print allocation and GC summary."
+  (format t "~&=== GC Summary ===~%")
+  (format t "Total bytes consed: ~,1f MB~%"
+          (/ (get-bytes-consed) 1048576.0))
+  (format t "Total GC count: ~d~%" *gc-stats-total-count*)
+  (format t "Total GC runtime: ~,2f s~%"
+          (/ (get-gc-runtime) internal-time-units-per-second))
+  #+sbcl (room)
+  #-sbcl nil)
+
 (defun clamp (value min-value max-value)
   ;; Clamp VALUE between MIN-VALUE and MAX-VALUE for bounds checks.
   (max min-value (min value max-value)))

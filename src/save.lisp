@@ -1262,9 +1262,10 @@
    Uses cached zone-players array when available (Task 4.1) for O(zone-players) instead of O(total-players).
    When USE-POOL is T, uses pre-allocated vectors from pool (Task 4.2) to reduce allocation.
    Used for per-player snapshots when players are in different zones."
-  ;; Reset vector pool for this serialization pass (Task 4.2)
-  (when use-pool
-    (reset-player-vector-pool))
+  (with-timing (:serialize-zone)
+    ;; Reset vector pool for this serialization pass (Task 4.2)
+    (when use-pool
+      (reset-player-vector-pool))
   (let* ((zone-players (when zone-state (zone-state-zone-players zone-state)))
          (npcs (if zone-state
                    (zone-state-npcs zone-state)
@@ -1304,7 +1305,7 @@
           :zone-id zone-id
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
-          :objects (nreverse object-list))))
+          :objects (nreverse object-list)))))
 
 (defun deserialize-game-state-compact (state game)
   "Apply compact game state to GAME, converting vectors back to entity updates."
@@ -1458,7 +1459,8 @@
    For NPCs: updates existing by index (NPCs use fixed array positions).
    Returns hash table of updated entity positions for interpolation buffer.
    Client-side zone filtering: only processes entities matching snapshot's zone."
-  (let* ((changed-players (getf delta :changed-players))
+  (with-timing (:deserialize-delta)
+    (let* ((changed-players (getf delta :changed-players))
          (changed-npcs (getf delta :changed-npcs))
          (players (game-players game))
          ;; Use snapshot's :zone-id for filtering (more reliable than player-zone-id
@@ -1554,7 +1556,7 @@
                                        :respawnable (getf server-obj :respawnable)
                                        :snapshot-dirty nil)))))))
     ;; Return updated positions for interpolation buffer
-    updated-positions))
+    updated-positions)))
 
 ;;;; ========================================================================
 ;;;; ZONE OBJECT SERIALIZATION

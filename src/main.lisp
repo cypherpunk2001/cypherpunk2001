@@ -389,12 +389,14 @@
 
 (defun update-sim (game dt &optional (allow-player-control t))
   ;; Run one fixed-tick simulation step. Returns true on zone transition.
-  (let* ((player (game-player game))
-         (players (game-players game))
-         (npcs (game-npcs game))
-         (entities (game-entities game))
-         (world (game-world game))
-         (event-queue (game-combat-events game)))
+  (reset-gc-stats)  ; Start GC tracking for this tick (Task 6.2)
+  (with-timing (:update-sim)
+    (let* ((player (game-player game))
+           (players (game-players game))
+           (npcs (game-npcs game))
+           (entities (game-entities game))
+           (world (game-world game))
+           (event-queue (game-combat-events game)))
     (reset-npc-frame-intents npcs)
     (when allow-player-control
       (loop :for current-player :across players
@@ -503,7 +505,8 @@
       ;; Increment playtime for all connected players (server-side tracking)
       (loop :for current-player :across players
             :do (incf (player-playtime current-player) dt))
-      transitioned)))
+      (log-gc-delta)  ; Log allocation for this tick (Task 6.2)
+      transitioned))))
 
 (defun process-combat-events (game)
   ;; Process combat events from simulation and write to UI (client-side rendering).
