@@ -13,7 +13,7 @@ What it does
 - Runs fixed-tick simulation steps and reports zone transitions.
 
 Key functions
-- `spawn-player-at-world`: spawn a player on a valid open tile near the world spawn center.
+- `spawn-player-at-world`: spawn a player in `*starting-zone-id*` using zone-state collision (falls back to global collision if zone-state unavailable).
 - `make-sim-state`: build world/player/players/NPCs/entities/id-source/combat-events without client subsystems; logs counts in verbose mode.
 - `make-server-game`: construct a headless game struct (audio/ui/render/assets/camera/editor are nil; net role is `:server`).
 - `apply-client-intent`: copy the client intent payload into the server intent.
@@ -115,3 +115,24 @@ On non-SBCL Lisps, these expand to `(progn ...)` (no locking).
 ### Single vs Multi-Threaded Parity
 
 With all race conditions fixed, multi-threaded mode (`MMORPG_WORKER_THREADS > 1`) provides identical gameplay behavior to single-threaded mode. The only difference is network I/O parallelization during snapshot delivery.
+
+---
+
+## Profiling & GC Monitoring
+
+Enable lightweight profiling and allocation logging via environment variables:
+
+```bash
+# Enable timing hooks + per-frame allocation/GC stats
+MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 make server
+```
+
+Makefile shortcut:
+```bash
+make profile
+```
+
+Notes:
+- Timing hooks are guarded by `*profile-enabled*` and report to a ring buffer.
+- Allocation/GC logs are emitted per frame when `*verbose-gc*` is true.
+- Use `profile-summary` / `gc-summary` at the REPL to inspect results.

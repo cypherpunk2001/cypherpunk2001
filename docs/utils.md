@@ -20,11 +20,18 @@ Key helpers
 - `relative-path-from-root`: normalize asset paths relative to a root folder.
 - `player-direction`, `player-state`, `player-animation-params`: animation logic helpers.
 - `u32-hash`: deterministic variation for wall tile selection.
+- `vector-pool` helpers: reuse fixed-size vectors for hot serialization paths.
 
 Retry utilities
 - `with-retry-exponential`: retry critical operations with exponential backoff
 - `with-retry-linear`: retry network operations with fixed delay
 - `exponential-backoff-delay`: calculate backoff timing for retries
+
+Profiling & GC utilities
+- `with-timing`: optional timing wrapper controlled by `*profile-enabled*`.
+- `profile-summary`, `clear-profile-log`: inspect and reset timing samples.
+- `reset-gc-stats`, `log-gc-delta`, `gc-summary`: allocation + GC tracking.
+- `*verbose-gc*`: enable per-frame allocation/GC logging.
 
 Example: diagonal movement normalization
 ```lisp

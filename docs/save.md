@@ -35,6 +35,10 @@ Key functions
 - `serialize-player-private` - Serialize owner-only state (inventory/equipment/stats).
 - `apply-player-private-plist` - Apply owner-only state onto the local player.
 
+Performance notes (snapshot path)
+- `serialize-game-state-for-zone` prefers the zone-state `zone-players` cache when present, avoiding an O(total-players) filter pass.
+- `serialize-player-compact` can use a pooled vector (`:use-pool t`) to reduce per-frame allocations on the server.
+
 **CRITICAL - Multi-Client Player ID Lookup:**
 When applying snapshots with multiple connected clients, `apply-player-plists` uses `game-net-player-id` to find the local player by ID. **Never falls back to the first player** if lookup fails - this prevents teleporting to other clients' positions. Logs a warning if player not found and keeps current player to maintain correct view.
 

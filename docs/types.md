@@ -10,22 +10,28 @@ Why we do it this way
   without forcing an inheritance-heavy object model.
 
 Key structs
-- `player`, `npc`: runtime entities with an `id`, `intent`, stats, inventory/equipment, animation/combat state, cached HUD stats and inventory lines, attack/follow/pickup targets, click markers, and NPC respawn timers.
+- `player`, `npc`: runtime entities with an `id`, `intent`, stats, inventory/equipment, animation/combat state, cached HUD stats and inventory lines, attack/follow/pickup targets, click markers, respawn timers, and spatial grid cell tracking (`grid-cell-x`/`grid-cell-y`).
 - `skill`, `stat-block`, `stat-modifiers`: reusable stat containers for combat progression.
 - `inventory`, `inventory-slot`: simple inventory storage for stackable items.
 - `equipment`: equipped item IDs aligned to `*equipment-slot-ids*`.
 - `id-source`: monotonic ID generator used for stable entity IDs.
 - `world`: zone metadata, world graph, per-zone NPC cache, preview zone cache, wall-map data, collision bounds, derived sizes, minimap spawn previews, and minimap collision markers.
+- `zone-state`: per-zone derived state (zone data + wall-map), spatial grids for players/NPCs, NPC index map for O(1) ID lookup, and a cached `zone-players` array for fast per-zone serialization.
 - `audio`, `ui`, `render`, `assets`, `camera`: subsystem state (UI includes loading overlay timer, inventory toggle state, chat buffer/active flag, hovered NPC name, HUD/combat log ring buffers with HUD fade timers, minimap layout/colors, menu layout for music/debug/editor/fullscreen/prediction/tile-filter toggles plus logout/unstuck actions, and a context menu with target metadata; assets include object and item textures).
 - `editor`: editor mode state (camera, tileset catalog/selection, selection brush size, layer selections, zone list/history, spawn palette, object palette).
 - `combat-event`, `combat-event-queue`: event system for decoupling simulation from UI (server emits events, client renders them).
-- `game`: top-level aggregator passed to update/draw functions (includes the primary player plus a `players` array, combat-events queue, a client-side intent buffer, a net role flag, a queued net request list, and the client-side `net-player-id`).
+- `game`: top-level aggregator passed to update/draw functions (includes the primary player plus a `players` array, combat-events queue, client-side intent buffer, net role flag, queued net request list, client `net-player-id`, player index map for O(1) lookup, and interpolation/prediction state).
 
 Key constructors
 - `make-player`, `make-npc`: construct entities with default fields.
 - `make-npcs`: spawn a pool using explicit zone spawns (zones without spawns produce no NPCs).
 - `world-spawn-center`: returns a center point inside world collision bounds.
 - `make-entities`: pack NPCs + players into a stable array.
+
+Key helpers
+- `rebuild-player-index-map`, `find-player-by-id-fast`: O(1) player lookup by ID.
+- `rebuild-npc-index-map`, `find-npc-by-id-fast`: O(1) NPC lookup by ID within a zone.
+- `add-player-to-zone-cache`, `remove-player-from-zone-cache`, `rebuild-zone-players-cache`: maintain per-zone player arrays for serialization.
 
 Key generics
 - Combat: `combatant-position`, `combatant-health`, `combatant-apply-hit`.
