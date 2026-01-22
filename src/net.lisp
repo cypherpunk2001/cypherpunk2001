@@ -938,7 +938,12 @@
     (setf (aref new-players count) player)
     (setf (game-players game) new-players
           (game-entities game)
-          (make-entities new-players (game-npcs game))))
+          (make-entities new-players (game-npcs game)))
+    ;; Update player index map - add new entry for the appended player
+    (let ((map (or (game-player-index-map game)
+                   (setf (game-player-index-map game)
+                         (make-hash-table :test 'eql)))))
+      (setf (gethash (player-id player) map) count)))
   player)
 
 (defun remove-player-from-game (game player)
@@ -950,6 +955,8 @@
       (setf (game-players game) filtered
             (game-entities game)
             (make-entities filtered (game-npcs game)))
+      ;; Rebuild entire index map - indices shift after removal
+      (rebuild-player-index-map game)
       t)))
 
 (defun register-net-client (game clients host port &key (timestamp 0.0))
@@ -1438,11 +1445,18 @@
 
 (defun make-interpolation-buffer ()
   ;; Create a new interpolation buffer for smoothing remote entity movement.
-  (%make-interpolation-buffer
-   :snapshots (make-array 4 :initial-element nil)
-   :head 0
-   :count 0
-   :capacity 4))
+  ;; Pre-allocates a pool of position tables (one per snapshot slot) to avoid
+  ;; allocation during capture and prevent aliasing between snapshots.
+  ;; INVARIANT: position-pool length MUST equal capacity (one table per snapshot slot).
+  (let ((cap 4))  ; If making capacity configurable, ensure position-pool follows
+    (%make-interpolation-buffer
+     :snapshots (make-array cap :initial-element nil)
+     :head 0
+     :count 0
+     :capacity cap
+     :position-pool (let ((pool (make-array cap)))
+                      (dotimes (i cap pool)
+                        (setf (aref pool i) (make-hash-table :test 'eql)))))))
 
 (defun push-interpolation-snapshot (buffer snapshot)
   ;; Add a snapshot to the ring buffer.
@@ -1472,12 +1486,22 @@
   (max min-val (min max-val value)))
 
 (defun capture-entity-positions (game local-player-id
-                                  &key delta-positions previous-positions)
+                                  &key delta-positions previous-positions buffer)
   ;; Capture positions of all entities except local player for interpolation.
   ;; For delta snapshots, pass DELTA-POSITIONS (hash table from deserialize)
   ;; and PREVIOUS-POSITIONS (from last interpolation snapshot) to avoid
   ;; capturing stale interpolated positions for entities not in the delta.
-  (let ((positions (make-hash-table :test 'eql))
+  ;; BUFFER: if provided, uses pooled position table for current head slot to avoid allocation.
+  ;; Each snapshot slot has its own dedicated table, preventing aliasing.
+  (let ((positions
+         ;; Use pooled table from buffer if available, else allocate
+         (if (and buffer (interpolation-buffer-position-pool buffer))
+             (let* ((head (interpolation-buffer-head buffer))
+                    (pool (interpolation-buffer-position-pool buffer))
+                    (table (aref pool head)))
+               (clrhash table)
+               table)
+             (make-hash-table :test 'eql)))
         (players (game-players game))
         (npcs (game-npcs game)))
     ;; Capture other players
@@ -2706,7 +2730,8 @@
                                            (positions
                                             (capture-entity-positions game local-id
                                                                       :delta-positions delta-positions
-                                                                      :previous-positions prev-pos))
+                                                                      :previous-positions prev-pos
+                                                                      :buffer buffer))
                                            (snapshot (%make-interpolation-snapshot
                                                       :timestamp (game-client-time game)
                                                       :entity-positions positions)))

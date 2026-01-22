@@ -206,7 +206,10 @@
   (snapshots nil)    ; Simple-vector of interpolation-snapshot
   (head 0)           ; Write position (circular)
   (count 0)          ; Number of valid snapshots
-  (capacity 4))      ; Buffer size
+  (capacity 4)       ; Buffer size
+  ;; Pool of position tables matching ring buffer capacity (one per snapshot slot).
+  ;; This avoids aliasing - each snapshot has its own dedicated position table.
+  (position-pool nil))  ; Simple-vector of hash tables (length = capacity)
 
 (defstruct (prediction-input (:constructor %make-prediction-input))
   ;; A single input with sequence number for prediction reconciliation.
@@ -234,6 +237,8 @@
   ;; Aggregate of game subsystems for update/draw.
   world player players npcs entities id-source npc-id-source audio ui render assets camera editor
   combat-events client-intent net-role net-requests net-player-id
+  ;; Player index map for O(1) lookup by ID (player-id -> array index)
+  player-index-map
   ;; Interpolation state (client-only, for smooth remote entity movement)
   interpolation-buffer interpolation-delay client-time last-snapshot-time
   ;; Prediction state (client-only, optional via *client-prediction-enabled*)
@@ -489,11 +494,38 @@
     entities))
 
 (defun find-player-by-id (players id)
-  ;; Return the player with ID, if present.
+  ;; Return the player with ID, if present. O(n) linear scan fallback.
   (when (and players (> id 0))
     (loop :for player :across players
           :when (= (player-id player) id)
             :do (return player))))
+
+(defun rebuild-player-index-map (game)
+  "Rebuild the player-index-map from the current players array. O(n).
+   Called when the players array structure changes (add/remove/rebuild)."
+  (let ((players (game-players game))
+        (map (or (game-player-index-map game)
+                 (make-hash-table :test 'eql))))
+    (clrhash map)
+    (when players
+      (loop :for i :from 0 :below (length players)
+            :for player = (aref players i)
+            :when player
+            :do (setf (gethash (player-id player) map) i)))
+    (setf (game-player-index-map game) map)
+    map))
+
+(defun find-player-by-id-fast (game id)
+  "O(1) player lookup using the game's index map. Falls back to linear scan if no map."
+  (let ((players (game-players game))
+        (map (game-player-index-map game)))
+    (when (and players (> id 0))
+      (if map
+          (let ((index (gethash id map)))
+            (when (and index (< index (length players)))
+              (aref players index)))
+          ;; Fallback to linear scan if no map exists
+          (find-player-by-id players id)))))
 
 (defgeneric entity-id (entity)
   (:documentation "Return the stable id for ENTITY."))

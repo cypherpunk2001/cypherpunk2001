@@ -2892,6 +2892,8 @@ hello
                 #'test-compact-size-reduction
                 #'test-compact-enum-encoding
                 #'test-compact-quantization
+                #'test-apply-player-compact-direct
+                #'test-apply-npc-compact-direct
                 ;; Zone-Filtered Delta Serialization Tests
                 #'test-delta-for-zone-filters-players
                 #'test-delta-for-zone-nil-player-zone
@@ -3931,6 +3933,103 @@ hello
       (assert (< (abs (- val restored)) 0.01) nil
               (format nil "Timer ~a not preserved within 0.01 precision (got ~a)"
                       val restored))))
+  t)
+
+(defun test-apply-player-compact-direct ()
+  "Test that apply-player-compact-direct updates player state without intermediate plist."
+  (let ((player (make-player 0.0 0.0 :id 42))
+        (source (make-player 123.456 789.012 :id 42)))
+    ;; Set source player fields to test values
+    (setf (player-hp source) 85
+          (player-dx source) 1.0
+          (player-dy source) -0.5
+          (player-anim-state source) :walk
+          (player-facing source) :side
+          (player-facing-sign source) 1.0
+          (player-frame-index source) 3
+          (player-frame-timer source) 0.25
+          (player-attacking source) t
+          (player-attack-hit source) nil
+          (player-hit-active source) t
+          (player-running source) t
+          (player-attack-timer source) 1.5
+          (player-hit-timer source) 0.3
+          (player-hit-frame source) 2
+          (player-hit-facing source) :side
+          (player-hit-facing-sign source) -1.0
+          (player-attack-target-id source) 99
+          (player-follow-target-id source) 101
+          (player-run-stamina source) 6.5
+          (player-last-sequence source) 123)
+    ;; Set client-only state on target that should be preserved
+    (setf (player-click-marker-x player) 555.0
+          (player-click-marker-y player) 666.0
+          (player-click-marker-kind player) :walk
+          (player-auto-right player) t)
+    ;; Serialize source to compact vector
+    (let ((vec (serialize-player-compact source)))
+      ;; Apply directly to target player
+      (apply-player-compact-direct player vec)
+      ;; Verify network fields were applied (ID is preserved, not overwritten)
+      (assert-equal 42 (player-id player) "id was changed (should be preserved)")
+      (assert (< (abs (- 123.4 (player-x player))) 0.2) nil "x not applied within tolerance")
+      (assert (< (abs (- 789.0 (player-y player))) 0.2) nil "y not applied within tolerance")
+      (assert-equal 85 (player-hp player) "hp not applied")
+      (assert-equal :walk (player-anim-state player) "anim-state not applied")
+      (assert-equal :side (player-facing player) "facing not applied")
+      (assert (player-attacking player) nil "attacking flag not applied")
+      (assert (player-hit-active player) nil "hit-active flag not applied")
+      (assert (player-running player) nil "running flag not applied")
+      (assert-equal 99 (player-attack-target-id player) "attack-target-id not applied")
+      ;; Verify client-only state was preserved
+      (assert-equal 555.0 (player-click-marker-x player) "click-marker-x was overwritten!")
+      (assert-equal 666.0 (player-click-marker-y player) "click-marker-y was overwritten!")
+      (assert-equal :walk (player-click-marker-kind player) "click-marker-kind was overwritten!")
+      (assert (player-auto-right player) nil "auto-right was overwritten!")))
+  t)
+
+(defun test-apply-npc-compact-direct ()
+  "Test that apply-npc-compact-direct updates NPC state without intermediate plist."
+  (let ((npc (%make-npc))
+        (source (%make-npc)))
+    ;; Set source NPC fields to test values
+    (setf (npc-id source) 77
+          (npc-x source) 500.5
+          (npc-y source) 300.3
+          (npc-hits-left source) 3
+          (npc-alive source) t
+          (npc-provoked source) t
+          (npc-behavior-state source) :chasing
+          (npc-attack-timer source) 0.75
+          (npc-anim-state source) :attack
+          (npc-facing source) :up
+          (npc-frame-index source) 2
+          (npc-frame-timer source) 0.15
+          (npc-hit-active source) t
+          (npc-hit-timer source) 0.2
+          (npc-hit-frame source) 1
+          (npc-hit-facing source) :down)
+    ;; Set target NPC ID to match source (simulates lookup by ID)
+    ;; Other fields start at defaults that should be overwritten
+    (setf (npc-id npc) 77  ; ID is preserved, not set by compact apply
+          (npc-x npc) 0.0
+          (npc-y npc) 0.0
+          (npc-alive npc) nil)
+    ;; Serialize source to compact vector
+    (let ((vec (serialize-npc-compact source)))
+      ;; Apply directly to target NPC
+      (apply-npc-compact-direct npc vec)
+      ;; Verify fields were applied (ID is preserved, not overwritten)
+      (assert-equal 77 (npc-id npc) "id was changed (should be preserved)")
+      (assert (< (abs (- 500.5 (npc-x npc))) 0.2) nil "x not applied within tolerance")
+      (assert (< (abs (- 300.3 (npc-y npc))) 0.2) nil "y not applied within tolerance")
+      (assert-equal 3 (npc-hits-left npc) "hits-left not applied")
+      (assert (npc-alive npc) nil "alive flag not applied")
+      (assert (npc-provoked npc) nil "provoked flag not applied")
+      (assert-equal :chasing (npc-behavior-state npc) "behavior-state not applied")
+      (assert-equal :attack (npc-anim-state npc) "anim-state not applied")
+      (assert-equal :up (npc-facing npc) "facing not applied")
+      (assert (npc-hit-active npc) nil "hit-active flag not applied")))
   t)
 
 (defun test-delta-for-zone-filters-players ()

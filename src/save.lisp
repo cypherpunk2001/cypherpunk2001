@@ -682,8 +682,9 @@
           (has-stats (getf plist :stats))
           (has-inventory (getf plist :inventory))
           (has-equipment (getf plist :equipment)))
-      (setf (player-id player) (getf plist :id (player-id player))
-            (player-x player) (getf plist :x (player-x player))
+      ;; NOTE: player-id is NOT set here - IDs are immutable after creation
+      ;; (avoids index map desync; plist :id is used for lookup, not to change identity)
+      (setf (player-x player) (getf plist :x (player-x player))
             (player-y player) (getf plist :y (player-y player))
             (player-dx player) (getf plist :dx 0.0)
             (player-dy player) (getf plist :dy 0.0)
@@ -832,7 +833,8 @@
             (loop :for plist :in player-plists
                   :for index :from 0
                   :for id = (getf plist :id 0)
-                  :for existing = (and players (find-player-by-id players id))
+                  ;; Use O(1) fast lookup via game's index map
+                  :for existing = (and players (find-player-by-id-fast game id))
                   :do (if existing
                           (apply-player-plist existing plist)
                           (progn
@@ -854,11 +856,14 @@
                       (setf (aref new-players index) existing))
             (setf (game-players game) new-players
                   players new-players
-                  players-changed t)))
+                  players-changed t)
+            ;; Rebuild index map for the new players array
+            (rebuild-player-index-map game)))
       (let* ((local-id (or (game-net-player-id game)
                            (and (game-player game)
                                 (player-id (game-player game)))))
-             (local-player (and local-id (plusp local-id) (find-player-by-id players local-id))))
+             ;; Use O(1) fast lookup for local player
+             (local-player (and local-id (plusp local-id) (find-player-by-id-fast game local-id))))
         (cond
           ;; Found local player - update game-player if changed
           ((and local-player (not (eq (game-player game) local-player)))
@@ -1038,6 +1043,48 @@
                                            0))))
         plist))))
 
+(defun apply-player-compact-direct (player vec)
+  "Apply compact vector directly to player struct, bypassing intermediate plist.
+   Preserves client-only state (click markers, mouse timer, auto-walk).
+   NOTE: Does NOT set player-id - IDs are immutable after creation. The vec[0] ID
+   is used for lookup, not to change the player's identity.
+   Returns the zone-id-hash for filtering, or 0 if not present."
+  (declare (optimize (speed 3) (safety 1)))
+  (when (and player vec (>= (length vec) 19))
+    ;; Unpack flags once
+    (multiple-value-bind (attacking attack-hit hit-active running)
+        (unpack-player-flags (aref vec 11))
+      ;; Apply network fields directly - client-only state untouched
+      ;; NOTE: player-id is NOT set here - IDs are immutable (avoids index map desync)
+      (setf (player-x player) (dequantize-coord (aref vec 1))
+            (player-y player) (dequantize-coord (aref vec 2))
+            (player-hp player) (aref vec 3)
+            (player-dx player) (dequantize-coord (aref vec 4))
+            (player-dy player) (dequantize-coord (aref vec 5))
+            (player-anim-state player) (decode-anim-state (aref vec 6))
+            (player-facing player) (decode-facing (aref vec 7))
+            (player-facing-sign player) (float (aref vec 8))
+            (player-frame-index player) (aref vec 9)
+            (player-frame-timer player) (dequantize-timer (aref vec 10))
+            (player-attacking player) attacking
+            (player-attack-hit player) attack-hit
+            (player-hit-active player) hit-active
+            (player-running player) running
+            (player-attack-timer player) (dequantize-timer (aref vec 12))
+            (player-hit-timer player) (dequantize-timer (aref vec 13))
+            (player-hit-frame player) (aref vec 14)
+            (player-hit-facing player) (decode-facing (aref vec 15))
+            (player-hit-facing-sign player) (float (aref vec 16))
+            (player-attack-target-id player) (aref vec 17)
+            (player-follow-target-id player) (aref vec 18))
+      ;; Optional fields (backward compat with older vectors)
+      (when (>= (length vec) 20)
+        (setf (player-run-stamina player) (dequantize-timer (aref vec 19))))
+      (when (>= (length vec) 21)
+        (setf (player-last-sequence player) (aref vec 20))))
+    ;; Return zone-id-hash for filtering (0 if not present)
+    (if (>= (length vec) 22) (aref vec 21) 0)))
+
 ;;; Compact NPC Serialization
 ;;; Vector format (14 elements):
 ;;; [0] id           [1] x*10        [2] y*10        [3] hits-left
@@ -1108,6 +1155,36 @@
             :hit-facing-sign 1.0
             ;; v4 adds zone-id-hash at index 14 (0 if v3 format)
             :zone-id-hash (if (>= (length vec) 15) (aref vec 14) 0)))))  ; Default, not stored compactly
+
+(defun apply-npc-compact-direct (npc vec)
+  "Apply compact vector directly to NPC struct, bypassing intermediate plist.
+   NOTE: Does NOT set npc-id - IDs are immutable after creation. The vec[0] ID
+   is used for lookup, not to change the NPC's identity.
+   Returns the zone-id-hash for filtering, or 0 if not present."
+  (declare (optimize (speed 3) (safety 1)))
+  (when (and npc vec (>= (length vec) 14))
+    (multiple-value-bind (alive provoked hit-active)
+        (unpack-npc-flags (aref vec 4))
+      ;; Apply network fields directly
+      ;; NOTE: npc-id is NOT set here - IDs are immutable
+      (setf (npc-x npc) (dequantize-coord (aref vec 1))
+            (npc-y npc) (dequantize-coord (aref vec 2))
+            (npc-hits-left npc) (aref vec 3)
+            (npc-alive npc) alive
+            (npc-provoked npc) provoked
+            (npc-behavior-state npc) (decode-behavior-state (aref vec 5))
+            (npc-attack-timer npc) (dequantize-timer (aref vec 6))
+            (npc-anim-state npc) (decode-anim-state (aref vec 7))
+            (npc-facing npc) (decode-facing (aref vec 8))
+            (npc-frame-index npc) (aref vec 9)
+            (npc-frame-timer npc) (dequantize-timer (aref vec 10))
+            (npc-hit-active npc) hit-active
+            (npc-hit-timer npc) (dequantize-timer (aref vec 11))
+            (npc-hit-frame npc) (aref vec 12)
+            (npc-hit-facing npc) (decode-facing (aref vec 13))
+            (npc-hit-facing-sign npc) 1.0))
+    ;; Return zone-id-hash for filtering (0 if not present)
+    (if (>= (length vec) 15) (aref vec 14) 0)))
 
 ;;; Compact Game State Serialization
 
@@ -1336,13 +1413,13 @@
     (when (and changed-players (> (length changed-players) 0))
       (let ((new-players nil))  ; Collect players we need to add
         ;; First pass: update existing, collect new
+        ;; Optimization: extract values directly from vector, skip plist for existing
         (loop :for vec :across changed-players
-              :for plist = (deserialize-player-compact vec)
-              :for id = (getf plist :id)
-              :for x = (getf plist :x)
-              :for y = (getf plist :y)
-              :for entity-zone-hash = (getf plist :zone-id-hash 0)
-              :for existing = (and players (find-player-by-id players id))
+              :for id = (aref vec 0)
+              :for x = (dequantize-coord (aref vec 1))
+              :for y = (dequantize-coord (aref vec 2))
+              :for entity-zone-hash = (if (>= (length vec) 22) (aref vec 21) 0)
+              :for existing = (and players (find-player-by-id-fast game id))
               ;; Client-side zone filter: skip if zone-hash mismatch (0 = unset/legacy, allow)
               :when (or (null local-zone-hash)
                         (zerop entity-zone-hash)
@@ -1351,13 +1428,14 @@
                     ;; Track position from snapshot (not interpolated)
                     (setf (gethash id updated-positions) (list x y))
                     (if existing
-                        ;; Update existing player in place
-                        (apply-player-plist existing plist)
-                        ;; New player - need to add to game
-                        (push (deserialize-player plist
-                                                  *inventory-size*
-                                                  (length *equipment-slot-ids*))
-                              new-players))))
+                        ;; Update existing player directly from compact vector (no plist)
+                        (apply-player-compact-direct existing vec)
+                        ;; New player - create plist for full deserialization
+                        (let ((plist (deserialize-player-compact vec)))
+                          (push (deserialize-player plist
+                                                    *inventory-size*
+                                                    (length *equipment-slot-ids*))
+                                new-players)))))
         ;; Second pass: if we have new players, expand the array
         (when new-players
           (let* ((old-count (if players (length players) 0))
@@ -1374,19 +1452,21 @@
             ;; Update both players and entities arrays
             (setf (game-players game) expanded
                   (game-entities game)
-                  (make-entities expanded (game-npcs game)))))))
+                  (make-entities expanded (game-npcs game)))
+            ;; Rebuild player index map after expanding array
+            (rebuild-player-index-map game)))))
     ;; Apply changed NPCs - find by ID and update
     ;; NOTE: NPC IDs are entity IDs, not array indices. Must search for matching NPC.
     ;; Client-side zone filter: skip NPCs not in local player's zone (defense-in-depth).
+    ;; Optimization: extract values directly from vector, skip plist creation
     (when changed-npcs
       (let ((npcs (game-npcs game)))
         (when npcs
           (loop :for vec :across changed-npcs
-                :for plist = (deserialize-npc-compact vec)
-                :for id = (getf plist :id)
-                :for x = (getf plist :x)
-                :for y = (getf plist :y)
-                :for npc-zone-hash = (getf plist :zone-id-hash 0)
+                :for id = (aref vec 0)
+                :for x = (dequantize-coord (aref vec 1))
+                :for y = (dequantize-coord (aref vec 2))
+                :for npc-zone-hash = (if (>= (length vec) 15) (aref vec 14) 0)
                 :for index = (position id npcs :key #'npc-id)
                 ;; Client-side zone filter: skip if zone-hash mismatch (0 = unset/legacy, allow)
                 :when (and index
@@ -1396,7 +1476,7 @@
                 :do (progn
                       ;; Track NPC position (use negative ID like capture-entity-positions)
                       (setf (gethash (- id) updated-positions) (list x y))
-                      (deserialize-npc plist npcs index))))))
+                      (apply-npc-compact-direct (aref npcs index) vec))))))
     ;; Apply object states from server (authoritative - replaces client objects)
     ;; This ensures dropped items appear and picked up items disappear
     (let ((object-plists (getf delta :objects)))
