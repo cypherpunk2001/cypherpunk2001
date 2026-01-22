@@ -247,3 +247,57 @@
        (when ,success-var
          ,@body)
        ,result-var)))
+
+;;; Vector Pool for Serialization (Task 4.2)
+;;; Reduces allocation during hot snapshot serialization path.
+;;; Vectors are acquired from pool, filled, and automatically reused on next reset.
+
+(defstruct (vector-pool (:constructor %make-vector-pool))
+  "Pool of pre-allocated vectors to reduce allocation during serialization.
+   Use acquire-pooled-vector to get vectors, reset-vector-pool to reuse all."
+  (vectors nil)      ; Vector of pre-allocated vectors
+  (index 0)          ; Next vector to allocate
+  (element-size 0)   ; Size of each pooled vector
+  (capacity 0))      ; Max number of vectors
+
+(defun make-vector-pool (capacity element-size)
+  "Create a vector pool with CAPACITY vectors of ELEMENT-SIZE elements each.
+   Used for pre-allocating serialization buffers."
+  (let ((vectors (make-array capacity)))
+    (dotimes (i capacity)
+      (setf (aref vectors i) (make-array element-size :initial-element 0)))
+    (%make-vector-pool :vectors vectors
+                       :index 0
+                       :element-size element-size
+                       :capacity capacity)))
+
+(defun reset-vector-pool (pool)
+  "Reset pool index to 0, allowing all vectors to be reused.
+   Call this at the start of each serialization pass."
+  (when pool
+    (setf (vector-pool-index pool) 0)))
+
+(defun acquire-pooled-vector (pool)
+  "Acquire a pre-allocated vector from the pool.
+   Returns a fresh vector if pool is exhausted (grows the pool).
+   The vector's contents are undefined - caller must fill all elements."
+  (if (null pool)
+      ;; No pool - create fresh vector (fallback)
+      (make-array 22 :initial-element 0)
+      (let ((index (vector-pool-index pool))
+            (capacity (vector-pool-capacity pool)))
+        (incf (vector-pool-index pool))  ; Always increment to track usage
+        (if (< index capacity)
+            ;; Return next pooled vector
+            (aref (vector-pool-vectors pool) index)
+            ;; Pool exhausted - create fresh vector (rare case)
+            (make-array (vector-pool-element-size pool) :initial-element 0)))))
+
+(defun vector-pool-stats (pool)
+  "Return stats about pool usage: (values used total exhausted-count).
+   Useful for tuning pool capacity."
+  (if pool
+      (values (vector-pool-index pool)
+              (vector-pool-capacity pool)
+              (max 0 (- (vector-pool-index pool) (vector-pool-capacity pool))))
+      (values 0 0 0)))

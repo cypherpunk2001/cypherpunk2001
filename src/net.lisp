@@ -930,7 +930,8 @@
 
 (defun add-player-to-game (game player)
   ;; Append PLAYER to GAME and refresh entity list.
-  ;; Also inserts player into zone's spatial grid for proximity queries.
+  ;; Also inserts player into zone's spatial grid for proximity queries,
+  ;; and adds to zone-players cache for O(zone-players) serialization.
   (let* ((players (game-players game))
          (count (if players (length players) 0))
          (new-players (make-array (1+ count))))
@@ -945,32 +946,40 @@
                    (setf (game-player-index-map game)
                          (make-hash-table :test 'eql)))))
       (setf (gethash (player-id player) map) count))
-    ;; Insert player into zone's spatial grid
+    ;; Insert player into zone's spatial grid and zone-players cache
     (let* ((zone-id (player-zone-id player))
-           (zone-state (when zone-id (get-zone-state zone-id)))
-           (grid (when zone-state (zone-state-player-grid zone-state))))
-      (when grid
-        (multiple-value-bind (cx cy)
-            (position-to-cell (player-x player) (player-y player)
-                              (spatial-grid-cell-size grid))
-          (spatial-grid-insert grid (player-id player) (player-x player) (player-y player))
-          (setf (player-grid-cell-x player) cx
-                (player-grid-cell-y player) cy)))))
+           (zone-state (when zone-id (get-zone-state zone-id))))
+      (when zone-state
+        ;; Add to zone-players cache (Task 4.1)
+        (add-player-to-zone-cache player zone-state)
+        ;; Add to spatial grid
+        (let ((grid (zone-state-player-grid zone-state)))
+          (when grid
+            (multiple-value-bind (cx cy)
+                (position-to-cell (player-x player) (player-y player)
+                                  (spatial-grid-cell-size grid))
+              (spatial-grid-insert grid (player-id player) (player-x player) (player-y player))
+              (setf (player-grid-cell-x player) cx
+                    (player-grid-cell-y player) cy)))))))
   player)
 
 (defun remove-player-from-game (game player)
   "Remove PLAYER from GAME and refresh entity list.
-   Also removes player from zone's spatial grid."
-  ;; Remove from spatial grid first (before player becomes unreachable)
+   Also removes player from zone's spatial grid and zone-players cache."
+  ;; Remove from spatial grid and zone-players cache first (before player becomes unreachable)
   (let* ((zone-id (player-zone-id player))
-         (zone-state (when zone-id (get-zone-state zone-id)))
-         (grid (when zone-state (zone-state-player-grid zone-state))))
-    (when (and grid (player-grid-cell-x player) (player-grid-cell-y player))
-      (spatial-grid-remove grid (player-id player)
-                           (player-grid-cell-x player)
-                           (player-grid-cell-y player))
-      (setf (player-grid-cell-x player) nil
-            (player-grid-cell-y player) nil)))
+         (zone-state (when zone-id (get-zone-state zone-id))))
+    (when zone-state
+      ;; Remove from zone-players cache (Task 4.1)
+      (remove-player-from-zone-cache player zone-state)
+      ;; Remove from spatial grid
+      (let ((grid (zone-state-player-grid zone-state)))
+        (when (and grid (player-grid-cell-x player) (player-grid-cell-y player))
+          (spatial-grid-remove grid (player-id player)
+                               (player-grid-cell-x player)
+                               (player-grid-cell-y player))
+          (setf (player-grid-cell-x player) nil
+                (player-grid-cell-y player) nil)))))
   (let* ((players (game-players game))
          (filtered (remove player players :test #'eq)))
     (when (< (length filtered) (length players))
@@ -1331,7 +1340,7 @@
                 ;; Send zone-filtered full snapshot to clients needing resync
                 (when resync-clients
                   (let ((full-state (serialize-game-state-for-zone
-                                     game effective-zone-id zone-state)))
+                                     game effective-zone-id zone-state :use-pool t)))
                     (setf full-state (plist-put full-state :seq current-seq))
                     (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
                                  effective-zone-id (length resync-clients) current-seq
@@ -1344,7 +1353,7 @@
                 ;; Send zone-filtered delta snapshot to synced clients
                 (when delta-clients
                   (let ((delta-state (serialize-game-state-delta-for-zone
-                                      game effective-zone-id zone-state current-seq)))
+                                      game effective-zone-id zone-state current-seq :use-pool t)))
                     (log-verbose "Zone ~a: delta ~d clients" effective-zone-id (length delta-clients))
                     (send-snapshots-parallel socket delta-clients delta-state event-plists 1)
                     (setf any-sent t)))))))))

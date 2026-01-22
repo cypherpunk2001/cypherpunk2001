@@ -257,7 +257,16 @@
                 test-entity-cell-changed-p
                 test-spatial-grid-stats
                 test-spatial-grid-clear
-                test-zone-transition-grid-update)))
+                test-zone-transition-grid-update
+                ;; Zone-Players Cache Tests (Task 4.1)
+                test-zone-players-cache-add-remove
+                test-zone-players-cache-rebuild
+                test-zone-players-cache-transition
+                ;; Vector Pool Tests (Task 4.2)
+                test-vector-pool-create
+                test-vector-pool-acquire
+                test-vector-pool-reset
+                test-vector-pool-overflow)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -7453,3 +7462,156 @@ hello
                    (mmorpg::player-grid-cell-x player)
                    (mmorpg::player-grid-cell-y player))))
       (assert (member 42 nearby) () "Player should be findable via spatial query in new zone"))))
+
+;;; Zone-Players Cache Tests (Task 4.1)
+
+(defun test-zone-players-cache-add-remove ()
+  "Test adding and removing players from zone-players cache."
+  (let* ((zone-state (mmorpg::make-zone-state
+                      :zone-id :test-zone
+                      :player-grid (mmorpg::make-spatial-grid 128.0)
+                      :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         (player1 (mmorpg::make-player 100.0 100.0 :id 1 :zone-id :test-zone))
+         (player2 (mmorpg::make-player 200.0 200.0 :id 2 :zone-id :test-zone))
+         (cache (mmorpg::zone-state-zone-players zone-state)))
+    ;; Initial cache should be empty
+    (assert (= (length cache) 0) () "Cache should start empty")
+    ;; Add first player
+    (mmorpg::add-player-to-zone-cache player1 zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players zone-state)) 1)
+            () "Cache should have 1 player after add")
+    ;; Add second player
+    (mmorpg::add-player-to-zone-cache player2 zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players zone-state)) 2)
+            () "Cache should have 2 players after second add")
+    ;; Adding same player should not duplicate (idempotent)
+    (mmorpg::add-player-to-zone-cache player1 zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players zone-state)) 2)
+            () "Cache should still have 2 players (no duplicates)")
+    ;; Remove first player
+    (mmorpg::remove-player-from-zone-cache player1 zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players zone-state)) 1)
+            () "Cache should have 1 player after remove")
+    ;; Verify correct player remains
+    (let ((remaining (aref (mmorpg::zone-state-zone-players zone-state) 0)))
+      (assert (eq remaining player2) () "Player2 should be the remaining player"))
+    ;; Remove second player
+    (mmorpg::remove-player-from-zone-cache player2 zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players zone-state)) 0)
+            () "Cache should be empty after removing all players")))
+
+(defun test-zone-players-cache-rebuild ()
+  "Test rebuilding zone-players cache from game state."
+  (let* ((zone-state (mmorpg::make-zone-state
+                      :zone-id :test-zone
+                      :player-grid (mmorpg::make-spatial-grid 128.0)
+                      :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         (player1 (mmorpg::make-player 100.0 100.0 :id 1 :zone-id :test-zone))
+         (player2 (mmorpg::make-player 200.0 200.0 :id 2 :zone-id :other-zone))
+         (player3 (mmorpg::make-player 300.0 300.0 :id 3 :zone-id :test-zone))
+         ;; Create minimal game struct with players
+         (game (mmorpg::%make-game :players (vector player1 player2 player3))))
+    ;; Rebuild the cache
+    (mmorpg::rebuild-zone-players-cache zone-state game)
+    ;; Should only have players in :test-zone (player1 and player3)
+    (let ((cache (mmorpg::zone-state-zone-players zone-state)))
+      (assert (= (length cache) 2) () "Cache should have 2 players in test-zone")
+      ;; Verify correct players
+      (let ((ids (loop :for p :across cache :collect (mmorpg::player-id p))))
+        (assert (member 1 ids) () "Player1 should be in cache")
+        (assert (not (member 2 ids)) () "Player2 should NOT be in cache (wrong zone)")
+        (assert (member 3 ids) () "Player3 should be in cache")))))
+
+(defun test-zone-players-cache-transition ()
+  "Test that zone transitions correctly update zone-players caches."
+  (let* ((old-zone-state (mmorpg::make-zone-state
+                          :zone-id :old-zone
+                          :player-grid (mmorpg::make-spatial-grid 128.0)
+                          :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         (new-zone-state (mmorpg::make-zone-state
+                          :zone-id :new-zone
+                          :player-grid (mmorpg::make-spatial-grid 128.0)
+                          :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         (player (mmorpg::make-player 100.0 100.0 :id 42 :zone-id :old-zone)))
+    ;; Add player to old zone's cache
+    (mmorpg::add-player-to-zone-cache player old-zone-state)
+    (assert (= (length (mmorpg::zone-state-zone-players old-zone-state)) 1)
+            () "Player should be in old zone cache")
+    (assert (= (length (mmorpg::zone-state-zone-players new-zone-state)) 0)
+            () "New zone cache should be empty initially")
+    ;; Simulate zone transition
+    (mmorpg::remove-player-from-zone-cache player old-zone-state)
+    (setf (mmorpg::player-zone-id player) :new-zone)
+    (mmorpg::add-player-to-zone-cache player new-zone-state)
+    ;; Verify caches are correct
+    (assert (= (length (mmorpg::zone-state-zone-players old-zone-state)) 0)
+            () "Old zone cache should be empty after transition")
+    (assert (= (length (mmorpg::zone-state-zone-players new-zone-state)) 1)
+            () "New zone cache should have player after transition")
+    ;; Verify correct player is in new cache
+    (let ((cached (aref (mmorpg::zone-state-zone-players new-zone-state) 0)))
+      (assert (eq cached player) () "Cached player should be same object"))))
+
+;;; Vector Pool Tests (Task 4.2)
+
+(defun test-vector-pool-create ()
+  "Test vector pool creation."
+  (let ((pool (mmorpg::make-vector-pool 10 22)))
+    (assert pool () "Pool should be created")
+    (assert (= (mmorpg::vector-pool-capacity pool) 10)
+            () "Pool capacity should be 10")
+    (assert (= (mmorpg::vector-pool-element-size pool) 22)
+            () "Element size should be 22")
+    (assert (= (mmorpg::vector-pool-index pool) 0)
+            () "Initial index should be 0")))
+
+(defun test-vector-pool-acquire ()
+  "Test acquiring vectors from pool."
+  (let ((pool (mmorpg::make-vector-pool 5 22)))
+    ;; Acquire first vector
+    (let ((v1 (mmorpg::acquire-pooled-vector pool)))
+      (assert (= (length v1) 22) () "Acquired vector should have 22 elements")
+      (assert (= (mmorpg::vector-pool-index pool) 1) () "Index should be 1 after first acquire"))
+    ;; Acquire second vector
+    (let ((v2 (mmorpg::acquire-pooled-vector pool)))
+      (assert (= (length v2) 22) () "Second vector should have 22 elements")
+      (assert (= (mmorpg::vector-pool-index pool) 2) () "Index should be 2 after second acquire"))
+    ;; Vectors should be different objects
+    (mmorpg::reset-vector-pool pool)
+    (let ((v1 (mmorpg::acquire-pooled-vector pool))
+          (v2 (mmorpg::acquire-pooled-vector pool)))
+      (assert (not (eq v1 v2)) () "Acquired vectors should be different objects"))))
+
+(defun test-vector-pool-reset ()
+  "Test resetting vector pool for reuse."
+  (let ((pool (mmorpg::make-vector-pool 5 22)))
+    ;; Acquire some vectors
+    (mmorpg::acquire-pooled-vector pool)
+    (mmorpg::acquire-pooled-vector pool)
+    (mmorpg::acquire-pooled-vector pool)
+    (assert (= (mmorpg::vector-pool-index pool) 3) () "Index should be 3")
+    ;; Reset
+    (mmorpg::reset-vector-pool pool)
+    (assert (= (mmorpg::vector-pool-index pool) 0) () "Index should be 0 after reset")
+    ;; Can acquire again from beginning
+    (let ((v (mmorpg::acquire-pooled-vector pool)))
+      (assert (= (length v) 22) () "Can acquire after reset")
+      (assert (= (mmorpg::vector-pool-index pool) 1) () "Index should be 1"))))
+
+(defun test-vector-pool-overflow ()
+  "Test vector pool behavior when exhausted."
+  (let ((pool (mmorpg::make-vector-pool 3 22)))
+    ;; Exhaust the pool
+    (mmorpg::acquire-pooled-vector pool)
+    (mmorpg::acquire-pooled-vector pool)
+    (mmorpg::acquire-pooled-vector pool)
+    (assert (= (mmorpg::vector-pool-index pool) 3) () "Index should be 3 (capacity)")
+    ;; Acquiring beyond capacity should still work (creates fresh vector)
+    (let ((v (mmorpg::acquire-pooled-vector pool)))
+      (assert (= (length v) 22) () "Overflow vector should have 22 elements"))
+    ;; Stats should show overflow
+    (multiple-value-bind (used total overflow)
+        (mmorpg::vector-pool-stats pool)
+      (assert (= used 4) () "Used should be 4")
+      (assert (= total 3) () "Total should be 3")
+      (assert (= overflow 1) () "Overflow should be 1"))))

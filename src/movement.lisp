@@ -1114,9 +1114,12 @@
                         (find-open-position-with-map target-wall-map raw-x raw-y
                                                      half-w half-h tile-size)
                         (world-open-position-for world raw-x raw-y half-w half-h))
-                  ;; Remove player from old zone's spatial grid
+                  ;; Remove player from old zone's spatial grid and zone-players cache
                   (let ((old-zone-state (get-zone-state current-zone-id)))
                     (when old-zone-state
+                      ;; Remove from zone-players cache (Task 4.1)
+                      (remove-player-from-zone-cache player old-zone-state)
+                      ;; Remove from spatial grid
                       (let ((old-grid (zone-state-player-grid old-zone-state)))
                         (when (and old-grid
                                    (player-grid-cell-x player)
@@ -1130,14 +1133,18 @@
                         (player-dy player) 0.0
                         (player-zone-id player) target-zone-id
                         (player-snapshot-dirty player) t)
-                  ;; Insert player into new zone's spatial grid
-                  (let ((new-grid (zone-state-player-grid target-zone-state)))
-                    (when new-grid
-                      (multiple-value-bind (cx cy)
-                          (position-to-cell spawn-x spawn-y (spatial-grid-cell-size new-grid))
-                        (spatial-grid-insert new-grid (player-id player) spawn-x spawn-y)
-                        (setf (player-grid-cell-x player) cx
-                              (player-grid-cell-y player) cy))))
+                  ;; Insert player into new zone's spatial grid and zone-players cache
+                  (when target-zone-state
+                    ;; Add to zone-players cache (Task 4.1)
+                    (add-player-to-zone-cache player target-zone-state)
+                    ;; Add to spatial grid
+                    (let ((new-grid (zone-state-player-grid target-zone-state)))
+                      (when new-grid
+                        (multiple-value-bind (cx cy)
+                            (position-to-cell spawn-x spawn-y (spatial-grid-cell-size new-grid))
+                          (spatial-grid-insert new-grid (player-id player) spawn-x spawn-y)
+                          (setf (player-grid-cell-x player) cx
+                                (player-grid-cell-y player) cy)))))
                   ;; Tier-1 write: zone transition saves immediately
                   (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
                                             :max-retries 5

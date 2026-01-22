@@ -185,10 +185,14 @@
                             (player-grid-cell-y player) cy))))))))
 
 (defun ensure-player-in-grid (player zone-state)
-  "Ensure a player is in the zone's spatial grid. Inserts if grid-cell is nil.
+  "Ensure a player is in the zone's spatial grid and zone-players cache.
+   Only inserts if grid-cell is nil (player wasn't already tracked).
    Called to handle players who were added before zone-state existed."
   (when (and player zone-state
              (null (player-grid-cell-x player)))
+    ;; Player not yet in grid - add to both grid and cache
+    ;; This only runs once per player (when they first need tracking)
+    (add-player-to-zone-cache player zone-state)
     (let ((grid (zone-state-player-grid zone-state)))
       (when grid
         (multiple-value-bind (cx cy)

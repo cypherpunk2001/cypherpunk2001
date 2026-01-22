@@ -14,6 +14,21 @@
 (defparameter *save-format-version* 2
   "Current save file format version for migration support.")
 
+;;; Vector Pool for Compact Serialization (Task 4.2)
+;;; Reduces allocation during hot snapshot path.
+
+(defparameter *player-compact-vector-size* 22
+  "Size of compact player serialization vector (indices 0-21).")
+
+(defparameter *npc-compact-vector-size* 15
+  "Size of compact NPC serialization vector (indices 0-14).")
+
+(defparameter *player-vector-pool-capacity* 600
+  "Initial capacity for player vector pool. Sized for ~500 players per zone + headroom.")
+
+(defvar *player-vector-pool* nil
+  "Global vector pool for player compact serialization. Created lazily on first use.")
+
 ;;;; ========================================================================
 ;;;; SCHEMA VALIDATION (Phase 1 - Database Architecture Hardening)
 ;;;; See docs/db.md "Deserialization Validation" section
@@ -976,32 +991,50 @@
         (logand hash #xFFFF))  ; Return 16-bit
       0))
 
-(defun serialize-player-compact (player)
+(defun get-player-vector-pool ()
+  "Get or lazily create the global player vector pool."
+  (or *player-vector-pool*
+      (setf *player-vector-pool*
+            (make-vector-pool *player-vector-pool-capacity*
+                              *player-compact-vector-size*))))
+
+(defun reset-player-vector-pool ()
+  "Reset the player vector pool for a new serialization pass.
+   Call this before serializing players for a zone."
+  (when *player-vector-pool*
+    (reset-vector-pool *player-vector-pool*)))
+
+(defun serialize-player-compact (player &key use-pool)
   "Serialize player to compact vector for network transmission.
    Excludes inventory (private to owning client).
-   Format v4: Added zone-id at index 21."
-  (vector (player-id player)
-          (quantize-coord (player-x player))
-          (quantize-coord (player-y player))
-          (or (player-hp player) 0)
-          (quantize-coord (player-dx player))
-          (quantize-coord (player-dy player))
-          (encode-anim-state (player-anim-state player))
-          (encode-facing (player-facing player))
-          (round (or (player-facing-sign player) 1.0))
-          (or (player-frame-index player) 0)
-          (quantize-timer (player-frame-timer player))
-          (pack-player-flags player)
-          (quantize-timer (player-attack-timer player))
-          (quantize-timer (player-hit-timer player))
-          (or (player-hit-frame player) 0)
-          (encode-facing (player-hit-facing player))
-          (round (or (player-hit-facing-sign player) 1.0))
-          (or (player-attack-target-id player) 0)
-          (or (player-follow-target-id player) 0)
-          (quantize-timer (player-run-stamina player))
-          (or (player-last-sequence player) 0)
-          (encode-zone-id (player-zone-id player))))
+   Format v4: Added zone-id at index 21.
+   When USE-POOL is T, uses pre-allocated vector from pool (Task 4.2)."
+  (let ((vec (if use-pool
+                 (acquire-pooled-vector (get-player-vector-pool))
+                 (make-array *player-compact-vector-size* :initial-element 0))))
+    (setf (aref vec 0) (player-id player)
+          (aref vec 1) (quantize-coord (player-x player))
+          (aref vec 2) (quantize-coord (player-y player))
+          (aref vec 3) (or (player-hp player) 0)
+          (aref vec 4) (quantize-coord (player-dx player))
+          (aref vec 5) (quantize-coord (player-dy player))
+          (aref vec 6) (encode-anim-state (player-anim-state player))
+          (aref vec 7) (encode-facing (player-facing player))
+          (aref vec 8) (round (or (player-facing-sign player) 1.0))
+          (aref vec 9) (or (player-frame-index player) 0)
+          (aref vec 10) (quantize-timer (player-frame-timer player))
+          (aref vec 11) (pack-player-flags player)
+          (aref vec 12) (quantize-timer (player-attack-timer player))
+          (aref vec 13) (quantize-timer (player-hit-timer player))
+          (aref vec 14) (or (player-hit-frame player) 0)
+          (aref vec 15) (encode-facing (player-hit-facing player))
+          (aref vec 16) (round (or (player-hit-facing-sign player) 1.0))
+          (aref vec 17) (or (player-attack-target-id player) 0)
+          (aref vec 18) (or (player-follow-target-id player) 0)
+          (aref vec 19) (quantize-timer (player-run-stamina player))
+          (aref vec 20) (or (player-last-sequence player) 0)
+          (aref vec 21) (encode-zone-id (player-zone-id player)))
+    vec))
 
 (defun deserialize-player-compact (vec)
   "Deserialize compact vector to player plist for apply-player-plist.
@@ -1223,11 +1256,16 @@
           :npcs (coerce (nreverse npc-vectors) 'vector)
           :objects (nreverse object-list))))
 
-(defun serialize-game-state-for-zone (game zone-id zone-state)
+(defun serialize-game-state-for-zone (game zone-id zone-state &key use-pool)
   "Serialize game state filtered to a specific zone.
    Only includes players in ZONE-ID and NPCs from ZONE-STATE.
+   Uses cached zone-players array when available (Task 4.1) for O(zone-players) instead of O(total-players).
+   When USE-POOL is T, uses pre-allocated vectors from pool (Task 4.2) to reduce allocation.
    Used for per-player snapshots when players are in different zones."
-  (let* ((players (game-players game))
+  ;; Reset vector pool for this serialization pass (Task 4.2)
+  (when use-pool
+    (reset-player-vector-pool))
+  (let* ((zone-players (when zone-state (zone-state-zone-players zone-state)))
          (npcs (if zone-state
                    (zone-state-npcs zone-state)
                    (game-npcs game)))  ; Fallback to game NPCs
@@ -1238,12 +1276,20 @@
          (player-vectors nil)
          (npc-vectors nil)
          (object-list nil))
-    ;; Serialize only players in this zone (treat nil player-zone-id as *starting-zone-id*)
-    (when players
-      (loop :for player :across players
-            :for player-zone = (or (player-zone-id player) *starting-zone-id*)
-            :when (and player (eq player-zone zone-id))
-            :do (push (serialize-player-compact player) player-vectors)))
+    ;; Serialize players using cached zone-players array if available (Task 4.1)
+    ;; This is O(zone-players) instead of O(total-players)
+    (if (and zone-players (> (length zone-players) 0))
+        ;; Fast path: use cached zone-players array
+        (loop :for player :across zone-players
+              :when player
+              :do (push (serialize-player-compact player :use-pool use-pool) player-vectors))
+        ;; Fallback: filter all players (for compatibility when cache not populated)
+        (let ((players (game-players game)))
+          (when players
+            (loop :for player :across players
+                  :for player-zone = (or (player-zone-id player) *starting-zone-id*)
+                  :when (and player (eq player-zone zone-id))
+                  :do (push (serialize-player-compact player :use-pool use-pool) player-vectors)))))
     ;; Serialize NPCs for this zone (with zone-id for client filtering)
     (when npcs
       (loop :for npc :across npcs
@@ -1335,25 +1381,37 @@
           :changed-npcs (coerce (nreverse changed-npcs) 'vector)
           :objects (nreverse object-list))))
 
-(defun serialize-game-state-delta-for-zone (game zone-id zone-state seq)
+(defun serialize-game-state-delta-for-zone (game zone-id zone-state seq &key use-pool)
   "Serialize delta snapshot filtered to ZONE-ID.
    Only includes dirty players in that zone and NPCs from zone-state.
+   Uses cached zone-players array when available (Task 4.1).
+   When USE-POOL is T, uses pre-allocated vectors (Task 4.2).
    SEQ is current snapshot sequence number."
-  (let* ((players (game-players game))
+  ;; Reset vector pool for this serialization pass (Task 4.2)
+  (when use-pool
+    (reset-player-vector-pool))
+  (let* ((zone-players (when zone-state (zone-state-zone-players zone-state)))
          (npcs (if zone-state (zone-state-npcs zone-state) nil))
          (zone (if zone-state (zone-state-zone zone-state) nil))
          (objects (and zone (zone-objects zone)))
          (changed-players nil)
          (changed-npcs nil)
          (object-list nil))
-    ;; Filter dirty players by zone (treat nil player-zone-id as *starting-zone-id*)
-    (when players
-      (loop :for player :across players
-            :for player-zone = (or (player-zone-id player) *starting-zone-id*)
-            :when (and player
-                       (player-snapshot-dirty player)
-                       (eq player-zone zone-id))
-            :do (push (serialize-player-compact player) changed-players)))
+    ;; Filter dirty players using cached zone-players if available (Task 4.1)
+    (if (and zone-players (> (length zone-players) 0))
+        ;; Fast path: iterate only zone players
+        (loop :for player :across zone-players
+              :when (and player (player-snapshot-dirty player))
+              :do (push (serialize-player-compact player :use-pool use-pool) changed-players))
+        ;; Fallback: filter all players by zone
+        (let ((players (game-players game)))
+          (when players
+            (loop :for player :across players
+                  :for player-zone = (or (player-zone-id player) *starting-zone-id*)
+                  :when (and player
+                             (player-snapshot-dirty player)
+                             (eq player-zone zone-id))
+                  :do (push (serialize-player-compact player :use-pool use-pool) changed-players)))))
     ;; Collect dirty NPCs from zone-state only (with zone-id for client filtering)
     (when npcs
       (loop :for npc :across npcs

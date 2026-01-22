@@ -53,7 +53,10 @@
   (player-grid nil)    ; Spatial grid for players in this zone
   (npc-grid nil)       ; Spatial grid for NPCs in this zone
   ;; NPC index map for O(1) lookup by ID (npc-id -> array index)
-  (npc-index-map nil))
+  (npc-index-map nil)
+  ;; Cached player array for O(zone-players) serialization (Task 4.1)
+  ;; Maintained by add/remove-player-zone-cache and zone transitions
+  (zone-players (make-array 0 :adjustable t :fill-pointer 0)))
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
   ;; Skill state tracking level and xp.
@@ -564,6 +567,52 @@
                 (aref npcs index)))
             ;; Fallback to linear scan if no map exists
             (find-npc-by-id npcs id))))))
+
+;;; Zone-players cache management (Task 4.1)
+;;; Maintains per-zone player arrays for O(zone-players) serialization instead of O(total-players).
+
+(defun add-player-to-zone-cache (player zone-state)
+  "Add PLAYER to ZONE-STATE's zone-players cache.
+   Used when a player joins or transitions into a zone."
+  (when (and player zone-state)
+    (let ((cache (zone-state-zone-players zone-state)))
+      ;; Avoid duplicates - check if player already in cache
+      (unless (find player cache :test #'eq)
+        (vector-push-extend player cache))
+      cache)))
+
+(defun remove-player-from-zone-cache (player zone-state)
+  "Remove PLAYER from ZONE-STATE's zone-players cache.
+   Used when a player leaves or transitions out of a zone."
+  (when (and player zone-state)
+    (let ((cache (zone-state-zone-players zone-state)))
+      (when cache
+        ;; Find and remove the player, shifting remaining elements
+        (let ((pos (position player cache :test #'eq)))
+          (when pos
+            ;; Shift elements down and decrement fill pointer
+            (loop :for i :from pos :below (1- (length cache))
+                  :do (setf (aref cache i) (aref cache (1+ i))))
+            (when (> (fill-pointer cache) 0)
+              (decf (fill-pointer cache)))))))))
+
+(defun rebuild-zone-players-cache (zone-state game)
+  "Rebuild ZONE-STATE's zone-players cache from scratch using all players in GAME.
+   Called when zone-state is first created or when cache becomes stale."
+  (when (and zone-state game)
+    (let* ((zone-id (zone-state-zone-id zone-state))
+           (all-players (game-players game))
+           (cache (zone-state-zone-players zone-state)))
+      ;; Clear existing cache
+      (setf (fill-pointer cache) 0)
+      ;; Populate from all players
+      (when all-players
+        (loop :for player :across all-players
+              :when (and player
+                         (eql (or (player-zone-id player) *starting-zone-id*)
+                              zone-id))
+              :do (vector-push-extend player cache)))
+      cache)))
 
 (defgeneric entity-id (entity)
   (:documentation "Return the stable id for ENTITY."))
