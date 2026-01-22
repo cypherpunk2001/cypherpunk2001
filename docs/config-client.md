@@ -137,6 +137,7 @@ How it connects
 | `*minimap-padding*` | `12` | Padding from screen edges for minimap placement |
 | `*minimap-point-size*` | `4` | Size of player/NPC markers on the minimap |
 | `*minimap-preview-edge-tiles*` | `1.5` | Tiles from an exit edge to show adjacent zone spawn previews |
+| `*minimap-npc-view-radius*` | `2000.0` | Maximum distance in world pixels to show NPCs on minimap (culling) |
 
 ### Minimap Colors
 | Parameter | Default | Description |

@@ -37,10 +37,13 @@ Example: draw flow
 (raylib:with-mode-2d camera
   (draw-world world render assets camera player npcs ui)
   (loop :for entity :across entities
+        :when (entity-in-viewport-p entity camera-x camera-y zoom margin-x margin-y)
         :do (draw-entity entity assets render)))
 ```
 
 Design note
+- Entity rendering uses viewport culling via `entity-in-viewport-p` to skip off-screen
+  entities. A margin equal to sprite half-size prevents pop-in at screen edges.
 - The debug overlay draws both collision tiles and map bounds, which helps
   validate that collision and visuals are aligned.
 - NPC AI debug text is only drawn when explicitly enabled, keeping the
@@ -53,6 +56,8 @@ Design note
 - When chat input is active, the HUD draws a "Say:" line above the HUD log area.
 - The inventory overlay renders a grid panel with item sprites and stack counts.
 - The minimap recenters on the player, so you can always click ahead to set a target.
+- Minimap NPC rendering uses distance-based culling via `*minimap-npc-view-radius*` to
+  skip NPCs far from the player, reducing overhead with many entities.
 - The pause menu includes music controls, debug/editor toggles, and logout/unstuck actions.
 - Object/item sprites treat an opaque border color as a transparency key to remove solid backdrops.
 - Zone objects render only when active (count > 0 and no respawn timer) so pickups can disappear.

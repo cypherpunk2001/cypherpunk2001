@@ -22,6 +22,23 @@
         (raylib:rectangle-height rect) height)
   rect)
 
+(defun entity-in-viewport-p (entity camera-x camera-y zoom margin-x margin-y)
+  "Return true if ENTITY is within the viewport bounds plus margin.
+   CAMERA-X, CAMERA-Y: center of the camera view in world coordinates.
+   ZOOM: camera zoom factor.
+   MARGIN-X, MARGIN-Y: padding to add to viewport bounds (sprite half-sizes)."
+  (let* ((half-view-width (/ *window-width* (* 2.0 zoom)))
+         (half-view-height (/ *window-height* (* 2.0 zoom)))
+         (view-left (- camera-x half-view-width margin-x))
+         (view-right (+ camera-x half-view-width margin-x))
+         (view-top (- camera-y half-view-height margin-y))
+         (view-bottom (+ camera-y half-view-height margin-y)))
+    (multiple-value-bind (ex ey) (combatant-position entity)
+      (and (>= ex view-left)
+           (<= ex view-right)
+           (>= ey view-top)
+           (<= ey view-bottom)))))
+
 (defun set-tile-source-rect (rect tile-index tile-size-f &optional (columns *tileset-columns*))
   ;; Set the atlas source rectangle for a given tile index.
   (let* ((cols (max 1 columns))
@@ -1127,16 +1144,24 @@
                                point-size
                                point-size
                                (ui-minimap-player-color ui))))
-    (loop :for npc :across npcs
-          :when (npc-alive npc)
-          :do (multiple-value-bind (nx ny)
-                  (minimap-world-to-screen ui world player (npc-x npc) (npc-y npc))
-                (when (and nx ny)
-                  (raylib:draw-rectangle (- (truncate nx) half)
-                                         (- (truncate ny) half)
-                                         point-size
-                                         point-size
-                                         (ui-minimap-npc-color ui)))))
+    ;; Draw NPCs within minimap view radius (squared distance check avoids sqrt)
+    (let* ((player-x (player-x player))
+           (player-y (player-y player))
+           (radius-sq (* *minimap-npc-view-radius* *minimap-npc-view-radius*)))
+      (loop :for npc :across npcs
+            :when (npc-alive npc)
+            :do (let* ((dx (- (npc-x npc) player-x))
+                       (dy (- (npc-y npc) player-y))
+                       (dist-sq (+ (* dx dx) (* dy dy))))
+                  (when (<= dist-sq radius-sq)
+                    (multiple-value-bind (nx ny)
+                        (minimap-world-to-screen ui world player (npc-x npc) (npc-y npc))
+                      (when (and nx ny)
+                        (raylib:draw-rectangle (- (truncate nx) half)
+                                               (- (truncate ny) half)
+                                               point-size
+                                               point-size
+                                               (ui-minimap-npc-color ui))))))))
     (let* ((preview (world-minimap-spawns world))
            (preview-size (max 2 (truncate (/ point-size 2))))
            (preview-half (truncate (/ preview-size 2)))
@@ -1581,15 +1606,19 @@
       (raylib:clear-background raylib:+black+)
       (multiple-value-bind (camera-x camera-y)
           (editor-camera-target editor player)
-        (let ((camera-2d (raylib:make-camera-2d
-                          :target (raylib:make-vector2 :x camera-x :y camera-y)
-                          :offset (camera-offset camera)
-                          :rotation 0.0
-                          :zoom (camera-zoom camera))))
+        (let* ((zoom (camera-zoom camera))
+               (margin-x (assets-half-sprite-width assets))
+               (margin-y (assets-half-sprite-height assets))
+               (camera-2d (raylib:make-camera-2d
+                           :target (raylib:make-vector2 :x camera-x :y camera-y)
+                           :offset (camera-offset camera)
+                           :rotation 0.0
+                           :zoom zoom)))
           (raylib:with-mode-2d camera-2d
             (draw-world world render assets camera player npcs ui editor)
             (draw-zone-objects world render assets camera player editor)
             (loop :for entity :across entities
+                  :when (entity-in-viewport-p entity camera-x camera-y zoom margin-x margin-y)
                   :do (draw-entity entity assets render))
             (draw-click-marker player world)
             (draw-editor-world-overlay editor world camera))))

@@ -156,6 +156,8 @@
   "Size of player/NPC markers on the minimap.")
 (defparameter *minimap-preview-edge-tiles* 1.5
   "Tiles from an exit edge to show adjacent zone spawn previews.")
+(defparameter *minimap-npc-view-radius* 2000.0
+  "Maximum distance in world pixels to show NPCs on minimap. NPCs beyond this are culled.")
 
 ;;; Animation Timing - Read every animation frame
 (defparameter *idle-frame-count* 4
