@@ -948,19 +948,33 @@
           (logbitp 1 flags)
           (logbitp 2 flags)))
 
-;;; Compact Player Serialization
-;;; Vector format (21 elements):
+;;; Compact Player Serialization (v4)
+;;; Vector format (22 elements):
 ;;; [0] id           [1] x*10        [2] y*10        [3] hp
 ;;; [4] dx*10        [5] dy*10       [6] anim-code   [7] facing-code
 ;;; [8] facing-sign  [9] frame-idx   [10] frame-timer*100
 ;;; [11] flags       [12] attack-timer*100  [13] hit-timer*100
 ;;; [14] hit-frame   [15] hit-facing-code   [16] hit-facing-sign
 ;;; [17] attack-target-id  [18] follow-target-id  [19] run-stamina*100
-;;; [20] last-sequence
+;;; [20] last-sequence  [21] zone-id-hash
+
+(defun encode-zone-id (zone-id)
+  "Encode zone-id symbol to integer for compact serialization.
+   Returns 0 for nil, otherwise a deterministic hash of the symbol name.
+   Uses djb2 hash algorithm for cross-process stability (sxhash is not stable)."
+  (if zone-id
+      (let* ((name (symbol-name zone-id))
+             (hash 5381))  ; djb2 initial value
+        (loop :for char :across name
+              :do (setf hash (logand (+ (ash hash 5) hash (char-code char))
+                                     #xFFFFFFFF)))  ; Keep 32-bit
+        (logand hash #xFFFF))  ; Return 16-bit
+      0))
 
 (defun serialize-player-compact (player)
   "Serialize player to compact vector for network transmission.
-   Excludes inventory (private to owning client)."
+   Excludes inventory (private to owning client).
+   Format v4: Added zone-id at index 21."
   (vector (player-id player)
           (quantize-coord (player-x player))
           (quantize-coord (player-y player))
@@ -981,7 +995,8 @@
           (or (player-attack-target-id player) 0)
           (or (player-follow-target-id player) 0)
           (quantize-timer (player-run-stamina player))
-          (or (player-last-sequence player) 0)))
+          (or (player-last-sequence player) 0)
+          (encode-zone-id (player-zone-id player))))
 
 (defun deserialize-player-compact (vec)
   "Deserialize compact vector to player plist for apply-player-plist.
@@ -1016,7 +1031,11 @@
                                           1.0)
                          :last-sequence (if (>= (length vec) 21)
                                             (aref vec 20)
-                                            0))))
+                                            0)
+                         ;; Zone-id at index 21 (v4 format)
+                         :zone-id-hash (if (>= (length vec) 22)
+                                           (aref vec 21)
+                                           0))))
         plist))))
 
 ;;; Compact NPC Serialization
@@ -1038,8 +1057,16 @@
     (0 :idle) (1 :wandering) (2 :chasing) (3 :attacking)
     (4 :fleeing) (5 :returning) (6 :dead) (otherwise :idle)))
 
-(defun serialize-npc-compact (npc)
-  "Serialize NPC to compact vector for network transmission."
+;;; Compact NPC Serialization (v4)
+;;; Vector format (15 elements):
+;;; [0] id        [1] x*10       [2] y*10       [3] hits-left  [4] flags
+;;; [5] behavior  [6] attack-timer*100  [7] anim-code  [8] facing-code
+;;; [9] frame-idx [10] frame-timer*100  [11] hit-timer*100  [12] hit-frame
+;;; [13] hit-facing-code  [14] zone-id-hash
+
+(defun serialize-npc-compact (npc &optional zone-id)
+  "Serialize NPC to compact vector for network transmission.
+   ZONE-ID is the zone containing this NPC (for client-side filtering)."
   (vector (npc-id npc)
           (quantize-coord (npc-x npc))
           (quantize-coord (npc-y npc))
@@ -1053,10 +1080,12 @@
           (quantize-timer (npc-frame-timer npc))
           (quantize-timer (npc-hit-timer npc))
           (or (npc-hit-frame npc) 0)
-          (encode-facing (npc-hit-facing npc))))
+          (encode-facing (npc-hit-facing npc))
+          (encode-zone-id zone-id)))
 
 (defun deserialize-npc-compact (vec)
-  "Deserialize compact vector to NPC plist for compatibility."
+  "Deserialize compact vector to NPC plist for compatibility.
+   Supports v3 (14 elements) and v4 (15 elements with zone-id-hash)."
   (when (and vec (>= (length vec) 14))
     (multiple-value-bind (alive provoked hit-active)
         (unpack-npc-flags (aref vec 4))
@@ -1076,13 +1105,17 @@
             :hit-timer (dequantize-timer (aref vec 11))
             :hit-frame (aref vec 12)
             :hit-facing (decode-facing (aref vec 13))
-            :hit-facing-sign 1.0))))  ; Default, not stored compactly
+            :hit-facing-sign 1.0
+            ;; v4 adds zone-id-hash at index 14 (0 if v3 format)
+            :zone-id-hash (if (>= (length vec) 15) (aref vec 14) 0)))))  ; Default, not stored compactly
 
 ;;; Compact Game State Serialization
 
 (defun serialize-game-state-compact (game)
   "Serialize game state using compact format for network transmission.
-   Returns plist with :format :compact-v3 and vector-based entity data."
+   Returns plist with :format :compact-v4 and vector-based entity data.
+   v4 adds zone-id-hash to player vectors (index 21) and NPC vectors (index 14)
+   for client-side zone filtering as defense-in-depth."
   (let* ((players (game-players game))
          (npcs (game-npcs game))
          (world (game-world game))
@@ -1096,17 +1129,18 @@
       (loop :for player :across players
             :when player
             :do (push (serialize-player-compact player) player-vectors)))
-    ;; Serialize NPCs to compact vectors
-    (when npcs
-      (loop :for npc :across npcs
-            :when npc
-            :do (push (serialize-npc-compact npc) npc-vectors)))
+    ;; Serialize NPCs to compact vectors (with zone-id for client filtering)
+    (let ((npc-zone-id (and zone (zone-id zone))))
+      (when npcs
+        (loop :for npc :across npcs
+              :when npc
+              :do (push (serialize-npc-compact npc npc-zone-id) npc-vectors))))
     ;; Serialize zone objects (all objects - dropped items and respawning pickups)
     (when objects
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build compact snapshot
-    (list :format :compact-v3
+    (list :format :compact-v4
           :zone-id (and zone (zone-id zone))
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
@@ -1133,17 +1167,17 @@
             :for player-zone = (or (player-zone-id player) *starting-zone-id*)
             :when (and player (eq player-zone zone-id))
             :do (push (serialize-player-compact player) player-vectors)))
-    ;; Serialize NPCs for this zone
+    ;; Serialize NPCs for this zone (with zone-id for client filtering)
     (when npcs
       (loop :for npc :across npcs
             :when npc
-            :do (push (serialize-npc-compact npc) npc-vectors)))
+            :do (push (serialize-npc-compact npc zone-id) npc-vectors)))
     ;; Serialize zone objects
     (when objects
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build compact snapshot
-    (list :format :compact-v3
+    (list :format :compact-v4
           :zone-id zone-id
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
@@ -1205,17 +1239,18 @@
       (loop :for player :across players
             :when (and player (player-snapshot-dirty player))
             :do (push (serialize-player-compact player) changed-players)))
-    ;; Collect dirty NPCs
-    (when npcs
-      (loop :for npc :across npcs
-            :when (and npc (npc-snapshot-dirty npc))
-            :do (push (serialize-npc-compact npc) changed-npcs)))
+    ;; Collect dirty NPCs (with zone-id for client filtering)
+    (let ((npc-zone-id (and zone (zone-id zone))))
+      (when npcs
+        (loop :for npc :across npcs
+              :when (and npc (npc-snapshot-dirty npc))
+              :do (push (serialize-npc-compact npc npc-zone-id) changed-npcs))))
     ;; Collect all zone objects (dropped items + respawning pickups)
     (when objects
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build delta snapshot
-    (list :format :delta-v3
+    (list :format :delta-v4
           :seq seq
           :baseline-seq baseline-seq
           :zone-id (and zone (zone-id zone))
@@ -1242,19 +1277,19 @@
                        (player-snapshot-dirty player)
                        (eq player-zone zone-id))
             :do (push (serialize-player-compact player) changed-players)))
-    ;; Collect dirty NPCs from zone-state only
+    ;; Collect dirty NPCs from zone-state only (with zone-id for client filtering)
     (when npcs
       (loop :for npc :across npcs
             :when (and npc (npc-snapshot-dirty npc))
-            :do (push (serialize-npc-compact npc) changed-npcs)))
+            :do (push (serialize-npc-compact npc zone-id) changed-npcs)))
     ;; Zone objects
     (when objects
       (dolist (object objects)
         (push (serialize-object object) object-list)))
-    ;; Build delta with EXPLICIT zone-id (matches existing delta-v3 format)
-    (list :format :delta-v3
+    ;; Build delta with EXPLICIT zone-id (matches existing delta-v4 format)
+    (list :format :delta-v4
           :seq seq
-          :baseline-seq nil  ; Keep shape stable with existing delta-v3
+          :baseline-seq nil  ; Keep shape stable with existing delta format
           :zone-id zone-id
           :changed-players (coerce (nreverse changed-players) 'vector)
           :changed-npcs (coerce (nreverse changed-npcs) 'vector)
@@ -1286,11 +1321,17 @@
    Preserves existing entities not included in the delta.
    For players: updates existing by ID, adds new players not seen before.
    For NPCs: updates existing by index (NPCs use fixed array positions).
-   Returns hash table of updated entity positions for interpolation buffer."
-  (let ((changed-players (getf delta :changed-players))
-        (changed-npcs (getf delta :changed-npcs))
-        (players (game-players game))
-        (updated-positions (make-hash-table :test 'eql)))  ; Track what we updated
+   Returns hash table of updated entity positions for interpolation buffer.
+   Client-side zone filtering: only processes entities matching snapshot's zone."
+  (let* ((changed-players (getf delta :changed-players))
+         (changed-npcs (getf delta :changed-npcs))
+         (players (game-players game))
+         ;; Use snapshot's :zone-id for filtering (more reliable than player-zone-id
+         ;; which may not be set from compact format). Defense-in-depth filter.
+         (snapshot-zone-id (getf delta :zone-id))
+         (local-zone-hash (when snapshot-zone-id
+                            (encode-zone-id snapshot-zone-id)))
+         (updated-positions (make-hash-table :test 'eql)))  ; Track what we updated
     ;; Apply changed players - update existing OR add new
     (when (and changed-players (> (length changed-players) 0))
       (let ((new-players nil))  ; Collect players we need to add
@@ -1300,7 +1341,12 @@
               :for id = (getf plist :id)
               :for x = (getf plist :x)
               :for y = (getf plist :y)
+              :for entity-zone-hash = (getf plist :zone-id-hash 0)
               :for existing = (and players (find-player-by-id players id))
+              ;; Client-side zone filter: skip if zone-hash mismatch (0 = unset/legacy, allow)
+              :when (or (null local-zone-hash)
+                        (zerop entity-zone-hash)
+                        (= entity-zone-hash local-zone-hash))
               :do (progn
                     ;; Track position from snapshot (not interpolated)
                     (setf (gethash id updated-positions) (list x y))
@@ -1331,6 +1377,7 @@
                   (make-entities expanded (game-npcs game)))))))
     ;; Apply changed NPCs - find by ID and update
     ;; NOTE: NPC IDs are entity IDs, not array indices. Must search for matching NPC.
+    ;; Client-side zone filter: skip NPCs not in local player's zone (defense-in-depth).
     (when changed-npcs
       (let ((npcs (game-npcs game)))
         (when npcs
@@ -1339,8 +1386,14 @@
                 :for id = (getf plist :id)
                 :for x = (getf plist :x)
                 :for y = (getf plist :y)
+                :for npc-zone-hash = (getf plist :zone-id-hash 0)
                 :for index = (position id npcs :key #'npc-id)
-                :do (when index
+                ;; Client-side zone filter: skip if zone-hash mismatch (0 = unset/legacy, allow)
+                :when (and index
+                           (or (null local-zone-hash)
+                               (zerop npc-zone-hash)
+                               (= npc-zone-hash local-zone-hash)))
+                :do (progn
                       ;; Track NPC position (use negative ID like capture-entity-positions)
                       (setf (gethash (- id) updated-positions) (list x y))
                       (deserialize-npc plist npcs index))))))
@@ -1434,13 +1487,15 @@
       ;; Delta format (incremental updates, see docs/net.md Prong 2)
       ((or (eq format :delta-v1)
            (eq format :delta-v2)
-           (eq format :delta-v3))
+           (eq format :delta-v3)
+           (eq format :delta-v4))
        (let ((delta-positions (deserialize-game-state-delta plist game)))
          (values (getf plist :zone-id) delta-positions)))
       ;; Compact format (network-optimized, see docs/net.md 4-Prong)
       ((or (eq format :compact-v1)
            (eq format :compact-v2)
-           (eq format :compact-v3))
+           (eq format :compact-v3)
+           (eq format :compact-v4))
        (deserialize-game-state-compact plist game)
        (values (getf plist :zone-id) nil))
       ;; Legacy plist format (DB saves, compatibility)

@@ -670,14 +670,21 @@
          (objects (and zone (zone-objects zone))))
     (update-zone-objects-respawns objects dt)))
 
-(defun pickup-object-at-tile (player world tx ty object-id)
+(defun pickup-object-at-tile (player world tx ty object-id &optional zone-id)
   ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
   ;; Thread-safe: protects zone-objects modification from concurrent respawn updates.
+  ;; Uses ZONE-ID if provided, otherwise falls back to player's zone or world-zone.
   (with-zone-objects-lock
-    (let* ((zone (world-zone world))
+    (let* ((effective-zone-id (or zone-id
+                                   (player-zone-id player)
+                                   (and (world-zone world) (zone-id (world-zone world)))))
+           (zone-state (and effective-zone-id (get-zone-state effective-zone-id)))
+           (zone (if zone-state
+                     (zone-state-zone zone-state)
+                     (world-zone world)))
            (objects (and zone (zone-objects zone))))
       (log-verbose "PICKUP-TILE: zone=~a objects=~a tx=~d ty=~d id=~a"
-                   (and zone (zone-id zone)) (length objects) tx ty object-id)
+                   effective-zone-id (length objects) tx ty object-id)
       (when (and player zone objects)
         (let ((remaining nil)
               (picked nil))
@@ -720,10 +727,14 @@
                         (push object remaining)))
                   (push object remaining))))
           (when picked
-            (setf (zone-objects zone) (nreverse remaining))
-            (log-verbose "PICKUP-TILE: zone now has ~a objects, first respawn=~a"
-                         (length (zone-objects zone))
-                         (and (zone-objects zone) (getf (first (zone-objects zone)) :respawn))))
+            (let ((new-objects (nreverse remaining)))
+              (setf (zone-objects zone) new-objects)
+              ;; Sync zone-state-objects to keep references aligned
+              (when zone-state
+                (setf (zone-state-objects zone-state) new-objects))
+              (log-verbose "PICKUP-TILE: zone now has ~a objects, first respawn=~a"
+                           (length new-objects)
+                           (and new-objects (getf (first new-objects) :respawn)))))
           picked)))))
 
 (defun player-adjacent-to-tile-p (player-tx player-ty target-tx target-ty)
@@ -745,7 +756,8 @@
                      tx ty target-x target-y target-id)
         (when (player-adjacent-to-tile-p tx ty target-x target-y)
           (log-verbose "UPDATE-PICKUP: Executing pickup (adjacent)!")
-          (pickup-object-at-tile player world target-x target-y target-id)
+          (pickup-object-at-tile player world target-x target-y target-id
+                                 (player-zone-id player))
           (setf (player-pickup-target-active player) nil
                 (player-pickup-target-id player) nil))))))
 

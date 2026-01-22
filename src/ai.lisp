@@ -205,8 +205,9 @@
       (when attack-request
         (setf (intent-attack intent) t)))))
 
-(defun update-npc-movement (npc world dt)
+(defun update-npc-movement (npc world dt &optional zone-state)
   ;; Move NPC based on intent and keep it near its home radius.
+  ;; When ZONE-STATE is provided, use per-zone collision bounds and wall-map.
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
            (state (npc-behavior-state npc))
@@ -225,22 +226,43 @@
                 (not (zerop dy)))
         (multiple-value-bind (half-w half-h)
             (npc-collision-half world)
-          (multiple-value-bind (nx ny out-dx out-dy)
-              (attempt-move world
-                            (npc-x npc)
-                            (npc-y npc)
-                            dx dy (* speed dt)
-                            half-w half-h
-                            (world-tile-dest-size world))
-            (declare (ignore out-dx out-dy))
-            (let ((old-x (npc-x npc))
-                  (old-y (npc-y npc)))
-              (setf (npc-x npc) (float (clamp nx (world-wall-min-x world)
-                                              (world-wall-max-x world))
-                                       1.0f0)
-                    (npc-y npc) (float (clamp ny (world-wall-min-y world)
-                                              (world-wall-max-y world))
-                                       1.0f0))
-              ;; Mark snapshot-dirty when position changes (delta compression)
-              (when (or (/= old-x (npc-x npc)) (/= old-y (npc-y npc)))
-                (setf (npc-snapshot-dirty npc) t)))))))))
+          ;; Use per-zone collision if zone-state is available, otherwise fallback to world
+          (let* ((tile-size (world-tile-dest-size world))
+                 (zone-wall-map (and zone-state (zone-state-wall-map zone-state)))
+                 (zone (and zone-state (zone-state-zone zone-state))))
+            (if zone-wall-map
+                ;; Per-zone collision with zone-state wall-map
+                (multiple-value-bind (min-x max-x min-y max-y)
+                    (zone-bounds-zero-origin tile-size
+                                              (zone-width zone)
+                                              (zone-height zone)
+                                              half-w half-h)
+                  (multiple-value-bind (nx ny out-dx out-dy)
+                      (attempt-move-with-map zone-wall-map
+                                              (npc-x npc) (npc-y npc)
+                                              dx dy (* speed dt)
+                                              half-w half-h tile-size)
+                    (declare (ignore out-dx out-dy))
+                    (let ((old-x (npc-x npc))
+                          (old-y (npc-y npc)))
+                      (setf (npc-x npc) (float (clamp nx min-x max-x) 1.0f0)
+                            (npc-y npc) (float (clamp ny min-y max-y) 1.0f0))
+                      (when (or (/= old-x (npc-x npc)) (/= old-y (npc-y npc)))
+                        (setf (npc-snapshot-dirty npc) t)))))
+                ;; Fallback to global world collision
+                (multiple-value-bind (nx ny out-dx out-dy)
+                    (attempt-move world
+                                  (npc-x npc) (npc-y npc)
+                                  dx dy (* speed dt)
+                                  half-w half-h tile-size)
+                  (declare (ignore out-dx out-dy))
+                  (let ((old-x (npc-x npc))
+                        (old-y (npc-y npc)))
+                    (setf (npc-x npc) (float (clamp nx (world-wall-min-x world)
+                                                    (world-wall-max-x world))
+                                             1.0f0)
+                          (npc-y npc) (float (clamp ny (world-wall-min-y world)
+                                                    (world-wall-max-y world))
+                                             1.0f0))
+                    (when (or (/= old-x (npc-x npc)) (/= old-y (npc-y npc)))
+                      (setf (npc-snapshot-dirty npc) t)))))))))))

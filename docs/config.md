@@ -34,6 +34,7 @@ How it connects
 ### Zone/World Paths
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `*starting-zone-id*` | `:zone-1` | Zone where new players spawn. Must exist in world-graph. |
 | `*zone-path*` | `nil` | Zone data path relative to repo (nil uses wall map) |
 | `*zone-root*` | `"data/zones"` | Directory for zone files |
 | `*zone-default-width*` | `64` | Default zone width in tiles for new zones |

@@ -37,12 +37,15 @@ Key functions
 - `edge-opposite` - Return opposite world edge.
 - `edge-spawn-position` - Return spawn coordinates for target edge.
 
-**Multi-Zone Caveat (Current Implementation):**
-Per-player zone transitions are supported, but collision and edge detection still use the
-single `world` wall map. When multiple players are in different zones, only the most
-recently loaded zone is reflected in the `world` collision bounds. Players in other zones
-may have inaccurate collision/edge detection until their zone becomes the active `world`
-zone.
+**Multi-Zone Collision (Current Implementation):**
+Per-player zone transitions are fully supported with per-zone collision. Each player's
+movement uses their zone's collision bounds from zone-state:
+- Player movement uses per-zone collision via `attempt-move-with-map` and zone-state wall maps
+- NPC movement uses per-zone collision when zone-state is available (falls back to world)
+- Edge detection uses per-zone bounds via `get-zone-collision-bounds` for accurate transitions
+- Unstuck teleportation uses per-zone collision from zone-state (correct for each player)
+- New player spawns use per-zone collision from zone-state (spawns in correct zone bounds)
+- Zone transition ratio calculation uses source zone bounds for position preservation
 
 **NPC Transition:**
 - `collect-transition-npcs` - Collect NPCs that should carry across zones.
@@ -75,9 +78,18 @@ zone.
 - `player-intent-direction` - Return intended movement direction for edge transitions.
 
 **Player Unstuck System:**
-- `player-is-stuck-p` - Return T if player cannot move in any cardinal direction.
-- `get-zone-safe-spawn` - Return random position within zone bounds.
-- `process-player-unstuck` - Handle unstuck request (server authority, validates and teleports).
+- `player-is-stuck-p` - Return T if player cannot move in any cardinal direction (uses global world).
+- `player-is-stuck-p-for-zone` - Return T if player is stuck using per-zone collision from zone-state.
+- `get-zone-safe-spawn` - Return random position within zone bounds (global world).
+- `get-zone-safe-spawn-for-zone` - Return random position within specified zone's bounds from zone-state.
+- `process-player-unstuck` - Handle unstuck request (server authority, uses per-zone collision).
+
+**Per-Zone Collision Helpers:**
+- `get-zone-wall-map` - Return wall-map from zone-state cache for given zone-id.
+- `get-zone-collision-bounds` - Calculate movement bounds for a zone using its wall-map dimensions.
+- `blocked-at-p-with-map` - Test collider bounds against a specific wall-map (factored from blocked-at-p).
+- `find-open-position-with-map` - Find nearest open position using a specific wall-map.
+- `zone-state-spawn-position` - Return valid spawn (x, y) using zone-state's wall-map.
 
 **Utility:**
 - `tile-center-position` - Return world position for center of tile.

@@ -57,6 +57,34 @@
   "Clear all cached zone states. Used for testing or server restart."
   (clrhash *zone-states*))
 
+(defun get-zone-wall-map (zone-id)
+  "Get the wall-map for ZONE-ID from zone-state cache.
+   Returns NIL if zone not loaded."
+  (let ((state (get-zone-state zone-id)))
+    (when state
+      (zone-state-wall-map state))))
+
+(defun zone-bounds-zero-origin (tile-dest-size width height collision-half-w collision-half-h)
+  "Calculate movement bounds for a zone with zero-origin wall-map.
+   Unlike zone-bounds-from-dimensions, this ignores *wall-origin-x/y* globals
+   since per-zone wall-maps are always zero-indexed."
+  (let* ((wall-min-x (+ (* 1 tile-dest-size) collision-half-w))
+         (wall-max-x (- (* (1- width) tile-dest-size) collision-half-w))
+         (wall-min-y (+ (* 1 tile-dest-size) collision-half-h))
+         (wall-max-y (- (* (1- height) tile-dest-size) collision-half-h)))
+    (values wall-min-x wall-max-x wall-min-y wall-max-y)))
+
+(defun get-zone-collision-bounds (zone-id tile-dest-size collision-half-w collision-half-h)
+  "Calculate movement bounds for ZONE-ID using its wall-map dimensions.
+   Uses zero-origin bounds since per-zone wall-maps are zero-indexed.
+   Returns (values min-x max-x min-y max-y) or NIL if zone not loaded."
+  (let ((wall-map (get-zone-wall-map zone-id)))
+    (when wall-map
+      (let* ((width (array-dimension wall-map 1))
+             (height (array-dimension wall-map 0)))
+        (zone-bounds-zero-origin tile-dest-size width height
+                                 collision-half-w collision-half-h)))))
+
 (defun derive-wall-map-from-zone (zone)
   "Create a wall map from zone collision data.
    Returns a 2D array where 1 = blocked, 0 = passable."
@@ -410,16 +438,17 @@
 
 (defun zone-state-spawn-position (zone-state)
   "Return valid spawn (x, y) using ZONE-STATE's wall-map.
-   Used for spawning players in a specific zone without relying on global world collision."
+   Used for spawning players in a specific zone without relying on global world collision.
+   Uses zero-origin bounds since zone wall-maps are zero-indexed."
   (let* ((wall-map (zone-state-wall-map zone-state))
          (tile-dest-size (* (float *tile-size* 1.0) *tile-scale*))
          ;; Match make-world formula for player collision
          (collision-half (* (/ tile-dest-size 2.0) *player-collision-scale*))
          (width (if wall-map (array-dimension wall-map 1) 64))
          (height (if wall-map (array-dimension wall-map 0) 64)))
-    ;; Calculate zone bounds (same formula as zone-bounds-from-dimensions)
+    ;; Calculate zone bounds using zero-origin (per-zone wall-maps are zero-indexed)
     (multiple-value-bind (min-x max-x min-y max-y)
-        (zone-bounds-from-dimensions tile-dest-size width height collision-half collision-half)
+        (zone-bounds-zero-origin tile-dest-size width height collision-half collision-half)
       ;; Start from center of zone
       (let ((center-x (/ (+ min-x max-x) 2.0))
             (center-y (/ (+ min-y max-y) 2.0)))
@@ -495,6 +524,27 @@
                   out-dy dy))))
     (values nx ny out-dx out-dy)))
 
+(defun attempt-move-with-map (wall-map x y dx dy step half-w half-h tile-size)
+  "Resolve movement per axis using WALL-MAP for collision.
+   Used for per-zone collision checking where global world map isn't appropriate."
+  (let ((nx x)
+        (ny y)
+        (out-dx 0.0)
+        (out-dy 0.0))
+    (when (not (zerop dx))
+      (let ((try-x (+ x (* dx step))))
+        (if (blocked-at-p-with-map wall-map try-x y half-w half-h tile-size)
+            (setf out-dx 0.0)
+            (setf nx try-x
+                  out-dx dx))))
+    (when (not (zerop dy))
+      (let ((try-y (+ ny (* dy step))))
+        (if (blocked-at-p-with-map wall-map nx try-y half-w half-h tile-size)
+            (setf out-dy 0.0)
+            (setf ny try-y
+                  out-dy dy))))
+    (values nx ny out-dx out-dy)))
+
 (defun npc-collision-half (world)
   ;; Return NPC collider half sizes in world pixels.
   (let ((half (* (/ (world-tile-dest-size world) 2.0) *npc-collision-scale*)))
@@ -525,48 +575,61 @@
 
 (defun update-player-position (player intent world speed-mult dt)
   ;; Move the player with collision and target logic.
-  (let ((x (player-x player))
-        (y (player-y player))
-        (input-dx (intent-move-dx intent))
-        (input-dy (intent-move-dy intent))
-        (dx 0.0)
-        (dy 0.0))
-    (cond
-      ((or (not (zerop input-dx))
-           (not (zerop input-dy)))
-       (clear-intent-target intent)
-       (multiple-value-setq (x y dx dy)
-         (attempt-move world x y input-dx input-dy
-                       (* *player-speed* speed-mult dt)
-                       (world-collision-half-width world)
-                       (world-collision-half-height world)
-                       (world-tile-dest-size world))))
-      ((intent-target-active intent)
-       (let* ((target-x (intent-target-x intent))
-              (target-y (intent-target-y intent))
-              (to-x (- target-x x))
-              (to-y (- target-y y))
-              (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
-         (if (<= dist *target-epsilon*)
-             (setf (intent-target-active intent) nil
-                   dx 0.0
-                   dy 0.0)
-             (let* ((dir-x (/ to-x dist))
-                    (dir-y (/ to-y dist))
-                    (step (min (* *player-speed* speed-mult dt) dist)))
-               (multiple-value-setq (x y dx dy)
-                 (attempt-move world x y dir-x dir-y step
-                               (world-collision-half-width world)
-                               (world-collision-half-height world)
-                               (world-tile-dest-size world)))
-               (when (or (<= dist step)
-                         (and (zerop dx) (zerop dy)))
-                 (setf (intent-target-active intent) nil))))))
-      (t
-       (setf dx 0.0
-             dy 0.0)))
-    (setf x (clamp x (world-wall-min-x world) (world-wall-max-x world))
-          y (clamp y (world-wall-min-y world) (world-wall-max-y world)))
+  ;; Uses per-zone collision when available, falls back to global world collision.
+  (let* ((x (player-x player))
+         (y (player-y player))
+         (input-dx (intent-move-dx intent))
+         (input-dy (intent-move-dy intent))
+         (dx 0.0)
+         (dy 0.0)
+         ;; Per-zone collision support
+         (player-zone (player-zone-id player))
+         (zone-wall-map (when player-zone (get-zone-wall-map player-zone)))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world))
+         (tile-size (world-tile-dest-size world)))
+    ;; Define move helper that uses per-zone or global collision
+    (flet ((do-move (from-x from-y dir-x dir-y step)
+             (if zone-wall-map
+                 (attempt-move-with-map zone-wall-map from-x from-y dir-x dir-y step
+                                        half-w half-h tile-size)
+                 (attempt-move world from-x from-y dir-x dir-y step
+                               half-w half-h tile-size))))
+      (cond
+        ((or (not (zerop input-dx))
+             (not (zerop input-dy)))
+         (clear-intent-target intent)
+         (multiple-value-setq (x y dx dy)
+           (do-move x y input-dx input-dy (* *player-speed* speed-mult dt))))
+        ((intent-target-active intent)
+         (let* ((target-x (intent-target-x intent))
+                (target-y (intent-target-y intent))
+                (to-x (- target-x x))
+                (to-y (- target-y y))
+                (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
+           (if (<= dist *target-epsilon*)
+               (setf (intent-target-active intent) nil
+                     dx 0.0
+                     dy 0.0)
+               (let* ((dir-x (/ to-x dist))
+                      (dir-y (/ to-y dist))
+                      (step (min (* *player-speed* speed-mult dt) dist)))
+                 (multiple-value-setq (x y dx dy)
+                   (do-move x y dir-x dir-y step))
+                 (when (or (<= dist step)
+                           (and (zerop dx) (zerop dy)))
+                   (setf (intent-target-active intent) nil))))))
+        (t
+         (setf dx 0.0
+               dy 0.0))))
+    ;; Clamp to zone bounds if available, otherwise global world bounds
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (if zone-wall-map
+            (get-zone-collision-bounds player-zone tile-size half-w half-h)
+            (values (world-wall-min-x world) (world-wall-max-x world)
+                    (world-wall-min-y world) (world-wall-max-y world)))
+      (setf x (clamp x min-x max-x)
+            y (clamp y min-y max-y)))
     (let ((old-x (player-x player))
           (old-y (player-y player)))
       (setf (player-x player) x
@@ -621,18 +684,15 @@
   ;; Return a position inside MIN/MAX based on RATIO.
   (+ min-value (* (clamp ratio 0.0 1.0) (- max-value min-value))))
 
-(defun world-exit-edge (world player)
-  ;; Return the edge the player is pushing against, if any.
+(defun world-exit-edge-with-bounds (player min-x max-x min-y max-y)
+  "Return the edge the player is pushing against using specified bounds.
+   Used for per-zone edge detection."
   (multiple-value-bind (dx dy)
       (player-intent-direction player)
     (let ((edge nil)
           (weight 0.0)
           (x (player-x player))
-          (y (player-y player))
-          (min-x (world-wall-min-x world))
-          (max-x (world-wall-max-x world))
-          (min-y (world-wall-min-y world))
-          (max-y (world-wall-max-y world)))
+          (y (player-y player)))
       (when (and (< dy 0.0) (<= y min-y))
         (let ((w (abs dy)))
           (when (> w weight)
@@ -654,6 +714,20 @@
             (setf edge :east
                   weight w))))
       edge)))
+
+(defun world-exit-edge (world player)
+  ;; Return the edge the player is pushing against, if any.
+  ;; Uses per-zone bounds when available, falls back to global world bounds.
+  (let* ((player-zone (player-zone-id player))
+         (tile-size (world-tile-dest-size world))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (if (and player-zone (get-zone-wall-map player-zone))
+            (get-zone-collision-bounds player-zone tile-size half-w half-h)
+            (values (world-wall-min-x world) (world-wall-max-x world)
+                    (world-wall-min-y world) (world-wall-max-y world)))
+      (world-exit-edge-with-bounds player min-x max-x min-y max-y))))
 
 (defun world-preview-edge (world player)
   ;; Return the edge to preview minimap spawns for.
@@ -937,10 +1011,11 @@
 (defun transition-zone (game player exit edge)
   ;; Apply a zone transition using EXIT metadata for the given PLAYER.
   ;; Updates player's zone-id and position. Also updates zone-state cache.
+  ;; Uses player's current zone-id (not world-zone) for per-zone bounds.
   (let* ((world (game-world game))
          (intent (player-intent player))
-         (current-zone (world-zone world))
-         (current-zone-id (and current-zone (zone-id current-zone)))
+         ;; Use player's zone-id for source zone, not world-zone (server may have stale world-zone)
+         (current-zone-id (or (player-zone-id player) *starting-zone-id*))
          (current-npcs (game-npcs game))
          (graph (world-world-graph world))
          (target-id (getf exit :to))
@@ -968,48 +1043,71 @@
                              (edge-opposite edge)))
              (offset (getf exit :offset))
              (preserve-axis (edge-preserve-axis edge offset))
+             ;; Calculate ratio using SOURCE zone bounds (per-zone, not stale world bounds)
+             (tile-size-for-ratio (world-tile-dest-size world))
+             (half-w-for-ratio (world-collision-half-width world))
+             (half-h-for-ratio (world-collision-half-height world))
              (ratio (if preserve-axis
-                        (if (eq preserve-axis :x)
-                            (edge-offset-ratio (world-wall-min-x world)
-                                               (world-wall-max-x world)
-                                               (player-x player))
-            (edge-offset-ratio (world-wall-min-y world)
-                               (world-wall-max-y world)
-                               (player-y player)))
+                        (multiple-value-bind (src-min-x src-max-x src-min-y src-max-y)
+                            (if (get-zone-wall-map current-zone-id)
+                                (get-zone-collision-bounds current-zone-id
+                                                            tile-size-for-ratio
+                                                            half-w-for-ratio
+                                                            half-h-for-ratio)
+                                (values (world-wall-min-x world) (world-wall-max-x world)
+                                        (world-wall-min-y world) (world-wall-max-y world)))
+                          (if (eq preserve-axis :x)
+                              (edge-offset-ratio src-min-x src-max-x (player-x player))
+                              (edge-offset-ratio src-min-y src-max-y (player-y player))))
                         0.5)))
         (when zone
           (log-verbose "Zone transition: ~a -> ~a via ~a"
                        current-zone-id
                        (zone-id zone)
                        edge)
-          ;; Only set *zone-path* for client/local mode, not server
-          ;; Server doesn't need global zone-path tracking
-          (when (not (eq (game-net-role game) :server))
-            (setf *zone-path* target-path))
-          (apply-zone-to-world world zone)
-          (setf (world-zone-label world) (zone-label zone))
-          (multiple-value-bind (raw-x raw-y)
-              (edge-spawn-position world spawn-edge preserve-axis ratio)
-            (multiple-value-bind (spawn-x spawn-y)
-                (world-open-position-for world raw-x raw-y
-                                         (world-collision-half-width world)
-                                         (world-collision-half-height world))
-              (setf (player-x player) spawn-x
-                    (player-y player) spawn-y
-                    (player-dx player) 0.0
-                    (player-dy player) 0.0
-                    (player-zone-id player) (zone-id zone)
-                    (player-snapshot-dirty player) t)
-              ;; Tier-1 write: zone transition saves immediately (prevents position loss on crash)
-              (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                        :max-retries 5
-                                        :initial-delay 50
-                                        :max-delay 500
-                                        :on-final-fail (lambda (e)
-                                                         (warn "Zone transition save failed: ~a" e)
-                                                         ;; Fallback to dirty flag if immediate save fails
-                                                         (mark-player-dirty (player-id player))))
-                saved)))
+          ;; Only set *zone-path* and apply-zone-to-world for client/local mode
+          ;; Server uses per-zone collision from zone-state instead
+          (let* ((is-server (eq (game-net-role game) :server))
+                 (target-zone-id (zone-id zone))
+                 ;; Ensure zone-state exists for the target zone
+                 (target-zone-state (get-or-create-zone-state target-zone-id target-path))
+                 (target-wall-map (when target-zone-state (zone-state-wall-map target-zone-state)))
+                 (tile-size (world-tile-dest-size world))
+                 (half-w (world-collision-half-width world))
+                 (half-h (world-collision-half-height world)))
+            (unless is-server
+              (setf *zone-path* target-path)
+              (apply-zone-to-world world zone))
+            (setf (world-zone-label world) (zone-label zone))
+            ;; Calculate spawn position using appropriate bounds
+            (multiple-value-bind (new-min-x new-max-x new-min-y new-max-y)
+                (if (and is-server target-wall-map)
+                    (get-zone-collision-bounds target-zone-id tile-size half-w half-h)
+                    (values (world-wall-min-x world) (world-wall-max-x world)
+                            (world-wall-min-y world) (world-wall-max-y world)))
+              (multiple-value-bind (raw-x raw-y)
+                  (edge-spawn-position-bounds new-min-x new-max-x new-min-y new-max-y
+                                              spawn-edge preserve-axis ratio)
+                (multiple-value-bind (spawn-x spawn-y)
+                    (if (and is-server target-wall-map)
+                        (find-open-position-with-map target-wall-map raw-x raw-y
+                                                     half-w half-h tile-size)
+                        (world-open-position-for world raw-x raw-y half-w half-h))
+                  (setf (player-x player) spawn-x
+                        (player-y player) spawn-y
+                        (player-dx player) 0.0
+                        (player-dy player) 0.0
+                        (player-zone-id player) target-zone-id
+                        (player-snapshot-dirty player) t)
+                  ;; Tier-1 write: zone transition saves immediately
+                  (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                            :max-retries 5
+                                            :initial-delay 50
+                                            :max-delay 500
+                                            :on-final-fail (lambda (e)
+                                                             (warn "Zone transition save failed: ~a" e)
+                                                             (mark-player-dirty (player-id player))))
+                    saved)))))
           (reset-frame-intent intent)
           (when had-target
             (set-intent-target intent
@@ -1046,24 +1144,28 @@
           t)))))
 
 (defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for players in the active world zone.
+  ;; Handle edge-based world graph transitions for ALL players, regardless of zone.
+  ;; Each player is checked against their own zone's exits using per-zone collision bounds.
   ;; Returns count of players that transitioned this frame.
   (let* ((world (game-world game))
-         (world-zone (and world (world-zone world)))
-         (world-zone-id (and world-zone (zone-id world-zone)))
          (players (game-players game))
          (transition-count 0))
-    (when (and players (> (length players) 0))
-      ;; Check all players for zone transition
+    (when (and world players (> (length players) 0))
+      ;; Check all players for zone transition using their own zone
       (loop :for player :across players
             :when player
-            :do (let ((player-zone-id (player-zone-id player)))
-                  (when (and world-zone-id (eq player-zone-id world-zone-id))
-                    (let* ((edge (world-exit-edge world player))
-                           (exit (and edge (world-edge-exit world edge))))
-                      (when exit
-                        (transition-zone game player exit edge)
-                        (incf transition-count)))))))
+            :do (let* ((player-zone-id (or (player-zone-id player) *starting-zone-id*))
+                       ;; Ensure zone-state exists for player's zone
+                       (zone-path (zone-path-for-id world player-zone-id))
+                       (_zone-state (when zone-path
+                                      (get-or-create-zone-state player-zone-id zone-path))))
+                  (declare (ignore _zone-state))
+                  ;; world-exit-edge already uses per-zone bounds via player-zone-id
+                  (let* ((edge (world-exit-edge world player))
+                         (exit (and edge (world-edge-exit-for-zone world player-zone-id edge))))
+                    (when exit
+                      (transition-zone game player exit edge)
+                      (incf transition-count))))))
     transition-count))
 
 (defun log-player-position (player world)
@@ -1100,6 +1202,25 @@
          (position-blocked-p world px (+ py test-dist) half-w half-h)
          (position-blocked-p world px (- py test-dist) half-w half-h))))
 
+(defun player-is-stuck-p-for-zone (player zone-id world)
+  "Return T if player cannot move in any cardinal direction.
+   Uses zone-state wall-map for collision, falling back to world if zone not loaded."
+  (let* ((px (player-x player))
+         (py (player-y player))
+         (test-dist 2.0)
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world))
+         (tile-size (world-tile-dest-size world))
+         (wall-map (get-zone-wall-map zone-id)))
+    (if wall-map
+        ;; Use zone-specific wall-map
+        (and (blocked-at-p-with-map wall-map (+ px test-dist) py half-w half-h tile-size)
+             (blocked-at-p-with-map wall-map (- px test-dist) py half-w half-h tile-size)
+             (blocked-at-p-with-map wall-map px (+ py test-dist) half-w half-h tile-size)
+             (blocked-at-p-with-map wall-map px (- py test-dist) half-w half-h tile-size))
+        ;; Fallback to global world collision
+        (player-is-stuck-p player world))))
+
 (defun get-zone-safe-spawn (world)
   ;; Return a random position within the zone's playable bounds.
   ;; If the random spot is blocked, world-open-position will find the nearest open tile.
@@ -1111,33 +1232,58 @@
          (rand-y (+ min-y (random (max 1.0 (- max-y min-y))))))
     (values rand-x rand-y)))
 
+(defun get-zone-safe-spawn-for-zone (zone-id world)
+  "Return a random position within ZONE-ID's playable bounds.
+   Falls back to global world bounds if zone not loaded."
+  (let* ((tile-size (world-tile-dest-size world))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (get-zone-collision-bounds zone-id tile-size half-w half-h)
+      (if min-x
+          ;; Use zone-specific bounds
+          (let ((rand-x (+ min-x (random (max 1.0 (- max-x min-x)))))
+                (rand-y (+ min-y (random (max 1.0 (- max-y min-y))))))
+            (values rand-x rand-y))
+          ;; Fallback to global world bounds
+          (get-zone-safe-spawn world)))))
+
 (defun process-player-unstuck (player intent world zone-id &optional event-queue)
   ;; Handle client unstuck request (server authority).
-  ;; If player is truly stuck, teleport to a random location in the zone.
-  (declare (ignore zone-id))
+  ;; Uses player's zone-id for per-zone collision checking.
+  ;; NOTE: Player's own zone-id takes precedence over the passed zone-id parameter
+  ;; to ensure multi-zone correctness when global world-zone differs.
   (when (intent-requested-unstuck intent)
-    (if (player-is-stuck-p player world)
-        ;; Player is stuck - teleport to random position in zone
-        (multiple-value-bind (safe-x safe-y)
-            (get-zone-safe-spawn world)
-          (multiple-value-bind (final-x final-y)
-              (world-open-position world safe-x safe-y)
-            (setf (player-x player) final-x
-                  (player-y player) final-y
-                  (player-dx player) 0.0
-                  (player-dy player) 0.0
-                  (player-snapshot-dirty player) t)
-            (mark-player-dirty (player-id player))
-            (log-verbose "Player ~a unstuck, teleported to (~,1f, ~,1f)"
-                         (player-id player) final-x final-y)
+    (let* ((player-zone (or (player-zone-id player) zone-id *starting-zone-id*))
+           (wall-map (get-zone-wall-map player-zone))
+           (tile-size (world-tile-dest-size world))
+           (half-w (world-collision-half-width world))
+           (half-h (world-collision-half-height world)))
+      (if (player-is-stuck-p-for-zone player player-zone world)
+          ;; Player is stuck - teleport to random position in their zone
+          (multiple-value-bind (safe-x safe-y)
+              (get-zone-safe-spawn-for-zone player-zone world)
+            (multiple-value-bind (final-x final-y)
+                (if wall-map
+                    (find-open-position-with-map wall-map safe-x safe-y
+                                                 half-w half-h tile-size)
+                    (world-open-position world safe-x safe-y))
+              (setf (player-x player) final-x
+                    (player-y player) final-y
+                    (player-dx player) 0.0
+                    (player-dy player) 0.0
+                    (player-snapshot-dirty player) t)
+              (mark-player-dirty (player-id player))
+              (log-verbose "Player ~a unstuck in zone ~a, teleported to (~,1f, ~,1f)"
+                           (player-id player) player-zone final-x final-y)
+              (when event-queue
+                (emit-hud-message-event event-queue "Teleported to safe location."))))
+          ;; Player not stuck - deny free teleport
+          (progn
+            (log-verbose "Player ~a unstuck request denied - not stuck"
+                         (player-id player))
             (when event-queue
-              (emit-hud-message-event event-queue "Teleported to safe location."))))
-        ;; Player not stuck - deny free teleport
-        (progn
-          (log-verbose "Player ~a unstuck request denied - not stuck"
-                       (player-id player))
-          (when event-queue
-            (emit-hud-message-event event-queue "You don't appear to be stuck."))))
+              (emit-hud-message-event event-queue "You don't appear to be stuck.")))))
     (clear-requested-unstuck intent)))
 
 (defun make-world ()

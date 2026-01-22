@@ -731,20 +731,17 @@ Remove the unsafe fallback:
 
 ---
 
-## Phase 7: Defense in Depth - Client-Side Filtering (DEFERRED)
+## Phase 7: Defense in Depth - Client-Side Filtering (IMPLEMENTED)
 
-**Status:** DEFERRED - Not on critical path.
+**Status:** IMPLEMENTED - v4 compact format with zone-id-hash filtering.
 
-**Rationale:**
-- Compact snapshots don't include per-entity zone-id
-- Server-side filtering (Phase 3) is the primary gatekeeper
-- Adding per-entity zone-id requires protocol change (format bump)
-
-**If needed later:**
-- Bump compact format version
-- Add zone-id to `serialize-player-compact` / `serialize-npc-compact`
-- Add `entity-in-zone-p` filter in rendering
-- Add zone check before adding new players in `apply-game-state-delta`
+**Implementation:**
+- Bumped compact format to v4 (`:compact-v4`, `:delta-v4`)
+- Added `zone-id-hash` to player compact vectors (index 21) via `encode-zone-id`
+- Added `zone-id-hash` to NPC compact vectors (index 14) via `encode-zone-id`
+- `encode-zone-id` uses djb2 hash for cross-process stability (not sxhash)
+- Delta deserialization filters players and NPCs by zone-id-hash
+- Filter uses snapshot's `:zone-id` field (not player-zone-id which may be nil)
 
 ---
 
@@ -762,13 +759,12 @@ Remove the unsafe fallback:
 ### Stability:
 6. **Phase 6.1-6.2:** Strengthen local player tracking
 
-### Deferred:
-7. **Phase 7:** Client-side entity filtering (if needed)
-8. **Phase 4 (full):** Per-zone collision maps + conditionalize `apply-zone-to-world`
-9. **Object pickup/unstuck:** Currently use global `world-zone`, wrong for non-active zones
-   - `progression.lisp:671` (object pickup)
-   - `movement.lisp:1038` (unstuck teleport)
-   - Requires per-zone collision/object lookup
+### Completed (Previously Deferred):
+7. **Phase 7:** Client-side entity filtering - IMPLEMENTED (v4 format with zone-id-hash)
+8. **Phase 4 (full):** Per-zone collision maps + conditionalize `apply-zone-to-world` - IMPLEMENTED
+9. **Object pickup/unstuck:** Fixed to use player's zone-id and per-zone collision
+   - `progression.lisp` - object pickup syncs zone-state-objects
+   - `movement.lisp` - unstuck uses per-zone collision via zone-state wall-maps
 
 ---
 

@@ -30,6 +30,8 @@ Key functions
 - `load-world-graph`: loads edges, builds a zone-id-to-path index, and populates `*known-zone-ids*` for validation; logs counts in verbose mode and falls back to an empty graph when missing.
 - `world-graph-exits`: fetches exits for a given zone.
 - `world-graph-zone-path`: resolves a target zone ID to a file path.
+- `zone-path-for-id`: convenience wrapper to get zone path from world's graph for a zone-id. Returns nil if zone-id not found.
+- `zone-path-for-id-exists-p`: returns T if zone-id has a valid path in world's graph. Used for zone validation.
 
 Design note
 - Edge links are directional; define both directions if you want two-way travel.

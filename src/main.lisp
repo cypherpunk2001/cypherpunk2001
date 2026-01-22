@@ -353,10 +353,11 @@
   (loop :for npc :across npcs
         :do (reset-frame-intent (npc-intent npc))))
 
-(defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue)
+(defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue &optional zone-state)
   "Run NPC AI for NPCs in a specific zone with that zone's players.
    ZONE-NPCS: vector of NPCs in the zone
    ZONE-PLAYERS: vector of players in the same zone
+   ZONE-STATE: optional zone-state for per-zone collision
    Returns number of NPCs updated."
   (let ((count 0))
     (when (and zone-npcs (> (length zone-npcs) 0)
@@ -366,7 +367,7 @@
             :do (when target-player
                   (update-npc-behavior npc target-player world)
                   (update-npc-intent npc target-player world dt)
-                  (update-npc-movement npc world dt)
+                  (update-npc-movement npc world dt zone-state)
                   (update-npc-attack npc target-player world dt event-queue)
                   (incf count))))
     count))
@@ -464,7 +465,7 @@
       ;; For each occupied zone, run combat and NPC AI with that zone's players
       (let ((zone-ids (occupied-zone-ids players)))
         (if zone-ids
-            ;; Multi-zone mode: simulate each zone separately
+            ;; Multi-zone mode: simulate each zone separately with per-zone collision
             (dolist (zone-id zone-ids)
               (let* ((zone-state (get-zone-state zone-id))
                      (zone-npcs (if zone-state
@@ -476,8 +477,8 @@
                   (loop :for current-player :across zone-players
                         :do (loop :for npc :across zone-npcs
                                   :do (apply-melee-hit current-player npc world event-queue))))
-                ;; NPC AI for this zone
-                (simulate-zone-npcs zone-npcs zone-players world dt event-queue)))
+                ;; NPC AI for this zone (pass zone-state for per-zone collision)
+                (simulate-zone-npcs zone-npcs zone-players world dt event-queue zone-state)))
             ;; Fallback: no zone-ids means use legacy behavior (local mode, nil zone-ids)
             (progn
               (loop :for current-player :across players

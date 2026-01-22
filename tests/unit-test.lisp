@@ -239,6 +239,11 @@
                 test-blocked-at-p-with-map
                 test-find-open-position-with-map
                 test-zone-state-spawn-position
+                ;; Per-zone collision helpers (Phase 4 deferred)
+                test-get-zone-wall-map
+                test-get-zone-collision-bounds
+                test-player-is-stuck-p-for-zone
+                test-get-zone-safe-spawn-for-zone
                 ;; Final Net Tests
                 test-session-try-register
                 test-session-unregister
@@ -2658,6 +2663,113 @@ hello
                 "zone-spawn: blocked center -> different tile")))))
 
 ;;; ============================================================
+;;; PER-ZONE COLLISION HELPER TESTS (Phase 4 deferred items)
+;;; ============================================================
+
+(defun test-get-zone-wall-map ()
+  "Test getting wall-map from zone-state cache."
+  ;; Clear zone-states cache
+  (clrhash *zone-states*)
+  ;; No zone-state should return nil
+  (assert (null (get-zone-wall-map :nonexistent-zone)) ()
+          "get-zone-wall-map: nil for unknown zone")
+  ;; Create a zone-state manually and test
+  (let ((wall-map (make-array '(10 10) :initial-element 0)))
+    (setf (gethash :test-zone *zone-states*)
+          (make-zone-state :zone-id :test-zone
+                           :zone nil
+                           :wall-map wall-map
+                           :npcs (make-array 0)))
+    (assert (eq wall-map (get-zone-wall-map :test-zone)) ()
+            "get-zone-wall-map: returns cached wall-map"))
+  ;; Cleanup
+  (clrhash *zone-states*))
+
+(defun test-get-zone-collision-bounds ()
+  "Test zone collision bounds calculation."
+  ;; Clear zone-states cache
+  (clrhash *zone-states*)
+  ;; Unknown zone returns nil
+  (multiple-value-bind (min-x max-x min-y max-y)
+      (get-zone-collision-bounds :nonexistent 32.0 8.0 8.0)
+    (assert (null min-x) () "get-zone-collision-bounds: nil for unknown zone"))
+  ;; Create a zone-state with a 10x10 wall-map
+  (let ((wall-map (make-array '(10 10) :initial-element 0))
+        (*wall-origin-x* 0)
+        (*wall-origin-y* 0))
+    (setf (gethash :test-zone *zone-states*)
+          (make-zone-state :zone-id :test-zone
+                           :zone nil
+                           :wall-map wall-map
+                           :npcs (make-array 0)))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (get-zone-collision-bounds :test-zone 32.0 8.0 8.0)
+      (assert (numberp min-x) () "get-zone-collision-bounds: returns numeric min-x")
+      (assert (numberp max-x) () "get-zone-collision-bounds: returns numeric max-x")
+      (assert (< min-x max-x) () "get-zone-collision-bounds: min-x < max-x")
+      (assert (< min-y max-y) () "get-zone-collision-bounds: min-y < max-y")))
+  ;; Cleanup
+  (clrhash *zone-states*))
+
+(defun test-player-is-stuck-p-for-zone ()
+  "Test per-zone stuck detection."
+  ;; Clear zone-states cache
+  (clrhash *zone-states*)
+  (let* ((wall-map (make-array '(10 10) :initial-element 0))
+         (*tile-size* 16)
+         (*tile-scale* 2.0)
+         (*player-collision-scale* 0.85)
+         (*wall-origin-x* 0)
+         (*wall-origin-y* 0)
+         (world (make-world))
+         (player (make-player 160.0 160.0)))  ; Center of open area
+    ;; Setup zone-state
+    (setf (gethash :test-zone *zone-states*)
+          (make-zone-state :zone-id :test-zone
+                           :zone nil
+                           :wall-map wall-map
+                           :npcs (make-array 0)))
+    ;; Player in open area should not be stuck
+    (assert (not (player-is-stuck-p-for-zone player :test-zone world)) ()
+            "player-is-stuck-p-for-zone: open area = not stuck")
+    ;; Block all tiles around player (fully enclosed)
+    (dotimes (ty 10)
+      (dotimes (tx 10)
+        (setf (aref wall-map ty tx) 1)))
+    ;; Player enclosed should be stuck
+    (assert (player-is-stuck-p-for-zone player :test-zone world) ()
+            "player-is-stuck-p-for-zone: enclosed = stuck"))
+  ;; Cleanup
+  (clrhash *zone-states*))
+
+(defun test-get-zone-safe-spawn-for-zone ()
+  "Test per-zone safe spawn position."
+  ;; Clear zone-states cache
+  (clrhash *zone-states*)
+  (let* ((wall-map (make-array '(10 10) :initial-element 0))
+         (*tile-size* 16)
+         (*tile-scale* 2.0)
+         (*player-collision-scale* 0.85)
+         (*wall-origin-x* 0)
+         (*wall-origin-y* 0)
+         (world (make-world)))
+    ;; Setup zone-state
+    (setf (gethash :test-zone *zone-states*)
+          (make-zone-state :zone-id :test-zone
+                           :zone nil
+                           :wall-map wall-map
+                           :npcs (make-array 0)))
+    ;; Should return valid coordinates within zone bounds
+    (multiple-value-bind (x y)
+        (get-zone-safe-spawn-for-zone :test-zone world)
+      (assert (numberp x) () "get-zone-safe-spawn: returns numeric x")
+      (assert (numberp y) () "get-zone-safe-spawn: returns numeric y")
+      (assert (> x 0) () "get-zone-safe-spawn: x > 0")
+      (assert (> y 0) () "get-zone-safe-spawn: y > 0")))
+  ;; Cleanup
+  (clrhash *zone-states*))
+
+;;; ============================================================
 ;;; FINAL NET TESTS
 ;;; ============================================================
 
@@ -3854,9 +3966,9 @@ hello
       ;; Zone-id should be zone-1
       (assert-equal :zone-1 (getf delta :zone-id)
                     "Delta zone-id should be zone-1")
-      ;; Format should be delta-v3
-      (assert-equal :delta-v3 (getf delta :format)
-                    "Delta format should be delta-v3"))
+      ;; Format should be delta-v4 (zone-id added to compact player format)
+      (assert-equal :delta-v4 (getf delta :format)
+                    "Delta format should be delta-v4"))
     ;; Serialize delta for zone-2
     (let ((delta (serialize-game-state-delta-for-zone game :zone-2 nil 2)))
       (assert-equal 2 (length (getf delta :changed-players))
@@ -5112,7 +5224,7 @@ hello
 
 (defun extract-first-player-from-snapshot (state)
   "Extract first player's position from snapshot state.
-   Handles compact-v1/v2/v3, delta-v1/v2/v3, and legacy (plist) formats.
+   Handles compact-v1/v2/v3/v4, delta-v1/v2/v3/v4, and legacy (plist) formats.
    Returns (values x y) or (values nil nil) if not found."
   (let* ((format (getf state :format))
          ;; Delta format uses :changed-players, compact/legacy use :players
@@ -5121,8 +5233,8 @@ hello
     (when players
       (cond
         ;; Compact or delta format: players is a vector of vectors
-       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
-            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3) (eq format :compact-v4)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3) (eq format :delta-v4))
          (when (and (vectorp players) (> (length players) 0))
            (let ((vec (aref players 0)))
              (when (and (vectorp vec) (>= (length vec) 3))
@@ -5139,7 +5251,7 @@ hello
 
 (defun extract-players-as-plists (state)
   "Extract all players from snapshot state as a list of plists.
-   Handles compact-v1/v2/v3, delta-v1/v2/v3, and legacy (plist) formats."
+   Handles compact-v1/v2/v3/v4, delta-v1/v2/v3/v4, and legacy (plist) formats."
   (let* ((format (getf state :format))
          ;; Delta format uses :changed-players, compact/legacy use :players
          (players (or (getf state :changed-players)
@@ -5147,8 +5259,8 @@ hello
     (when players
       (cond
         ;; Compact or delta format: convert vectors to plists
-       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
-            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3) (eq format :compact-v4)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3) (eq format :delta-v4))
          (when (vectorp players)
            (loop :for vec :across players
                  :collect (deserialize-player-compact vec))))

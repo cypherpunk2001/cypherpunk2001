@@ -27,7 +27,8 @@ Message format (plist, printed with `prin1`)
     `:load-failed`, `:internal-error`, `:wrong-zone`
   - When `:wrong-zone`, the server includes `:zone-id` with the player's saved zone.
 - `(:type :snapshot :format <format> :state <game-state> ...)` -> server snapshot
-  - Formats: `:compact-v3` (full state), `:delta-v3` (changed entities only)
+  - Formats: `:compact-v4` (full state), `:delta-v4` (changed entities only)
+  - v4 adds zone-id-hash to player (index 21) and NPC (index 14) vectors for client filtering
 - `(:type :snapshot-chunk :seq <n> :chunk <i> :total <n> :data <str>)` -> fragmented snapshot piece
 - `(:type :private-state :player-id <id> :payload <plist>)` -> owner-only inventory/equipment/stats update
 
@@ -73,6 +74,15 @@ Key functions
 - `net-client-account-username`: Get username of logged-in account.
 - `register-player-session`: Claims Redis session ownership (rejects double-logins), adds player to online set, updates leaderboards.
 - `unregister-player-session`: Releases Redis session ownership, removes from online set.
+
+**Zone Tracking:**
+- `net-client-zone-id`: Cached zone-id for this client, used to detect zone changes.
+  - Initialized to player's zone-id on auth completion
+  - Updated when zone change detected in broadcast loop
+  - Reset to nil on logout/disconnect
+- `group-clients-by-zone`: Groups authenticated clients by their player's zone-id. Nil zone-ids are clamped to `*starting-zone-id*`.
+- `occupied-zone-ids`: Returns list of unique zone-ids where players are currently located.
+- `players-in-zone`: Returns array of players matching a specific zone-id.
 
 Design note
 - Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.
@@ -124,7 +134,7 @@ Client-Side Prediction (Optional)
 
 Performance & Scaling
 - Single server process can host multiple zones; snapshots and NPC simulation are filtered per zone.
-- World collision is still derived from the currently loaded zone (see `docs/movement.md` for caveats).
+- Player and NPC collision use per-zone bounds from zone-state wall maps (see `docs/movement.md`).
 - For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
 - Snapshot optimization:
   - State serialized once per zone per frame via `serialize-game-state-for-zone`
@@ -193,8 +203,12 @@ Replaces verbose plist serialization with compact vector format:
 **Private state:** Inventory, equipment, and stats are excluded from compact snapshots and sent
 to the owning client via `:private-state` messages.
 
-**Player vector fields:** The compact player vector includes `run-stamina` at index 19 and
-`last-sequence` at index 20 (server's last processed input sequence for prediction).
+**Player vector fields:** The compact player vector includes `run-stamina` at index 19,
+`last-sequence` at index 20 (server's last processed input sequence for prediction), and
+`zone-id-hash` at index 21 (djb2 hash of zone-id for client-side filtering).
+
+**NPC vector fields:** The compact NPC vector includes `zone-id-hash` at index 14 for
+client-side zone filtering.
 
 **Optimizations applied:**
 1. **Positional encoding**: Fixed-position vector instead of keyword plists
@@ -221,11 +235,12 @@ Only transmits entities that changed since last acknowledged snapshot.
   needs-full-resync)    ; T after zone change or reconnect
 
 ;; Delta snapshot format
-(:format :delta-v3
+(:format :delta-v4
  :seq 12345
  :baseline-seq 12340
- :changed-players #(...)    ; Only dirty players
- :changed-npcs #(...)       ; Only dirty NPCs
+ :zone-id :world
+ :changed-players #(...)    ; Only dirty players (with zone-id-hash)
+ :changed-npcs #(...)       ; Only dirty NPCs (with zone-id-hash)
  :objects (...))            ; Objects with respawn state
 ```
 
