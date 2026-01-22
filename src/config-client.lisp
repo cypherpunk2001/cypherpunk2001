@@ -81,6 +81,11 @@
 (defparameter *editor-object-layer-id* :objects
   "Zone layer ID used for object painting.")
 
+;;; Render Cache - Chunk size (restart required to change)
+(defparameter *render-chunk-size* 16
+  "Tiles per render chunk side (16x16 = 256 tiles per texture).
+   Requires restart to change. Balance: larger = fewer textures but more VRAM per texture.")
+
 ;;;; ========================================================================
 ;;;; CLIENT OPTIONS - Immediate (SLIME tunable)
 ;;;; Changes take effect immediately. Modify via SLIME: (setf *var* value)
@@ -108,8 +113,20 @@
   "Max prediction error in pixels before correction.")
 
 ;;; Rendering - Read during draw
+;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (ESC menu or SLIME)
+;;; to change these values - they clear render caches. Direct setf leaves stale caches.
 (defparameter *tile-point-filter* t
-  "Use point (nearest-neighbor) filtering for tiles. Reduces seam artifacts but looks pixelated.")
+  "Use point (nearest-neighbor) filtering for tiles. Reduces seam artifacts but looks pixelated.
+   Use toggle-tile-point-filter to change - it clears render caches for new filter to apply.")
+
+;;; Render Chunk Cache (Phase 1 - Zoom-Out Performance Optimization)
+;;; Pre-render static tile chunks to reduce draw calls at high zoom-out levels.
+(defparameter *render-cache-enabled* t
+  "Enable/disable chunk render caching. Set NIL to use original per-tile rendering.
+   Use toggle-render-cache-enabled (ESC menu) to change - it clears render caches.")
+
+(defparameter *render-cache-max-chunks* 64
+  "Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth.")
 
 ;;; Camera - Read every frame for view calculations
 (defparameter *camera-zoom-default* 1.0

@@ -281,7 +281,15 @@
                 test-click-marker-tracks-target
                 test-click-marker-clears-on-target-death
                 test-clear-follow-target-clears-marker
-                test-clear-pickup-target-clears-marker)))
+                test-clear-pickup-target-clears-marker
+                ;; Render Chunk Cache Tests (Phase 1 - Zoom-Out Performance)
+                test-chunk-cache-key
+                test-zone-render-cache-create
+                test-chunk-cache-invalidation
+                test-chunk-cache-lru-eviction
+                ;; Render Toggle Tests
+                test-toggle-render-cache-enabled
+                test-toggle-tile-point-filter)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -7849,3 +7857,173 @@ hello
             () "clear-pickup: marker target-id cleared")
     (assert (null (player-click-marker-kind player))
             () "clear-pickup: marker kind cleared")))
+
+;;;; ========================================================================
+;;;; Render Chunk Cache Tests (Phase 1 - Zoom-Out Performance)
+;;;; ========================================================================
+
+(defun test-chunk-cache-key ()
+  "Test that chunk-cache-key generates unique keys for layer/chunk combinations."
+  (let* ((layer1 (%make-zone-layer :id :floor :tileset-id :default :chunks (make-hash-table)))
+         (layer2 (%make-zone-layer :id :floor :tileset-id :custom :chunks (make-hash-table)))
+         (layer3 (%make-zone-layer :id :walls :tileset-id :default :chunks (make-hash-table)))
+         (key1a (chunk-cache-key layer1 0 0))
+         (key1b (chunk-cache-key layer1 0 0))
+         (key1c (chunk-cache-key layer1 1 0))
+         (key2 (chunk-cache-key layer2 0 0))
+         (key3 (chunk-cache-key layer3 0 0)))
+    ;; Same layer, same chunk = same key
+    (assert (equal key1a key1b)
+            () "chunk-cache-key: same layer + chunk = same key")
+    ;; Same layer, different chunk = different key
+    (assert (not (equal key1a key1c))
+            () "chunk-cache-key: different chunk = different key")
+    ;; Same layer id, different tileset = different key
+    (assert (not (equal key1a key2))
+            () "chunk-cache-key: different tileset = different key")
+    ;; Different layer id = different key
+    (assert (not (equal key1a key3))
+            () "chunk-cache-key: different layer id = different key")))
+
+(defun test-zone-render-cache-create ()
+  "Test zone render cache creation and lookup."
+  ;; Clear any existing caches
+  (clrhash *zone-render-caches*)
+  (let* ((zone-id :test-zone)
+         (tile-dest-size 64.0)
+         (cache (get-or-create-zone-render-cache zone-id tile-dest-size)))
+    ;; Verify cache was created
+    (assert (not (null cache))
+            () "zone-render-cache-create: cache created")
+    (assert (eq (zone-render-cache-zone-id cache) zone-id)
+            () "zone-render-cache-create: zone-id set")
+    (assert (= (zone-render-cache-chunk-pixel-size cache)
+               (* *render-chunk-size* tile-dest-size))
+            () "zone-render-cache-create: chunk-pixel-size computed")
+    ;; Verify second call returns same cache
+    (let ((cache2 (get-or-create-zone-render-cache zone-id tile-dest-size)))
+      (assert (eq cache cache2)
+              () "zone-render-cache-create: returns existing cache"))
+    ;; Verify different zone returns different cache
+    (let ((cache3 (get-or-create-zone-render-cache :other-zone tile-dest-size)))
+      (assert (not (eq cache cache3))
+              () "zone-render-cache-create: different zone = different cache"))
+    ;; Clean up
+    (clrhash *zone-render-caches*)))
+
+(defun test-chunk-cache-invalidation ()
+  "Test that invalidate-chunk-at-tile marks chunks dirty."
+  ;; Clear any existing caches
+  (clrhash *zone-render-caches*)
+  (let* ((zone-id :test-zone)
+         (tile-dest-size 64.0)
+         (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
+         (layer (%make-zone-layer :id :floor :tileset-id :default :chunks (make-hash-table)))
+         (chunk-x (floor 10 *render-chunk-size*))
+         (chunk-y (floor 10 *render-chunk-size*))
+         (key (chunk-cache-key layer chunk-x chunk-y)))
+    ;; Create a cache entry manually (simulating a rendered chunk)
+    (let ((entry (%make-render-chunk-cache
+                  :chunk-x chunk-x
+                  :chunk-y chunk-y
+                  :layer-key (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
+                  :dirty nil
+                  :last-access 0)))
+      (setf (gethash key (zone-render-cache-chunks cache)) entry)
+      ;; Verify chunk is not dirty
+      (assert (not (render-chunk-cache-dirty entry))
+              () "chunk-cache-invalidation: initially not dirty")
+      ;; Invalidate the chunk
+      (invalidate-chunk-at-tile zone-id layer 10 10)
+      ;; Verify chunk is now dirty
+      (assert (render-chunk-cache-dirty entry)
+              () "chunk-cache-invalidation: marked dirty after invalidate")))
+  ;; Clean up
+  (clrhash *zone-render-caches*))
+
+(defun test-chunk-cache-lru-eviction ()
+  "Test that LRU eviction removes oldest chunks when cache is full."
+  ;; Clear any existing caches
+  (clrhash *zone-render-caches*)
+  ;; Temporarily set max chunks to small value for testing
+  (let ((*render-cache-max-chunks* 3))
+    (let* ((zone-id :test-zone)
+           (tile-dest-size 64.0)
+           (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
+           (layer (%make-zone-layer :id :floor :tileset-id :default :chunks (make-hash-table)))
+           (chunks (zone-render-cache-chunks cache)))
+      ;; Add 3 entries with different last-access times
+      (loop :for i :from 0 :below 3
+            :for key = (chunk-cache-key layer i 0)
+            :for entry = (%make-render-chunk-cache
+                          :chunk-x i :chunk-y 0
+                          :layer-key (cons :floor :default)
+                          :dirty nil
+                          :last-access i  ; 0, 1, 2
+                          :texture nil)   ; No actual texture (testing logic only)
+            :do (setf (gethash key chunks) entry))
+      ;; Verify we have 3 entries
+      (assert (= (hash-table-count chunks) 3)
+              () "chunk-cache-lru: initial count = 3")
+      ;; Evict LRU (should remove entry with last-access = 0)
+      (evict-lru-chunk cache)
+      ;; Verify we have 2 entries
+      (assert (= (hash-table-count chunks) 2)
+              () "chunk-cache-lru: count after evict = 2")
+      ;; Verify entry 0 was evicted
+      (let ((key0 (chunk-cache-key layer 0 0)))
+        (assert (null (gethash key0 chunks))
+                () "chunk-cache-lru: oldest entry evicted"))
+      ;; Verify entries 1 and 2 remain
+      (let ((key1 (chunk-cache-key layer 1 0))
+            (key2 (chunk-cache-key layer 2 0)))
+        (assert (not (null (gethash key1 chunks)))
+                () "chunk-cache-lru: entry 1 remains")
+        (assert (not (null (gethash key2 chunks)))
+                () "chunk-cache-lru: entry 2 remains"))))
+  ;; Clean up
+  (clrhash *zone-render-caches*))
+
+(defun test-toggle-render-cache-enabled ()
+  "Test that toggle-render-cache-enabled flips the flag and returns new value."
+  ;; Ensure cache hash is empty (no raylib calls)
+  (clrhash *zone-render-caches*)
+  (let ((original *render-cache-enabled*))
+    (unwind-protect
+        (progn
+          ;; Toggle from current state
+          (let ((result (toggle-render-cache-enabled)))
+            (assert (eq result (not original))
+                    () "toggle-render-cache-enabled: returned opposite value")
+            (assert (eq *render-cache-enabled* (not original))
+                    () "toggle-render-cache-enabled: global is toggled"))
+          ;; Toggle back
+          (let ((result2 (toggle-render-cache-enabled)))
+            (assert (eq result2 original)
+                    () "toggle-render-cache-enabled: double toggle restores")
+            (assert (eq *render-cache-enabled* original)
+                    () "toggle-render-cache-enabled: global restored")))
+      ;; Restore original state
+      (setf *render-cache-enabled* original))))
+
+(defun test-toggle-tile-point-filter ()
+  "Test that toggle-tile-point-filter flips the flag and returns new value."
+  ;; Ensure cache hash is empty (no raylib calls)
+  (clrhash *zone-render-caches*)
+  (let ((original *tile-point-filter*))
+    (unwind-protect
+        (progn
+          ;; Toggle from current state
+          (let ((result (toggle-tile-point-filter)))
+            (assert (eq result (not original))
+                    () "toggle-tile-point-filter: returned opposite value")
+            (assert (eq *tile-point-filter* (not original))
+                    () "toggle-tile-point-filter: global is toggled"))
+          ;; Toggle back
+          (let ((result2 (toggle-tile-point-filter)))
+            (assert (eq result2 original)
+                    () "toggle-tile-point-filter: double toggle restores")
+            (assert (eq *tile-point-filter* original)
+                    () "toggle-tile-point-filter: global restored")))
+      ;; Restore original state
+      (setf *tile-point-filter* original))))

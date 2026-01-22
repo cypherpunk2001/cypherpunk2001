@@ -245,7 +245,9 @@
                item-textures)))
   (raylib:unload-texture (assets-blood-down assets))
   (raylib:unload-texture (assets-blood-up assets))
-  (raylib:unload-texture (assets-blood-side assets)))
+  (raylib:unload-texture (assets-blood-side assets))
+  ;; Clear all render chunk caches to free VRAM
+  (clear-all-zone-render-caches))
 
 (defun layer-tileset-context (layer editor assets)
   ;; Resolve the tileset texture and columns for a layer.
@@ -259,6 +261,243 @@
                    (editor-tileset-columns entry)))))
       (t
        (values (assets-tileset assets) *tileset-columns*)))))
+
+;;;; ========================================================================
+;;;; RENDER CHUNK CACHE (Phase 1 - Zoom-Out Performance Optimization)
+;;;; Pre-render static tile chunks into render textures to reduce draw calls.
+;;;; ========================================================================
+
+;;; Global zone render cache storage (zone-id -> zone-render-cache)
+(defparameter *zone-render-caches* (make-hash-table :test 'eq)
+  "Hash table mapping zone-id to zone-render-cache structs.")
+
+(defun chunk-cache-key (layer chunk-x chunk-y)
+  "Generate a unique cache key for a layer chunk.
+   Key includes both layer-id and tileset-id to handle per-layer tilesets."
+  (list (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
+        chunk-x chunk-y))
+
+(defun get-or-create-zone-render-cache (zone-id tile-dest-size)
+  "Get or create a render cache for ZONE-ID."
+  (or (gethash zone-id *zone-render-caches*)
+      (setf (gethash zone-id *zone-render-caches*)
+            (%make-zone-render-cache
+             :zone-id zone-id
+             :chunk-pixel-size (* *render-chunk-size* tile-dest-size)))))
+
+(defun unload-chunk-texture (cache-entry)
+  "Unload the render texture from a cache entry to free VRAM."
+  (when (and cache-entry (render-chunk-cache-texture cache-entry))
+    (raylib:unload-render-texture (render-chunk-cache-texture cache-entry))
+    (setf (render-chunk-cache-texture cache-entry) nil)))
+
+(defun evict-lru-chunk (cache)
+  "Evict the least-recently-used chunk when cache exceeds max size."
+  (let ((chunks (zone-render-cache-chunks cache))
+        (lru-key nil)
+        (lru-time most-positive-fixnum))
+    ;; Find LRU entry
+    (maphash (lambda (key entry)
+               (when (< (render-chunk-cache-last-access entry) lru-time)
+                 (setf lru-key key
+                       lru-time (render-chunk-cache-last-access entry))))
+             chunks)
+    (when lru-key
+      (let ((entry (gethash lru-key chunks)))
+        (unload-chunk-texture entry)
+        (remhash lru-key chunks)))))
+
+(defun clear-zone-render-cache (zone-id)
+  "Unload all cached textures for ZONE-ID and remove from global cache.
+   Call on zone transition to prevent stale textures and VRAM leaks."
+  (let ((cache (gethash zone-id *zone-render-caches*)))
+    (when cache
+      (maphash (lambda (_key entry)
+                 (declare (ignore _key))
+                 (unload-chunk-texture entry))
+               (zone-render-cache-chunks cache))
+      (clrhash (zone-render-cache-chunks cache))
+      (remhash zone-id *zone-render-caches*))))
+
+(defun clear-all-zone-render-caches ()
+  "Unload all cached textures across all zones. Call on shutdown or filter toggle.
+   Collects keys first to avoid mutating hash table during iteration."
+  (let ((zone-ids nil))
+    ;; Collect all zone-ids first
+    (maphash (lambda (zone-id _cache)
+               (declare (ignore _cache))
+               (push zone-id zone-ids))
+             *zone-render-caches*)
+    ;; Now safely clear each zone's cache
+    (dolist (zone-id zone-ids)
+      (clear-zone-render-cache zone-id)))
+  ;; Final clear in case any were missed
+  (clrhash *zone-render-caches*))
+
+(defun toggle-render-cache-enabled ()
+  "Toggle *render-cache-enabled* and clear caches for consistency."
+  (setf *render-cache-enabled* (not *render-cache-enabled*))
+  (clear-all-zone-render-caches)
+  *render-cache-enabled*)
+
+(defun toggle-tile-point-filter ()
+  "Toggle *tile-point-filter* and clear caches so new filter applies to all chunks."
+  (setf *tile-point-filter* (not *tile-point-filter*))
+  (clear-all-zone-render-caches)
+  *tile-point-filter*)
+
+(defun invalidate-chunk-at-tile (zone-id layer world-tx world-ty)
+  "Mark the chunk containing tile (WORLD-TX, WORLD-TY) as dirty for re-render.
+   Call when editor modifies a tile."
+  (let ((cache (gethash zone-id *zone-render-caches*)))
+    (when cache
+      (let* ((chunk-x (floor world-tx *render-chunk-size*))
+             (chunk-y (floor world-ty *render-chunk-size*))
+             (key (chunk-cache-key layer chunk-x chunk-y))
+             (entry (gethash key (zone-render-cache-chunks cache))))
+        (when entry
+          (setf (render-chunk-cache-dirty entry) t))))))
+
+(defun render-chunk-to-texture (zone layer chunk-x chunk-y tile-dest-size editor assets)
+  "Render a chunk of tiles from LAYER to a render texture.
+   Returns a raylib render-texture-2d. Caller is responsible for cleanup."
+  (let* ((chunk-tiles *render-chunk-size*)
+         (tex-size (ceiling (* chunk-tiles tile-dest-size)))
+         (texture (raylib:load-render-texture tex-size tex-size))
+         (chunk-size (zone-chunk-size zone))
+         (tile-src-size (float *tile-size*)))  ; Atlas source tile size (16)
+    ;; Apply texture filter to the render texture's underlying texture
+    ;; (0=POINT for pixel-perfect, 1=BILINEAR for smooth)
+    (raylib:set-texture-filter (raylib:render-texture-2d-texture texture)
+                               (if *tile-point-filter* 0 1))
+    (multiple-value-bind (layer-tileset layer-columns)
+        (layer-tileset-context layer editor assets)
+      (when layer-tileset
+        (raylib:begin-texture-mode texture)
+        (raylib:clear-background (raylib:make-color :r 0 :g 0 :b 0 :a 0))
+        ;; Render all tiles in chunk
+        (loop :for local-y :from 0 :below chunk-tiles
+              :for tile-y = (+ (* chunk-y chunk-tiles) local-y)
+              :do (loop :for local-x :from 0 :below chunk-tiles
+                        :for tile-x = (+ (* chunk-x chunk-tiles) local-x)
+                        :for tile-index = (zone-layer-tile-at layer chunk-size tile-x tile-y)
+                        :when (and tile-index (> tile-index 0))
+                        :do (draw-tile-to-render-texture layer-tileset layer-columns tile-index
+                                                          (* local-x tile-dest-size)
+                                                          (* local-y tile-dest-size)
+                                                          tile-src-size    ; Source: atlas size
+                                                          tile-dest-size))) ; Dest: scaled size
+        (raylib:end-texture-mode)))
+    texture))
+
+(defun draw-tile-to-render-texture (tileset columns tile-index dest-x dest-y src-tile-size dest-tile-size)
+  "Draw a single tile to the current render target at local coordinates.
+   SRC-TILE-SIZE: atlas tile size (e.g., 16). DEST-TILE-SIZE: scaled size (e.g., 64)."
+  (let* ((cols (max 1 columns))
+         (col (mod tile-index cols))
+         (row (floor tile-index cols))
+         (src-size-f (float src-tile-size))
+         (dest-size-f (float dest-tile-size))
+         (src-x (* col src-size-f))
+         (src-y (* row src-size-f))
+         (src-rect (raylib:make-rectangle :x src-x :y src-y
+                                          :width src-size-f :height src-size-f))
+         (dest-rect (raylib:make-rectangle :x (float dest-x) :y (float dest-y)
+                                           :width dest-size-f :height dest-size-f))
+         (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+    (raylib:draw-texture-pro tileset src-rect dest-rect origin 0.0 raylib:+white+)))
+
+(defun get-or-render-chunk (cache zone layer chunk-x chunk-y tile-dest-size editor assets)
+  "Get a cached chunk texture, rendering it if needed."
+  (let* ((key (chunk-cache-key layer chunk-x chunk-y))
+         (chunks (zone-render-cache-chunks cache))
+         (entry (gethash key chunks))
+         (frame (zone-render-cache-frame-counter cache)))
+    ;; Evict if at capacity and need new entry
+    (when (and (null entry)
+               (>= (hash-table-count chunks) *render-cache-max-chunks*))
+      (evict-lru-chunk cache))
+    ;; Create entry if missing
+    (unless entry
+      (setf entry (%make-render-chunk-cache
+                   :chunk-x chunk-x
+                   :chunk-y chunk-y
+                   :layer-key (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
+                   :dirty t
+                   :last-access frame))
+      (setf (gethash key chunks) entry))
+    ;; Render if dirty or missing texture
+    (when (or (render-chunk-cache-dirty entry)
+              (null (render-chunk-cache-texture entry)))
+      (when (render-chunk-cache-texture entry)
+        (raylib:unload-render-texture (render-chunk-cache-texture entry)))
+      (setf (render-chunk-cache-texture entry)
+            (render-chunk-to-texture zone layer chunk-x chunk-y tile-dest-size editor assets))
+      (setf (render-chunk-cache-dirty entry) nil))
+    ;; Update LRU access time
+    (setf (render-chunk-cache-last-access entry) frame)
+    (render-chunk-cache-texture entry)))
+
+(defun draw-cached-chunk (cache zone layer chunk-x chunk-y
+                          chunk-pixel-size tile-dest-size
+                          editor assets zoom)
+  "Draw a single cached chunk at its world position."
+  (let ((texture (get-or-render-chunk cache zone layer chunk-x chunk-y
+                                      tile-dest-size editor assets)))
+    (when texture
+      (let* ((world-x (* chunk-x chunk-pixel-size))
+             (world-y (* chunk-y chunk-pixel-size))
+             ;; Render textures are flipped vertically in raylib
+             (tex (raylib:render-texture-2d-texture texture))
+             (tex-width (float (raylib:texture-2d-width tex)))
+             (tex-height (float (raylib:texture-2d-height tex)))
+             ;; Source rect: flip Y by using negative height
+             (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
+                                              :width tex-width :height (- tex-height)))
+             ;; Dest rect: world position, scaled by zoom (camera handles transform)
+             (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
+                                               :width (float chunk-pixel-size)
+                                               :height (float chunk-pixel-size)))
+             (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+        (declare (ignore zoom)) ; Camera mode handles zoom
+        (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+)))))
+
+(defun draw-world-cached (zone cache tile-dest-size zoom
+                          view-left view-right view-top view-bottom
+                          editor assets)
+  "Draw all visible zone layers using cached chunk textures."
+  (let* ((zone-layers (zone-layers zone))
+         (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache)))
+    ;; Increment frame counter for LRU tracking
+    (incf (zone-render-cache-frame-counter cache))
+    ;; Calculate visible chunk bounds
+    (let ((start-chunk-x (floor view-left chunk-pixel-size))
+          (end-chunk-x (ceiling view-right chunk-pixel-size))
+          (start-chunk-y (floor view-top chunk-pixel-size))
+          (end-chunk-y (ceiling view-bottom chunk-pixel-size)))
+      ;; Draw each layer in correct order with cached chunks
+      (labels ((draw-layer-cached (layer)
+                 (loop :for cy :from start-chunk-y :to end-chunk-y
+                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                 :do (draw-cached-chunk cache zone layer cx cy
+                                                        chunk-pixel-size tile-dest-size
+                                                        editor assets zoom)))))
+        ;; Layer order: normal (non-collision, non-object) -> collision -> object
+        (loop :for layer :across zone-layers
+              :when (and (not (zone-layer-collision-p layer))
+                         (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+              :do (draw-layer-cached layer))
+        (loop :for layer :across zone-layers
+              :when (zone-layer-collision-p layer)
+              :do (draw-layer-cached layer))
+        (loop :for layer :across zone-layers
+              :when (and (not (zone-layer-collision-p layer))
+                         (eql (zone-layer-id layer) *editor-object-layer-id*))
+              :do (draw-layer-cached layer))))))
+
+;;;; ========================================================================
+;;;; END RENDER CHUNK CACHE
+;;;; ========================================================================
 
 (defun preview-zone-offset (zone tile-dest-size edge)
   ;; Return the world offset to align ZONE along EDGE.
@@ -430,41 +669,50 @@
                                                      0.0
                                                      raylib:+white+)))))
     (when zone-layers
-      (labels ((draw-layer (layer)
-                 (multiple-value-bind (layer-tileset layer-columns)
-                     (layer-tileset-context layer editor assets)
-                   (when (and layer-tileset layer-columns)
-                     (loop :for row :from start-row :to end-row
-                           :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
-                           :do (loop :for col :from start-col :to end-col
-                                     :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
-                                     :for layer-index = (zone-layer-tile-at layer
-                                                                            chunk-size
-                                                                            col row)
-                                     :do (set-rectangle tile-dest dest-x dest-y
-                                                        tile-dest-size tile-dest-size)
-                                         (when (not (zerop layer-index))
-                                           (set-tile-source-rect tile-source
-                                                                 layer-index
-                                                                 tile-size-f
-                                                                 layer-columns)
-                                           (raylib:draw-texture-pro layer-tileset
-                                                                    tile-source
-                                                                    tile-dest
-                                                                    origin
-                                                                    0.0
-                                                                    raylib:+white+)))))))
-               (draw-layers (predicate)
-                 (loop :for layer :across zone-layers
-                       :when (funcall predicate layer)
-                         :do (draw-layer layer))))
-        (draw-layers (lambda (layer)
-                       (and (not (zone-layer-collision-p layer))
-                            (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
-        (draw-layers #'zone-layer-collision-p)
-        (draw-layers (lambda (layer)
-                       (and (not (zone-layer-collision-p layer))
-                            (eql (zone-layer-id layer) *editor-object-layer-id*))))))
+      ;; Use cached rendering if enabled, otherwise fall back to per-tile rendering
+      (if (and *render-cache-enabled* zone)
+          ;; Cached rendering path: pre-rendered chunk textures
+          (let* ((zone-id (zone-id zone))
+                 (cache (get-or-create-zone-render-cache zone-id tile-dest-size)))
+            (draw-world-cached zone cache tile-dest-size zoom
+                               view-left view-right view-top view-bottom
+                               editor assets))
+          ;; Original per-tile rendering path (fallback)
+          (labels ((draw-layer (layer)
+                     (multiple-value-bind (layer-tileset layer-columns)
+                         (layer-tileset-context layer editor assets)
+                       (when (and layer-tileset layer-columns)
+                         (loop :for row :from start-row :to end-row
+                               :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
+                               :do (loop :for col :from start-col :to end-col
+                                         :for dest-x :from (* start-col tile-dest-size) :by tile-dest-size
+                                         :for layer-index = (zone-layer-tile-at layer
+                                                                                chunk-size
+                                                                                col row)
+                                         :do (set-rectangle tile-dest dest-x dest-y
+                                                            tile-dest-size tile-dest-size)
+                                             (when (not (zerop layer-index))
+                                               (set-tile-source-rect tile-source
+                                                                     layer-index
+                                                                     tile-size-f
+                                                                     layer-columns)
+                                               (raylib:draw-texture-pro layer-tileset
+                                                                        tile-source
+                                                                        tile-dest
+                                                                        origin
+                                                                        0.0
+                                                                        raylib:+white+)))))))
+                   (draw-layers (predicate)
+                     (loop :for layer :across zone-layers
+                           :when (funcall predicate layer)
+                             :do (draw-layer layer))))
+            (draw-layers (lambda (layer)
+                           (and (not (zone-layer-collision-p layer))
+                                (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
+            (draw-layers #'zone-layer-collision-p)
+            (draw-layers (lambda (layer)
+                           (and (not (zone-layer-collision-p layer))
+                                (eql (zone-layer-id layer) *editor-object-layer-id*)))))))
     (unless zone
       (loop :for row :from start-row :to end-row
             :for dest-y :from (* start-row tile-dest-size) :by tile-dest-size
@@ -1328,6 +1576,12 @@
                                       (ui-menu-tile-filter-y ui)
                                       (ui-menu-tile-filter-size ui)
                                       (ui-menu-tile-filter-size ui)))
+         (cache-on *render-cache-enabled*)
+         (hover-cache (point-in-rect-p mouse-x mouse-y
+                                       (ui-menu-render-cache-x ui)
+                                       (ui-menu-render-cache-y ui)
+                                       (ui-menu-render-cache-size ui)
+                                       (ui-menu-render-cache-size ui)))
          (hover-interp (point-in-rect-p mouse-x mouse-y
                                         (ui-menu-interp-x ui)
                                         (ui-menu-interp-y ui)
@@ -1358,6 +1612,10 @@
                            (hover-tile (ui-menu-button-hover-color ui))
                            (tile-on (ui-menu-button-color ui))
                            (t (ui-menu-panel-color ui))))
+         (cache-box-color (cond
+                            (hover-cache (ui-menu-button-hover-color ui))
+                            (cache-on (ui-menu-button-color ui))
+                            (t (ui-menu-panel-color ui))))
          (interp-text-color (if hover-interp
                                 (ui-menu-button-hover-color ui)
                                 (ui-menu-text-color ui)))
@@ -1512,6 +1770,22 @@
     (raylib:draw-text (ui-menu-tile-filter-label ui)
                       (+ (ui-menu-tile-filter-x ui) 28)
                       (- (ui-menu-tile-filter-y ui) 2)
+                      (ui-menu-volume-text-size ui)
+                      (ui-menu-text-color ui))
+    ;; Render cache toggle
+    (raylib:draw-rectangle (ui-menu-render-cache-x ui)
+                           (ui-menu-render-cache-y ui)
+                           (ui-menu-render-cache-size ui)
+                           (ui-menu-render-cache-size ui)
+                           cache-box-color)
+    (raylib:draw-rectangle-lines (ui-menu-render-cache-x ui)
+                                 (ui-menu-render-cache-y ui)
+                                 (ui-menu-render-cache-size ui)
+                                 (ui-menu-render-cache-size ui)
+                                 (ui-menu-text-color ui))
+    (raylib:draw-text (ui-menu-render-cache-label ui)
+                      (+ (ui-menu-render-cache-x ui) 28)
+                      (- (ui-menu-render-cache-y ui) 2)
                       (ui-menu-volume-text-size ui)
                       (ui-menu-text-color ui))
     ;; Interpolation delay (click to cycle)

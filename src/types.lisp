@@ -137,6 +137,7 @@
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
   menu-prediction-size menu-prediction-x menu-prediction-y menu-prediction-label
   menu-tile-filter-size menu-tile-filter-x menu-tile-filter-y menu-tile-filter-label
+  menu-render-cache-size menu-render-cache-x menu-render-cache-y menu-render-cache-label
   menu-interp-size menu-interp-x menu-interp-y
   menu-threshold-size menu-threshold-x menu-threshold-y
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
@@ -203,6 +204,25 @@
   ;; Event emitted by simulation for UI/logging (decouples server from client).
   type  ; :combat-log, :hud-message
   text)
+
+;;; Render Chunk Cache (Phase 1 - Zoom-Out Performance Optimization)
+;;; Pre-render static tile chunks into render textures to reduce draw calls.
+
+(defstruct (render-chunk-cache (:constructor %make-render-chunk-cache))
+  "Cached render texture for a chunk of tiles."
+  (texture nil)              ; raylib render-texture-2d (from raylib:load-render-texture)
+  (chunk-x 0 :type fixnum)   ; Chunk X coordinate in chunk-space
+  (chunk-y 0 :type fixnum)   ; Chunk Y coordinate in chunk-space
+  (layer-key nil)            ; (layer-id . tileset-id) for cache key
+  (dirty t :type boolean)    ; T if chunk needs re-rendering
+  (last-access 0 :type fixnum)) ; Frame counter for LRU eviction
+
+(defstruct (zone-render-cache (:constructor %make-zone-render-cache))
+  "Per-zone render cache state."
+  (chunks (make-hash-table :test 'equal)) ; key: (layer-key chunk-x chunk-y) -> render-chunk-cache
+  (chunk-pixel-size 0)       ; *render-chunk-size* * tile-dest-size (computed once)
+  (zone-id nil)              ; Track which zone this cache belongs to
+  (frame-counter 0 :type fixnum)) ; Frame counter for LRU tracking
 
 (defstruct (combat-event-queue (:constructor make-combat-event-queue ()))
   ;; Queue of combat events for the UI to process.

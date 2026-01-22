@@ -1406,6 +1406,10 @@
 
 (defun apply-zone-to-world (world zone)
   ;; Replace the world's zone and rebuild wall-map-derived bounds.
+  ;; Clear render cache for the old zone before loading new zone.
+  (let ((old-zone (world-zone world)))
+    (when (and old-zone (zone-id old-zone))
+      (clear-zone-render-cache (zone-id old-zone))))
   (let* ((tile-dest-size (world-tile-dest-size world))
          (wall-map (if zone
                        (zone-wall-map zone)

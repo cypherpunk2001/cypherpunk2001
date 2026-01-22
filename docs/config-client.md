@@ -101,7 +101,12 @@ How it connects
 ### Rendering
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles |
+| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles. **Use `toggle-tile-point-filter` to change** (clears render caches) |
+| `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. **Use `toggle-render-cache-enabled` to change** (clears caches) |
+| `*render-cache-max-chunks*` | `64` | Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth |
+| `*render-chunk-size*` | `8` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
+
+**Important:** Use `toggle-tile-point-filter` and `toggle-render-cache-enabled` instead of raw `setf` - direct assignment leaves stale cached textures.
 
 ### Camera
 | Parameter | Default | Description |

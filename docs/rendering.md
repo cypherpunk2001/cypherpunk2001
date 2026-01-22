@@ -44,6 +44,14 @@ Example: draw flow
 Design note
 - Entity rendering uses viewport culling via `entity-in-viewport-p` to skip off-screen
   entities. A margin equal to sprite half-size prevents pop-in at screen edges.
+- Culling bounds are zoom-aware: `half-view = window-size / (2 * zoom)`. Zooming out
+  expands the visible area as expected (area scales as `1/zoom^2`), so more tiles/entities
+  are drawn when players zoom out. This is correct behavior, but increases draw workload.
+- With current settings (`*camera-zoom-min* = 0.5`, `*camera-zoom-default* = 1.0`,
+  `*camera-zoom-max* = 3.0`), max zoom-out shows ~4x the area compared to default.
+- Fullscreen toggle keeps the logical render size at 1280x720 on this build, so culling
+  bounds based on `*window-width*/*window-height*` remain accurate. If you add resizable
+  windows or change render size on fullscreen, switch culling bounds to runtime screen size.
 - The debug overlay draws both collision tiles and map bounds, which helps
   validate that collision and visuals are aligned.
 - NPC AI debug text is only drawn when explicitly enabled, keeping the
@@ -58,6 +66,9 @@ Design note
 - The minimap recenters on the player, so you can always click ahead to set a target.
 - Minimap NPC rendering uses distance-based culling via `*minimap-npc-view-radius*` to
   skip NPCs far from the player, reducing overhead with many entities.
+- Main-view rendering does not use a distance cap beyond viewport bounds; if max zoom-out
+  becomes the dominant play mode, consider chunk-level caching or render-texture layers
+  to keep frame time stable.
 - The pause menu includes music controls, debug/editor toggles, and logout/unstuck actions.
 - Object/item sprites treat an opaque border color as a transparency key to remove solid backdrops.
 - Zone objects render only when active (count > 0 and no respawn timer) so pickups can disappear.

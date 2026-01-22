@@ -868,6 +868,8 @@
                                                                      chunk-size
                                                                      world-x world-y))
                                          (zone-layer-set-tile layer chunk-size world-x world-y value)
+                                         ;; Invalidate render cache for this chunk
+                                         (invalidate-chunk-at-tile (zone-id zone) layer world-x world-y)
                                          (setf painted t))))))
                (when painted
                  (setf (editor-dirty editor) t))))
@@ -901,6 +903,8 @@
                                          (zone-layer-set-tile layer chunk-size world-x world-y value)
                                          (zone-set-collision-tile zone world-x world-y value)
                                          (set-world-blocked-tile world world-x world-y value)
+                                         ;; Invalidate render cache for this chunk
+                                         (invalidate-chunk-at-tile (zone-id zone) layer world-x world-y)
                                          (setf painted t))))))
                (when painted
                  (setf (editor-dirty editor) t))))

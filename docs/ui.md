@@ -10,7 +10,7 @@ Why we do it this way
 
 What it does
 - Builds layout constants (panel sizes, button positions, labels).
-- Handles menu click actions (logout, unstuck, music, volume, debug, editor mode, fullscreen).
+- Handles menu click actions (logout, unstuck, music, volume, debug, editor mode, fullscreen, client prediction, pixel-perfect tiles, chunk render cache, interpolation delay, prediction threshold).
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Tracks inventory overlay visibility for the `I` hotkey.
@@ -93,6 +93,21 @@ Walkthrough: debug toggle
 2. Click on the debug checkbox.
 3. UI flips `*debug-collision-overlay*` and `*debug-npc-logs*`.
 4. Rendering reads the flag and draws the overlay.
+
+Walkthrough: pixel-perfect tiles toggle
+1. Player opens the menu with Escape.
+2. Click on the "Pixel-Perfect Tiles" checkbox.
+3. UI calls `toggle-tile-point-filter` (not raw setf).
+4. Function flips `*tile-point-filter*` and clears render caches.
+5. Rendering re-creates cached chunk textures with new filter setting.
+
+Walkthrough: chunk render cache toggle
+1. Player opens the menu with Escape.
+2. Click on the "Chunk Render Cache" checkbox.
+3. UI calls `toggle-render-cache-enabled` (not raw setf).
+4. Function flips `*render-cache-enabled*` and clears render caches.
+5. When enabled, rendering caches static tile chunks to reduce draw calls at high zoom-out.
+6. When disabled, rendering draws tiles individually (useful for debugging or low-VRAM systems).
 
 Walkthrough: zone loading overlay
 1. Movement triggers a zone transition.

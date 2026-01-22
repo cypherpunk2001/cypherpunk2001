@@ -1,6 +1,9 @@
 ;; NOTE: If you change behavior here, update docs/ui.md :)
 (in-package #:mmorpg)
 
+;; Forward declarations for rendering.lisp toggle functions (avoid compile-time warnings)
+(declaim (ftype (function () t) toggle-tile-point-filter toggle-render-cache-enabled))
+
 (defun make-stamina-labels ()
   ;; Precompute stamina HUD strings to avoid per-frame consing.
   (let* ((max (truncate *run-stamina-max*))
@@ -90,14 +93,19 @@
          (menu-tile-filter-x menu-debug-x)
          (menu-tile-filter-y (+ menu-prediction-y menu-prediction-size menu-toggle-gap))
          (menu-tile-filter-label "Pixel-Perfect Tiles")
+         (menu-render-cache-size 18)
+         (menu-render-cache-x menu-debug-x)
+         (menu-render-cache-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
+         (menu-render-cache-label "Chunk Render Cache")
          (menu-interp-size 18)
          (menu-interp-x menu-debug-x)
-         (menu-interp-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
+         (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
          (menu-threshold-size 18)
          (menu-threshold-x menu-debug-x)
          (menu-threshold-y (+ menu-interp-y menu-interp-size menu-toggle-gap))
+         ;; Position Save/Load above Unstuck (from bottom) to avoid overlap with toggles
+         (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
          (menu-save-x (+ menu-panel-x menu-padding))
-         (menu-save-y (+ menu-threshold-y menu-threshold-size menu-action-gap))
          (menu-load-x (+ menu-save-x menu-nav-button-width menu-nav-gap))
          (menu-load-y menu-save-y)
          (hud-bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 160))
@@ -256,6 +264,10 @@
               :menu-tile-filter-x menu-tile-filter-x
               :menu-tile-filter-y menu-tile-filter-y
               :menu-tile-filter-label menu-tile-filter-label
+              :menu-render-cache-size menu-render-cache-size
+              :menu-render-cache-x menu-render-cache-x
+              :menu-render-cache-y menu-render-cache-y
+              :menu-render-cache-label menu-render-cache-label
               :menu-interp-size menu-interp-size
               :menu-interp-x menu-interp-x
               :menu-interp-y menu-interp-y
@@ -428,11 +440,16 @@
                       (ui-menu-prediction-x ui) (ui-menu-prediction-y ui)
                       (ui-menu-prediction-size ui) (ui-menu-prediction-size ui))
      (setf *client-prediction-enabled* (not *client-prediction-enabled*)))
-    ;; Tile filter toggle
+    ;; Tile filter toggle (clears render cache to apply new filter)
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-tile-filter-x ui) (ui-menu-tile-filter-y ui)
                       (ui-menu-tile-filter-size ui) (ui-menu-tile-filter-size ui))
-     (setf *tile-point-filter* (not *tile-point-filter*)))
+     (toggle-tile-point-filter))
+    ;; Render cache toggle (clears and rebuilds cache)
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-render-cache-x ui) (ui-menu-render-cache-y ui)
+                      (ui-menu-render-cache-size ui) (ui-menu-render-cache-size ui))
+     (toggle-render-cache-enabled))
     ;; Interpolation delay cycle: 0.05 -> 0.1 -> 0.15 -> 0.2 -> 0.05
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-interp-x ui) (ui-menu-interp-y ui)
