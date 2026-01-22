@@ -16,6 +16,7 @@
                (:file "src/db")
                (:file "src/zone")
                (:file "src/world-graph")
+               (:file "src/spatial")
                (:file "src/movement")
                (:file "src/input")
                (:file "src/combat")

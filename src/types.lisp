@@ -21,7 +21,9 @@
   hud-stats-lines hud-stats-count hud-stats-dirty
   last-sequence
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
-  snapshot-dirty)
+  snapshot-dirty
+  ;; Spatial grid cell tracking (nil if not in a grid)
+  grid-cell-x grid-cell-y)
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
@@ -35,7 +37,9 @@
   hits-left alive respawn-timer
   hit-active hit-timer hit-frame hit-facing hit-facing-sign
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
-  snapshot-dirty)
+  snapshot-dirty
+  ;; Spatial grid cell tracking (nil if not in a grid)
+  grid-cell-x grid-cell-y)
 
 (defstruct zone-state
   "State for a single zone: zone data, NPCs, and derived collision data.
@@ -44,7 +48,12 @@
   (zone nil)           ; Zone struct (tiles, collision, objects, spawns)
   (npcs (vector))      ; Vector of NPCs in this zone
   (wall-map nil)       ; 2D array for collision detection
-  (objects nil))       ; Respawning objects list
+  (objects nil)        ; Respawning objects list
+  ;; Spatial grids for proximity queries (per-zone, not global)
+  (player-grid nil)    ; Spatial grid for players in this zone
+  (npc-grid nil)       ; Spatial grid for NPCs in this zone
+  ;; NPC index map for O(1) lookup by ID (npc-id -> array index)
+  (npc-index-map nil))
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
   ;; Skill state tracking level and xp.
@@ -526,6 +535,35 @@
               (aref players index)))
           ;; Fallback to linear scan if no map exists
           (find-player-by-id players id)))))
+
+(defun rebuild-npc-index-map (zone-state)
+  "Rebuild the npc-index-map from the current NPCs array. O(n).
+   Called when the NPCs array structure changes."
+  (when zone-state
+    (let ((npcs (zone-state-npcs zone-state))
+          (map (or (zone-state-npc-index-map zone-state)
+                   (make-hash-table :test 'eql))))
+      (clrhash map)
+      (when npcs
+        (loop :for i :from 0 :below (length npcs)
+              :for npc = (aref npcs i)
+              :when npc
+              :do (setf (gethash (npc-id npc) map) i)))
+      (setf (zone-state-npc-index-map zone-state) map)
+      map)))
+
+(defun find-npc-by-id-fast (zone-state id)
+  "O(1) NPC lookup using the zone-state's index map. Falls back to linear scan if no map."
+  (when zone-state
+    (let ((npcs (zone-state-npcs zone-state))
+          (map (zone-state-npc-index-map zone-state)))
+      (when (and npcs (> id 0))
+        (if map
+            (let ((index (gethash id map)))
+              (when (and index (< index (length npcs)))
+                (aref npcs index)))
+            ;; Fallback to linear scan if no map exists
+            (find-npc-by-id npcs id))))))
 
 (defgeneric entity-id (entity)
   (:documentation "Return the stable id for ENTITY."))

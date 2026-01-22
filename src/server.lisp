@@ -65,7 +65,9 @@
            (zone-id (and zone (zone-id zone)))
            (zone-state (and zone-id (get-zone-state zone-id))))
       (when zone-state
-        (setf (zone-state-npcs zone-state) npcs)))
+        (setf (zone-state-npcs zone-state) npcs)
+        ;; Populate NPC spatial grid for proximity queries
+        (populate-npc-grid zone-state npcs)))
     (if player
         (log-verbose "Sim state initialized: player-id=~d npcs=~d zone=~a"
                      (player-id player)

@@ -257,15 +257,33 @@
       (format t "~&NPC-RESPAWN ~a at ~,1f ~,1f~%" name (npc-x npc) (npc-y npc))
       (finish-output))))
 
-(defun update-npc-respawns (npcs dt)
-  ;; Tick respawn timers and restore NPCs when timers expire.
-  (loop :for npc :across npcs
-        :when (and (not (npc-alive npc))
-                   (> (npc-respawn-timer npc) 0.0))
+(defun update-npc-respawns (npcs dt &optional zone-state)
+  "Tick respawn timers and restore NPCs when timers expire.
+   When ZONE-STATE is provided, updates the NPC's grid cell on respawn."
+  (let ((npc-grid (and zone-state (zone-state-npc-grid zone-state))))
+    (loop :for npc :across npcs
+          :when (and (not (npc-alive npc))
+                     (> (npc-respawn-timer npc) 0.0))
           :do (let ((timer (max 0.0 (- (npc-respawn-timer npc) dt))))
                 (setf (npc-respawn-timer npc) timer)
                 (when (<= timer 0.0)
-                  (respawn-npc npc)))))
+                  ;; Remove from old grid cell before respawn moves NPC
+                  (when (and npc-grid
+                             (npc-grid-cell-x npc)
+                             (npc-grid-cell-y npc))
+                    (spatial-grid-remove npc-grid (npc-id npc)
+                                         (npc-grid-cell-x npc)
+                                         (npc-grid-cell-y npc)))
+                  (respawn-npc npc)
+                  ;; Insert into new grid cell at home position
+                  (when npc-grid
+                    (multiple-value-bind (cx cy)
+                        (position-to-cell (npc-x npc) (npc-y npc)
+                                          (spatial-grid-cell-size npc-grid))
+                      (spatial-grid-insert npc-grid (npc-id npc)
+                                           (npc-x npc) (npc-y npc))
+                      (setf (npc-grid-cell-x npc) cx
+                            (npc-grid-cell-y npc) cy))))))))
 
 (defun player-attack-target (player npcs)
   ;; Return the active NPC target for PLAYER, if any.
@@ -660,3 +678,33 @@
 
 (defmethod update-entity-animation ((entity npc) dt)
   (update-npc-animation entity dt))
+
+;;; Spatial Grid Optimized Melee Combat
+
+(defun apply-melee-hits-spatial (players zone-state world event-queue)
+  "Apply melee hits from attacking players to nearby NPCs using spatial grid.
+   O(P×k) where k = NPCs in each player's 3x3 cell region, vs O(P×N) brute force.
+   Uses O(1) NPC lookup via zone-state's npc-index-map."
+  (when (and players zone-state (> (length players) 0))
+    (let ((npc-grid (zone-state-npc-grid zone-state))
+          (zone-npcs (zone-state-npcs zone-state)))
+      (if (and npc-grid zone-npcs)
+          ;; Spatial grid path: query nearby NPCs for each attacking player
+          (loop :for player :across players
+                :when (and (player-attacking player)
+                           (not (player-attack-hit player))
+                           (player-grid-cell-x player)
+                           (player-grid-cell-y player))
+                :do (let ((nearby-ids (spatial-grid-query-neighbors
+                                       npc-grid
+                                       (player-grid-cell-x player)
+                                       (player-grid-cell-y player))))
+                      (dolist (npc-id nearby-ids)
+                        ;; O(1) NPC lookup via index map
+                        (let ((npc (find-npc-by-id-fast zone-state npc-id)))
+                          (when npc
+                            (apply-melee-hit player npc world event-queue))))))
+          ;; Fallback: brute force if no spatial grid
+          (loop :for player :across players
+                :do (loop :for npc :across zone-npcs
+                          :do (apply-melee-hit player npc world event-queue)))))))

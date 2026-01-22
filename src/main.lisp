@@ -353,17 +353,19 @@
   (loop :for npc :across npcs
         :do (reset-frame-intent (npc-intent npc))))
 
-(defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue &optional zone-state)
+(defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue &optional zone-state game)
   "Run NPC AI for NPCs in a specific zone with that zone's players.
    ZONE-NPCS: vector of NPCs in the zone
    ZONE-PLAYERS: vector of players in the same zone
-   ZONE-STATE: optional zone-state for per-zone collision
+   ZONE-STATE: optional zone-state for per-zone collision and spatial grid
+   GAME: optional game struct for O(1) player lookup via spatial grid
    Returns number of NPCs updated."
   (let ((count 0))
     (when (and zone-npcs (> (length zone-npcs) 0)
                zone-players (> (length zone-players) 0))
       (loop :for npc :across zone-npcs
-            :for target-player = (closest-player zone-players npc)
+            ;; Use spatial grid for O(1) cell lookup when available
+            :for target-player = (closest-player zone-players npc zone-state game)
             :do (when target-player
                   (update-npc-behavior npc target-player world)
                   (update-npc-intent npc target-player world dt)
@@ -433,8 +435,8 @@
                 (let ((zone-objects (zone-state-objects zone-state)))
                   (when zone-objects
                     (update-zone-objects-respawns zone-objects dt)))
-                ;; NPC respawns for this zone
-                (update-npc-respawns (zone-state-npcs zone-state) dt))))
+                ;; NPC respawns for this zone (pass zone-state for grid update)
+                (update-npc-respawns (zone-state-npcs zone-state) dt zone-state))))
           ;; Fallback: use world's zone
           (progn
             (update-object-respawns world dt)
@@ -472,13 +474,16 @@
                                     (zone-state-npcs zone-state)
                                     npcs))  ; fallback to game-npcs
                      (zone-players (players-in-zone zone-id players)))
-                ;; Melee combat for this zone
+                ;; Ensure all players in this zone are in the spatial grid
+                ;; (handles players who joined before zone-state existed)
+                (when (and zone-state zone-players)
+                  (loop :for player :across zone-players
+                        :do (ensure-player-in-grid player zone-state)))
+                ;; Melee combat for this zone (using spatial grid for O(P×k) vs O(P×N))
                 (when (and zone-npcs zone-players)
-                  (loop :for current-player :across zone-players
-                        :do (loop :for npc :across zone-npcs
-                                  :do (apply-melee-hit current-player npc world event-queue))))
-                ;; NPC AI for this zone (pass zone-state for per-zone collision)
-                (simulate-zone-npcs zone-npcs zone-players world dt event-queue zone-state)))
+                  (apply-melee-hits-spatial zone-players zone-state world event-queue))
+                ;; NPC AI for this zone (pass zone-state for per-zone collision and spatial grid)
+                (simulate-zone-npcs zone-npcs zone-players world dt event-queue zone-state game)))
             ;; Fallback: no zone-ids means use legacy behavior (local mode, nil zone-ids)
             (progn
               (loop :for current-player :across players

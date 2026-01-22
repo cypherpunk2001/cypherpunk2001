@@ -247,7 +247,17 @@
                 ;; Final Net Tests
                 test-session-try-register
                 test-session-unregister
-                test-session-get)))
+                test-session-get
+                ;; Spatial Grid Tests
+                test-spatial-grid-insert-remove
+                test-spatial-grid-move
+                test-spatial-grid-query-neighbors
+                test-spatial-grid-query-radius
+                test-position-to-cell
+                test-entity-cell-changed-p
+                test-spatial-grid-stats
+                test-spatial-grid-clear
+                test-zone-transition-grid-update)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -7249,3 +7259,197 @@ hello
                 () "Player 1 data unchanged after failed trade")
         (assert (equal (getf p2-loaded :x) (getf p2-data :x))
                 () "Player 2 data unchanged after failed trade")))))
+
+;;;; ======================================================================
+;;;; Spatial Grid Tests
+;;;; ======================================================================
+
+(defun test-spatial-grid-insert-remove ()
+  "Test basic spatial grid insert and remove operations."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Insert entity at position
+    (mmorpg::spatial-grid-insert grid 1 100.0 100.0)
+    ;; Verify entity is in the grid
+    (multiple-value-bind (cx cy) (mmorpg::position-to-cell 100.0 100.0 128.0)
+      (let ((ids (mmorpg::spatial-grid-get-cell grid cx cy)))
+        (assert (member 1 ids) () "Entity 1 should be in cell after insert")))
+    ;; Remove entity
+    (multiple-value-bind (cx cy) (mmorpg::position-to-cell 100.0 100.0 128.0)
+      (mmorpg::spatial-grid-remove grid 1 cx cy)
+      (let ((ids (mmorpg::spatial-grid-get-cell grid cx cy)))
+        (assert (not (member 1 ids)) () "Entity 1 should not be in cell after remove")))))
+
+(defun test-spatial-grid-move ()
+  "Test spatial grid move operation."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Insert at initial position
+    (mmorpg::spatial-grid-insert grid 1 50.0 50.0)
+    ;; Move within same cell (should not change)
+    (multiple-value-bind (new-cx new-cy changed)
+        (mmorpg::spatial-grid-move grid 1 0 0 60.0 60.0)
+      (declare (ignore new-cx new-cy))
+      (assert (null changed) () "Moving within same cell should not report change"))
+    ;; Move to different cell
+    (multiple-value-bind (new-cx new-cy changed)
+        (mmorpg::spatial-grid-move grid 1 0 0 200.0 200.0)
+      (assert changed () "Moving to different cell should report change")
+      ;; Verify new position
+      (let ((ids (mmorpg::spatial-grid-get-cell grid new-cx new-cy)))
+        (assert (member 1 ids) () "Entity 1 should be in new cell")))))
+
+(defun test-spatial-grid-query-neighbors ()
+  "Test spatial grid neighbor query (3x3 area)."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Insert entities at different cells
+    (mmorpg::spatial-grid-insert grid 1 64.0 64.0)     ; cell (0,0)
+    (mmorpg::spatial-grid-insert grid 2 192.0 64.0)    ; cell (1,0)
+    (mmorpg::spatial-grid-insert grid 3 320.0 64.0)    ; cell (2,0) - outside 3x3
+    (mmorpg::spatial-grid-insert grid 4 64.0 192.0)    ; cell (0,1)
+    ;; Query neighbors around (0,0)
+    (let ((nearby (mmorpg::spatial-grid-query-neighbors grid 0 0)))
+      (assert (member 1 nearby) () "Entity 1 should be in neighbors")
+      (assert (member 2 nearby) () "Entity 2 should be in neighbors")
+      (assert (not (member 3 nearby)) () "Entity 3 should not be in neighbors (too far)")
+      (assert (member 4 nearby) () "Entity 4 should be in neighbors"))))
+
+(defun test-spatial-grid-query-radius ()
+  "Test spatial grid radius query."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Insert entities at different cells
+    (mmorpg::spatial-grid-insert grid 1 64.0 64.0)     ; cell (0,0)
+    (mmorpg::spatial-grid-insert grid 2 320.0 64.0)    ; cell (2,0)
+    (mmorpg::spatial-grid-insert grid 3 576.0 64.0)    ; cell (4,0)
+    ;; Radius 1 (3x3) should not include entity 3
+    (let ((nearby (mmorpg::spatial-grid-query-radius grid 0 0 1)))
+      (assert (member 1 nearby) () "Radius 1: Entity 1 should be included")
+      (assert (not (member 3 nearby)) () "Radius 1: Entity 3 should not be included"))
+    ;; Radius 2 (5x5) should include entities 1 and 2 but not 3
+    (let ((nearby (mmorpg::spatial-grid-query-radius grid 0 0 2)))
+      (assert (member 1 nearby) () "Radius 2: Entity 1 should be included")
+      (assert (member 2 nearby) () "Radius 2: Entity 2 should be included")
+      (assert (not (member 3 nearby)) () "Radius 2: Entity 3 should not be included"))))
+
+(defun test-position-to-cell ()
+  "Test position to cell coordinate conversion."
+  (let ((cell-size 128.0))
+    ;; Test basic conversion
+    (multiple-value-bind (cx cy) (mmorpg::position-to-cell 0.0 0.0 cell-size)
+      (assert (= cx 0) () "Position (0,0) should be in cell 0")
+      (assert (= cy 0) () "Position (0,0) should be in cell 0"))
+    ;; Test position in second cell
+    (multiple-value-bind (cx cy) (mmorpg::position-to-cell 130.0 260.0 cell-size)
+      (assert (= cx 1) () "Position (130,260) should be in cell x=1")
+      (assert (= cy 2) () "Position (130,260) should be in cell y=2"))
+    ;; Test negative coordinates
+    (multiple-value-bind (cx cy) (mmorpg::position-to-cell -50.0 -200.0 cell-size)
+      (assert (= cx -1) () "Position (-50,-200) should be in cell x=-1")
+      (assert (= cy -2) () "Position (-50,-200) should be in cell y=-2"))))
+
+(defun test-entity-cell-changed-p ()
+  "Test entity cell change detection."
+  (let ((cell-size 128.0))
+    ;; Same cell - no change
+    (assert (not (mmorpg::entity-cell-changed-p 0 0 50.0 50.0 cell-size))
+            () "Position in same cell should not report change")
+    ;; Different cell - change
+    (assert (mmorpg::entity-cell-changed-p 0 0 200.0 50.0 cell-size)
+            () "Position in different cell should report change")
+    ;; Nil old cell - always change
+    (assert (mmorpg::entity-cell-changed-p nil nil 50.0 50.0 cell-size)
+            () "Nil old cell should report change")))
+
+(defun test-spatial-grid-stats ()
+  "Test spatial grid statistics."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Empty grid
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats grid)
+      (assert (= cell-count 0) () "Empty grid should have 0 cells")
+      (assert (= entity-count 0) () "Empty grid should have 0 entities"))
+    ;; Add some entities
+    (mmorpg::spatial-grid-insert grid 1 64.0 64.0)
+    (mmorpg::spatial-grid-insert grid 2 64.0 64.0)  ; Same cell as 1
+    (mmorpg::spatial-grid-insert grid 3 200.0 200.0)  ; Different cell
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats grid)
+      (assert (= cell-count 2) () "Grid should have 2 occupied cells")
+      (assert (= entity-count 3) () "Grid should have 3 entities total"))))
+
+(defun test-spatial-grid-clear ()
+  "Test spatial grid clear operation."
+  (let ((grid (mmorpg::make-spatial-grid 128.0)))
+    ;; Add some entities
+    (mmorpg::spatial-grid-insert grid 1 64.0 64.0)
+    (mmorpg::spatial-grid-insert grid 2 200.0 200.0)
+    ;; Clear grid
+    (mmorpg::spatial-grid-clear grid)
+    ;; Verify empty
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats grid)
+      (assert (= cell-count 0) () "Cleared grid should have 0 cells")
+      (assert (= entity-count 0) () "Cleared grid should have 0 entities"))))
+
+(defun test-zone-transition-grid-update ()
+  "Test that zone transitions correctly update spatial grids.
+   Player should be removed from old zone grid and inserted into new zone grid."
+  (let* (;; Create two zone-states with spatial grids
+         (old-zone-state (mmorpg::make-zone-state
+                          :zone-id :old-zone
+                          :player-grid (mmorpg::make-spatial-grid 128.0)
+                          :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         (new-zone-state (mmorpg::make-zone-state
+                          :zone-id :new-zone
+                          :player-grid (mmorpg::make-spatial-grid 128.0)
+                          :npc-grid (mmorpg::make-spatial-grid 128.0)))
+         ;; Create a player in old zone
+         (player (mmorpg::make-player 100.0 100.0 :id 42 :zone-id :old-zone))
+         (old-grid (mmorpg::zone-state-player-grid old-zone-state))
+         (new-grid (mmorpg::zone-state-player-grid new-zone-state)))
+    ;; Insert player into old zone's grid (simulating initial state)
+    (multiple-value-bind (cx cy)
+        (mmorpg::position-to-cell 100.0 100.0 (mmorpg::spatial-grid-cell-size old-grid))
+      (mmorpg::spatial-grid-insert old-grid 42 100.0 100.0)
+      (setf (mmorpg::player-grid-cell-x player) cx
+            (mmorpg::player-grid-cell-y player) cy))
+    ;; Verify player is in old grid
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats old-grid)
+      (declare (ignore cell-count))
+      (assert (= entity-count 1) () "Player should be in old zone grid"))
+    ;; Simulate zone transition: remove from old grid
+    (mmorpg::spatial-grid-remove old-grid 42
+                                  (mmorpg::player-grid-cell-x player)
+                                  (mmorpg::player-grid-cell-y player))
+    ;; Update player position and zone
+    (setf (mmorpg::player-x player) 200.0
+          (mmorpg::player-y player) 200.0
+          (mmorpg::player-zone-id player) :new-zone)
+    ;; Insert into new grid
+    (multiple-value-bind (cx cy)
+        (mmorpg::position-to-cell 200.0 200.0 (mmorpg::spatial-grid-cell-size new-grid))
+      (mmorpg::spatial-grid-insert new-grid 42 200.0 200.0)
+      (setf (mmorpg::player-grid-cell-x player) cx
+            (mmorpg::player-grid-cell-y player) cy))
+    ;; Verify player is NOT in old grid
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats old-grid)
+      (declare (ignore cell-count))
+      (assert (= entity-count 0) () "Player should NOT be in old zone grid after transition"))
+    ;; Verify player IS in new grid
+    (multiple-value-bind (cell-count entity-count)
+        (mmorpg::spatial-grid-stats new-grid)
+      (declare (ignore cell-count))
+      (assert (= entity-count 1) () "Player should be in new zone grid after transition"))
+    ;; Verify player's grid cell is updated
+    (multiple-value-bind (expected-cx expected-cy)
+        (mmorpg::position-to-cell 200.0 200.0 128.0)
+      (assert (= (mmorpg::player-grid-cell-x player) expected-cx)
+              () "Player grid-cell-x should match new position")
+      (assert (= (mmorpg::player-grid-cell-y player) expected-cy)
+              () "Player grid-cell-y should match new position"))
+    ;; Verify player can be found via spatial query in new zone
+    (let ((nearby (mmorpg::spatial-grid-query-neighbors
+                   new-grid
+                   (mmorpg::player-grid-cell-x player)
+                   (mmorpg::player-grid-cell-y player))))
+      (assert (member 42 nearby) () "Player should be findable via spatial query in new zone"))))

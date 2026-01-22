@@ -1,19 +1,39 @@
 ;; NOTE: If you change behavior here, update docs/ai.md :)
 (in-package #:mmorpg)
 
-(defun closest-player (players npc)
-  ;; Return the closest alive player to NPC, if any.
+(defun closest-player (players npc &optional zone-state game)
+  "Return the closest alive player to NPC, if any.
+   When ZONE-STATE and GAME are provided, uses spatial grid for O(1) cell lookup
+   instead of O(n) linear scan of all players."
   (let ((best nil)
-        (best-dist nil))
-    (when players
-      (loop :for player :across players
-            :when (combatant-alive-p player)
-              :do (let* ((dx (- (player-x player) (npc-x npc)))
-                         (dy (- (player-y player) (npc-y npc)))
-                         (dist (+ (* dx dx) (* dy dy))))
-                    (when (or (null best-dist) (< dist best-dist))
-                      (setf best player
-                            best-dist dist)))))
+        (best-dist nil)
+        (grid (and zone-state (zone-state-player-grid zone-state))))
+    ;; Use spatial grid query if available
+    (if (and grid (npc-grid-cell-x npc) (npc-grid-cell-y npc) game)
+        ;; O(1) cell lookup + local scan (9 cells)
+        (let ((nearby-ids (spatial-grid-query-neighbors
+                           grid
+                           (npc-grid-cell-x npc)
+                           (npc-grid-cell-y npc))))
+          (dolist (id nearby-ids)
+            (let ((player (find-player-by-id-fast game id)))
+              (when (and player (combatant-alive-p player))
+                (let* ((dx (- (player-x player) (npc-x npc)))
+                       (dy (- (player-y player) (npc-y npc)))
+                       (dist (+ (* dx dx) (* dy dy))))
+                  (when (or (null best-dist) (< dist best-dist))
+                    (setf best player
+                          best-dist dist)))))))
+        ;; Fallback: O(n) linear scan of all players
+        (when players
+          (loop :for player :across players
+                :when (combatant-alive-p player)
+                :do (let* ((dx (- (player-x player) (npc-x npc)))
+                           (dy (- (player-y player) (npc-y npc)))
+                           (dist (+ (* dx dx) (* dy dy))))
+                      (when (or (null best-dist) (< dist best-dist))
+                        (setf best player
+                              best-dist dist))))))
     best))
 
 (defun npc-home-radius (npc world)
@@ -248,7 +268,18 @@
                       (setf (npc-x npc) (float (clamp nx min-x max-x) 1.0f0)
                             (npc-y npc) (float (clamp ny min-y max-y) 1.0f0))
                       (when (or (/= old-x (npc-x npc)) (/= old-y (npc-y npc)))
-                        (setf (npc-snapshot-dirty npc) t)))))
+                        (setf (npc-snapshot-dirty npc) t)
+                        ;; Update spatial grid if cell changed
+                        (let ((grid (zone-state-npc-grid zone-state)))
+                          (when grid
+                            (multiple-value-bind (new-cx new-cy changed)
+                                (spatial-grid-move grid (npc-id npc)
+                                                   (npc-grid-cell-x npc)
+                                                   (npc-grid-cell-y npc)
+                                                   (npc-x npc) (npc-y npc))
+                              (when changed
+                                (setf (npc-grid-cell-x npc) new-cx
+                                      (npc-grid-cell-y npc) new-cy)))))))))
                 ;; Fallback to global world collision
                 (multiple-value-bind (nx ny out-dx out-dy)
                     (attempt-move world

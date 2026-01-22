@@ -17,7 +17,8 @@
 
 (defun get-or-create-zone-state (zone-id zone-path &key npcs)
   "Get existing zone-state or create a new one by loading the zone.
-   NPCS is an optional NPC vector to associate with the zone."
+   NPCS is an optional NPC vector to associate with the zone.
+   Initializes spatial grids for proximity queries."
   (or (gethash zone-id *zone-states*)
       (let ((zone (when zone-path (load-zone zone-path))))
         (when zone
@@ -26,9 +27,12 @@
                         :zone zone
                         :npcs (or npcs (vector))
                         :wall-map (derive-wall-map-from-zone zone)
-                        :objects (zone-objects zone))))
+                        :objects (zone-objects zone)
+                        ;; Initialize spatial grids for proximity queries
+                        :player-grid (make-spatial-grid)
+                        :npc-grid (make-spatial-grid))))
             (setf (gethash zone-id *zone-states*) state)
-            (log-verbose "Created zone-state for ~a" zone-id)
+            (log-verbose "Created zone-state for ~a with spatial grids" zone-id)
             state)))))
 
 (defun zone-state-player-count (zone-id players)
@@ -640,7 +644,20 @@
       ;; Also mark snapshot-dirty for delta compression (see docs/net.md Prong 2)
       (when (or (/= old-x x) (/= old-y y))
         (setf (player-snapshot-dirty player) t)
-        (mark-player-dirty (player-id player))))))
+        (mark-player-dirty (player-id player))
+        ;; Update spatial grid if cell changed
+        (let ((zone-state (get-zone-state player-zone)))
+          (when zone-state
+            (let ((grid (zone-state-player-grid zone-state)))
+              (when grid
+                (multiple-value-bind (new-cx new-cy changed)
+                    (spatial-grid-move grid (player-id player)
+                                       (player-grid-cell-x player)
+                                       (player-grid-cell-y player)
+                                       x y)
+                  (when changed
+                    (setf (player-grid-cell-x player) new-cx
+                          (player-grid-cell-y player) new-cy)))))))))))
 
 (defun player-intent-direction (player)
   ;; Return the intended movement direction for edge transitions.
@@ -950,12 +967,15 @@
     table))
 
 (defun cache-zone-npcs (zone-id npcs carried-table)
-  ;; Cache NPCs for ZONE-ID in zone-state, excluding those in CARRIED-TABLE.
+  "Cache NPCs for ZONE-ID in zone-state, excluding those in CARRIED-TABLE.
+   Also populates the zone's NPC spatial grid."
   (when zone-id
     (let ((zone-state (get-zone-state zone-id)))
       (when zone-state
         (if (or (null carried-table) (null npcs))
-            (setf (zone-state-npcs zone-state) npcs)
+            (progn
+              (setf (zone-state-npcs zone-state) npcs)
+              (populate-npc-grid zone-state npcs))
             (let ((kept 0))
               (loop :for npc :across npcs
                     :unless (gethash npc carried-table)
@@ -966,7 +986,8 @@
                       :unless (gethash npc carried-table)
                         :do (setf (aref stored index) npc)
                             (incf index))
-                (setf (zone-state-npcs zone-state) stored))))))))
+                (setf (zone-state-npcs zone-state) stored)
+                (populate-npc-grid zone-state stored))))))))
 
 (defun cached-zone-npcs (zone-id)
   ;; Return cached NPCs for ZONE-ID from zone-state, if any.
@@ -1093,12 +1114,30 @@
                         (find-open-position-with-map target-wall-map raw-x raw-y
                                                      half-w half-h tile-size)
                         (world-open-position-for world raw-x raw-y half-w half-h))
+                  ;; Remove player from old zone's spatial grid
+                  (let ((old-zone-state (get-zone-state current-zone-id)))
+                    (when old-zone-state
+                      (let ((old-grid (zone-state-player-grid old-zone-state)))
+                        (when (and old-grid
+                                   (player-grid-cell-x player)
+                                   (player-grid-cell-y player))
+                          (spatial-grid-remove old-grid (player-id player)
+                                               (player-grid-cell-x player)
+                                               (player-grid-cell-y player))))))
                   (setf (player-x player) spawn-x
                         (player-y player) spawn-y
                         (player-dx player) 0.0
                         (player-dy player) 0.0
                         (player-zone-id player) target-zone-id
                         (player-snapshot-dirty player) t)
+                  ;; Insert player into new zone's spatial grid
+                  (let ((new-grid (zone-state-player-grid target-zone-state)))
+                    (when new-grid
+                      (multiple-value-bind (cx cy)
+                          (position-to-cell spawn-x spawn-y (spatial-grid-cell-size new-grid))
+                        (spatial-grid-insert new-grid (player-id player) spawn-x spawn-y)
+                        (setf (player-grid-cell-x player) cx
+                              (player-grid-cell-y player) cy))))
                   ;; Tier-1 write: zone transition saves immediately
                   (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
                                             :max-retries 5
@@ -1138,8 +1177,12 @@
                                          :zone-id target-zone-id
                                          :zone zone
                                          :wall-map (zone-wall-map zone)
-                                         :objects (zone-objects zone)))))
+                                         :objects (zone-objects zone)
+                                         :player-grid (make-spatial-grid)
+                                         :npc-grid (make-spatial-grid)))))
                   (setf (zone-state-npcs target-state) merged)
+                  ;; Populate NPC spatial grid for proximity queries
+                  (populate-npc-grid target-state merged)
                   (setf (gethash target-zone-id *zone-states*) target-state)))))
           t)))))
 
@@ -1348,7 +1391,10 @@
                    :zone zone
                    :wall-map wall-map
                    :objects (zone-objects zone)
-                   :npcs (vector))))))  ; NPCs populated later by make-npcs
+                   :npcs (vector)
+                   ;; Initialize spatial grids for proximity queries
+                   :player-grid (make-spatial-grid)
+                   :npc-grid (make-spatial-grid))))))  ; NPCs populated later by make-npcs
       world)))
 
 (defun apply-zone-to-world (world zone)

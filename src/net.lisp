@@ -930,6 +930,7 @@
 
 (defun add-player-to-game (game player)
   ;; Append PLAYER to GAME and refresh entity list.
+  ;; Also inserts player into zone's spatial grid for proximity queries.
   (let* ((players (game-players game))
          (count (if players (length players) 0))
          (new-players (make-array (1+ count))))
@@ -943,11 +944,33 @@
     (let ((map (or (game-player-index-map game)
                    (setf (game-player-index-map game)
                          (make-hash-table :test 'eql)))))
-      (setf (gethash (player-id player) map) count)))
+      (setf (gethash (player-id player) map) count))
+    ;; Insert player into zone's spatial grid
+    (let* ((zone-id (player-zone-id player))
+           (zone-state (when zone-id (get-zone-state zone-id)))
+           (grid (when zone-state (zone-state-player-grid zone-state))))
+      (when grid
+        (multiple-value-bind (cx cy)
+            (position-to-cell (player-x player) (player-y player)
+                              (spatial-grid-cell-size grid))
+          (spatial-grid-insert grid (player-id player) (player-x player) (player-y player))
+          (setf (player-grid-cell-x player) cx
+                (player-grid-cell-y player) cy)))))
   player)
 
 (defun remove-player-from-game (game player)
-  "Remove PLAYER from GAME and refresh entity list."
+  "Remove PLAYER from GAME and refresh entity list.
+   Also removes player from zone's spatial grid."
+  ;; Remove from spatial grid first (before player becomes unreachable)
+  (let* ((zone-id (player-zone-id player))
+         (zone-state (when zone-id (get-zone-state zone-id)))
+         (grid (when zone-state (zone-state-player-grid zone-state))))
+    (when (and grid (player-grid-cell-x player) (player-grid-cell-y player))
+      (spatial-grid-remove grid (player-id player)
+                           (player-grid-cell-x player)
+                           (player-grid-cell-y player))
+      (setf (player-grid-cell-x player) nil
+            (player-grid-cell-y player) nil)))
   (let* ((players (game-players game))
          (filtered (remove player players :test #'eq)))
     (when (< (length filtered) (length players))
