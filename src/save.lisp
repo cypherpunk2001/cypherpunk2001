@@ -17,8 +17,8 @@
 ;;; Vector Pool for Compact Serialization (Task 4.2)
 ;;; Reduces allocation during hot snapshot path.
 
-(defparameter *player-compact-vector-size* 22
-  "Size of compact player serialization vector (indices 0-21).")
+(defparameter *player-compact-vector-size* 20
+  "Size of compact player serialization vector (indices 0-19).")
 
 (defparameter *npc-compact-vector-size* 15
   "Size of compact NPC serialization vector (indices 0-14).")
@@ -597,8 +597,6 @@
                     :attack-timer (player-attack-timer player)
                     :hit-timer (player-hit-timer player)
                     :run-stamina (player-run-stamina player)
-                    :attack-target-id (player-attack-target-id player)
-                    :follow-target-id (player-follow-target-id player)
                     :last-sequence (player-last-sequence player))
               ;; FULL: Complete durable state for DB saves
               (list :id (player-id player)
@@ -637,9 +635,7 @@
                                   ;; Ephemeral fields (for network snapshots only, not DB)
                                   :attack-timer (player-attack-timer player)
                                   :hit-timer (player-hit-timer player)
-                                  :run-stamina (player-run-stamina player)
-                                  :attack-target-id (player-attack-target-id player)
-                                  :follow-target-id (player-follow-target-id player)))))
+                                  :run-stamina (player-run-stamina player)))))
     payload))
 
 (defun deserialize-player (plist inventory-size equipment-size)
@@ -968,15 +964,16 @@
           (logbitp 1 flags)
           (logbitp 2 flags)))
 
-;;; Compact Player Serialization (v4)
-;;; Vector format (22 elements):
+;;; Compact Player Serialization (v5)
+;;; Vector format (20 elements):
 ;;; [0] id           [1] x*10        [2] y*10        [3] hp
 ;;; [4] dx*10        [5] dy*10       [6] anim-code   [7] facing-code
 ;;; [8] facing-sign  [9] frame-idx   [10] frame-timer*100
 ;;; [11] flags       [12] attack-timer*100  [13] hit-timer*100
 ;;; [14] hit-frame   [15] hit-facing-code   [16] hit-facing-sign
-;;; [17] attack-target-id  [18] follow-target-id  [19] run-stamina*100
-;;; [20] last-sequence  [21] zone-id-hash
+;;; [17] run-stamina*100  [18] last-sequence  [19] zone-id-hash
+;;; v4 compatibility: vectors with length >= 22 include attack/follow targets
+;;; at indices 17/18 and zone-id-hash at index 21.
 
 (defun encode-zone-id (zone-id)
   "Encode zone-id symbol to integer for compact serialization.
@@ -990,6 +987,14 @@
                                      #xFFFFFFFF)))  ; Keep 32-bit
         (logand hash #xFFFF))  ; Return 16-bit
       0))
+
+(defun player-compact-zone-hash (vec)
+  "Return zone-id-hash from compact player vector (v4/v5)."
+  (let ((len (length vec)))
+    (cond
+      ((>= len 22) (aref vec 21))  ; v4
+      ((>= len 20) (aref vec 19))  ; v5
+      (t 0))))
 
 (defun get-player-vector-pool ()
   "Get or lazily create the global player vector pool."
@@ -1007,10 +1012,11 @@
 (defun serialize-player-compact (player &key use-pool)
   "Serialize player to compact vector for network transmission.
    Excludes inventory (private to owning client).
-   Format v4: Added zone-id at index 21.
+   Format v5: Removed attack/follow target IDs from public snapshots.
    When USE-POOL is T, uses pre-allocated vector from pool (Task 4.2)."
   (let ((vec (if use-pool
-                 (acquire-pooled-vector (get-player-vector-pool))
+                 (acquire-pooled-vector (get-player-vector-pool)
+                                        *player-compact-vector-size*)
                  (make-array *player-compact-vector-size* :initial-element 0))))
     (setf (aref vec 0) (player-id player)
           (aref vec 1) (quantize-coord (player-x player))
@@ -1029,52 +1035,57 @@
           (aref vec 14) (or (player-hit-frame player) 0)
           (aref vec 15) (encode-facing (player-hit-facing player))
           (aref vec 16) (round (or (player-hit-facing-sign player) 1.0))
-          (aref vec 17) (or (player-attack-target-id player) 0)
-          (aref vec 18) (or (player-follow-target-id player) 0)
-          (aref vec 19) (quantize-timer (player-run-stamina player))
-          (aref vec 20) (or (player-last-sequence player) 0)
-          (aref vec 21) (encode-zone-id (player-zone-id player)))
+          (aref vec 17) (quantize-timer (player-run-stamina player))
+          (aref vec 18) (or (player-last-sequence player) 0)
+          (aref vec 19) (encode-zone-id (player-zone-id player)))
     vec))
 
 (defun deserialize-player-compact (vec)
   "Deserialize compact vector to player plist for apply-player-plist.
    Converts back to plist format for compatibility with existing code."
-  (when (and vec (>= (length vec) 19))
-    (multiple-value-bind (attacking attack-hit hit-active running)
-        (unpack-player-flags (aref vec 11))
-      (let ((plist (list :id (aref vec 0)
-                         :x (dequantize-coord (aref vec 1))
-                         :y (dequantize-coord (aref vec 2))
-                         :hp (aref vec 3)
-                         :dx (dequantize-coord (aref vec 4))
-                         :dy (dequantize-coord (aref vec 5))
-                         :anim-state (decode-anim-state (aref vec 6))
-                         :facing (decode-facing (aref vec 7))
-                         :facing-sign (float (aref vec 8))
-                         :frame-index (aref vec 9)
-                         :frame-timer (dequantize-timer (aref vec 10))
-                         :attacking attacking
-                         :attack-hit attack-hit
-                         :hit-active hit-active
-                         :running running
-                         :attack-timer (dequantize-timer (aref vec 12))
-                         :hit-timer (dequantize-timer (aref vec 13))
-                         :hit-frame (aref vec 14)
-                         :hit-facing (decode-facing (aref vec 15))
-                         :hit-facing-sign (float (aref vec 16))
-                         :attack-target-id (aref vec 17)
-                         :follow-target-id (aref vec 18)
-                         :run-stamina (if (>= (length vec) 20)
-                                          (dequantize-timer (aref vec 19))
-                                          1.0)
-                         :last-sequence (if (>= (length vec) 21)
-                                            (aref vec 20)
-                                            0)
-                         ;; Zone-id at index 21 (v4 format)
-                         :zone-id-hash (if (>= (length vec) 22)
-                                           (aref vec 21)
-                                           0))))
-        plist))))
+  (when (and vec (>= (length vec) 17))
+    (let* ((len (length vec))
+           (v4-p (>= len 22)))
+      (multiple-value-bind (attacking attack-hit hit-active running)
+          (unpack-player-flags (aref vec 11))
+        (let* ((run-stamina (cond
+                              (v4-p (if (>= len 20)
+                                        (dequantize-timer (aref vec 19))
+                                        1.0))
+                              ((>= len 18) (dequantize-timer (aref vec 17)))
+                              (t 1.0)))
+               (last-sequence (cond
+                                (v4-p (if (>= len 21) (aref vec 20) 0))
+                                ((>= len 19) (aref vec 18))
+                                (t 0)))
+               (plist (list :id (aref vec 0)
+                            :x (dequantize-coord (aref vec 1))
+                            :y (dequantize-coord (aref vec 2))
+                            :hp (aref vec 3)
+                            :dx (dequantize-coord (aref vec 4))
+                            :dy (dequantize-coord (aref vec 5))
+                            :anim-state (decode-anim-state (aref vec 6))
+                            :facing (decode-facing (aref vec 7))
+                            :facing-sign (float (aref vec 8))
+                            :frame-index (aref vec 9)
+                            :frame-timer (dequantize-timer (aref vec 10))
+                            :attacking attacking
+                            :attack-hit attack-hit
+                            :hit-active hit-active
+                            :running running
+                            :attack-timer (dequantize-timer (aref vec 12))
+                            :hit-timer (dequantize-timer (aref vec 13))
+                            :hit-frame (aref vec 14)
+                            :hit-facing (decode-facing (aref vec 15))
+                            :hit-facing-sign (float (aref vec 16))
+                            :run-stamina run-stamina
+                            :last-sequence last-sequence
+                            :zone-id-hash (player-compact-zone-hash vec))))
+          ;; v4 vectors included attack/follow target IDs at indices 17/18
+          (when v4-p
+            (setf plist (plist-put plist :attack-target-id (aref vec 17))
+                  plist (plist-put plist :follow-target-id (aref vec 18))))
+          plist)))))
 
 (defun apply-player-compact-direct (player vec)
   "Apply compact vector directly to player struct, bypassing intermediate plist.
@@ -1083,40 +1094,50 @@
    is used for lookup, not to change the player's identity.
    Returns the zone-id-hash for filtering, or 0 if not present."
   (declare (optimize (speed 3) (safety 1)))
-  (when (and player vec (>= (length vec) 19))
-    ;; Unpack flags once
-    (multiple-value-bind (attacking attack-hit hit-active running)
-        (unpack-player-flags (aref vec 11))
-      ;; Apply network fields directly - client-only state untouched
-      ;; NOTE: player-id is NOT set here - IDs are immutable (avoids index map desync)
-      (setf (player-x player) (dequantize-coord (aref vec 1))
-            (player-y player) (dequantize-coord (aref vec 2))
-            (player-hp player) (aref vec 3)
-            (player-dx player) (dequantize-coord (aref vec 4))
-            (player-dy player) (dequantize-coord (aref vec 5))
-            (player-anim-state player) (decode-anim-state (aref vec 6))
-            (player-facing player) (decode-facing (aref vec 7))
-            (player-facing-sign player) (float (aref vec 8))
-            (player-frame-index player) (aref vec 9)
-            (player-frame-timer player) (dequantize-timer (aref vec 10))
-            (player-attacking player) attacking
-            (player-attack-hit player) attack-hit
-            (player-hit-active player) hit-active
-            (player-running player) running
-            (player-attack-timer player) (dequantize-timer (aref vec 12))
-            (player-hit-timer player) (dequantize-timer (aref vec 13))
-            (player-hit-frame player) (aref vec 14)
-            (player-hit-facing player) (decode-facing (aref vec 15))
-            (player-hit-facing-sign player) (float (aref vec 16))
-            (player-attack-target-id player) (aref vec 17)
-            (player-follow-target-id player) (aref vec 18))
-      ;; Optional fields (backward compat with older vectors)
-      (when (>= (length vec) 20)
-        (setf (player-run-stamina player) (dequantize-timer (aref vec 19))))
-      (when (>= (length vec) 21)
-        (setf (player-last-sequence player) (aref vec 20))))
-    ;; Return zone-id-hash for filtering (0 if not present)
-    (if (>= (length vec) 22) (aref vec 21) 0)))
+  (when (and player vec (>= (length vec) 17))
+    (let* ((len (length vec))
+           (v4-p (>= len 22)))
+      ;; Unpack flags once
+      (multiple-value-bind (attacking attack-hit hit-active running)
+          (unpack-player-flags (aref vec 11))
+        ;; Apply network fields directly - client-only state untouched
+        ;; NOTE: player-id is NOT set here - IDs are immutable (avoids index map desync)
+        (setf (player-x player) (dequantize-coord (aref vec 1))
+              (player-y player) (dequantize-coord (aref vec 2))
+              (player-hp player) (aref vec 3)
+              (player-dx player) (dequantize-coord (aref vec 4))
+              (player-dy player) (dequantize-coord (aref vec 5))
+              (player-anim-state player) (decode-anim-state (aref vec 6))
+              (player-facing player) (decode-facing (aref vec 7))
+              (player-facing-sign player) (float (aref vec 8))
+              (player-frame-index player) (aref vec 9)
+              (player-frame-timer player) (dequantize-timer (aref vec 10))
+              (player-attacking player) attacking
+              (player-attack-hit player) attack-hit
+              (player-hit-active player) hit-active
+              (player-running player) running
+              (player-attack-timer player) (dequantize-timer (aref vec 12))
+              (player-hit-timer player) (dequantize-timer (aref vec 13))
+              (player-hit-frame player) (aref vec 14)
+              (player-hit-facing player) (decode-facing (aref vec 15))
+              (player-hit-facing-sign player) (float (aref vec 16)))
+        (if v4-p
+            (progn
+              ;; v4 vectors included attack/follow target IDs
+              (setf (player-attack-target-id player) (aref vec 17)
+                    (player-follow-target-id player) (aref vec 18))
+              (when (>= len 20)
+                (setf (player-run-stamina player) (dequantize-timer (aref vec 19))))
+              (when (>= len 21)
+                (setf (player-last-sequence player) (aref vec 20))))
+            (progn
+              ;; v5 vectors omit attack/follow target IDs from public snapshots
+              (when (>= len 18)
+                (setf (player-run-stamina player) (dequantize-timer (aref vec 17))))
+              (when (>= len 19)
+                (setf (player-last-sequence player) (aref vec 18))))))
+      ;; Return zone-id-hash for filtering (0 if not present)
+      (player-compact-zone-hash vec))))
 
 ;;; Compact NPC Serialization
 ;;; Vector format (14 elements):
@@ -1223,9 +1244,9 @@
 
 (defun serialize-game-state-compact (game)
   "Serialize game state using compact format for network transmission.
-   Returns plist with :format :compact-v4 and vector-based entity data.
-   v4 adds zone-id-hash to player vectors (index 21) and NPC vectors (index 14)
-   for client-side zone filtering as defense-in-depth."
+   Returns plist with :format :compact-v5 and vector-based entity data.
+   v5 removes attack/follow target IDs from public player vectors and keeps
+   zone-id-hash for client-side zone filtering as defense-in-depth."
   (let* ((players (game-players game))
          (npcs (game-npcs game))
          (world (game-world game))
@@ -1250,7 +1271,7 @@
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build compact snapshot
-    (list :format :compact-v4
+    (list :format :compact-v5
           :zone-id (and zone (zone-id zone))
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
@@ -1301,7 +1322,7 @@
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build compact snapshot
-    (list :format :compact-v4
+    (list :format :compact-v5
           :zone-id zone-id
           :players (coerce (nreverse player-vectors) 'vector)
           :npcs (coerce (nreverse npc-vectors) 'vector)
@@ -1374,7 +1395,7 @@
       (dolist (object objects)
         (push (serialize-object object) object-list)))
     ;; Build delta snapshot
-    (list :format :delta-v4
+    (list :format :delta-v5
           :seq seq
           :baseline-seq baseline-seq
           :zone-id (and zone (zone-id zone))
@@ -1422,8 +1443,8 @@
     (when objects
       (dolist (object objects)
         (push (serialize-object object) object-list)))
-    ;; Build delta with EXPLICIT zone-id (matches existing delta-v4 format)
-    (list :format :delta-v4
+    ;; Build delta with EXPLICIT zone-id (matches existing delta-v5 format)
+    (list :format :delta-v5
           :seq seq
           :baseline-seq nil  ; Keep shape stable with existing delta format
           :zone-id zone-id
@@ -1478,7 +1499,7 @@
               :for id = (aref vec 0)
               :for x = (dequantize-coord (aref vec 1))
               :for y = (dequantize-coord (aref vec 2))
-              :for entity-zone-hash = (if (>= (length vec) 22) (aref vec 21) 0)
+              :for entity-zone-hash = (player-compact-zone-hash vec)
               :for existing = (and players (find-player-by-id-fast game id))
               ;; Client-side zone filter: skip if zone-hash mismatch (0 = unset/legacy, allow)
               :when (or (null local-zone-hash)
@@ -1619,7 +1640,7 @@
 
 (defun deserialize-game-state (plist game)
   ;; Restore authoritative game state from plist into existing GAME.
-  ;; Supports legacy plist, compact-v1/v2/v3, and delta-v1/v2/v3 formats.
+  ;; Supports legacy plist, compact-v1/v2/v3/v4/v5, and delta-v1/v2/v3/v4/v5 formats.
   ;; Returns: (values zone-id delta-positions-or-nil)
   ;; delta-positions is non-nil only for delta-v1 format, for interpolation fix.
   (let ((format (getf plist :format)))
@@ -1628,14 +1649,16 @@
       ((or (eq format :delta-v1)
            (eq format :delta-v2)
            (eq format :delta-v3)
-           (eq format :delta-v4))
+           (eq format :delta-v4)
+           (eq format :delta-v5))
        (let ((delta-positions (deserialize-game-state-delta plist game)))
          (values (getf plist :zone-id) delta-positions)))
       ;; Compact format (network-optimized, see docs/net.md 4-Prong)
       ((or (eq format :compact-v1)
            (eq format :compact-v2)
            (eq format :compact-v3)
-           (eq format :compact-v4))
+           (eq format :compact-v4)
+           (eq format :compact-v5))
        (deserialize-game-state-compact plist game)
        (values (getf plist :zone-id) nil))
       ;; Legacy plist format (DB saves, compatibility)

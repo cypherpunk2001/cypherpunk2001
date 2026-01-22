@@ -1094,6 +1094,12 @@
         int
         default)))
 
+(defun %symbol-or (value default)
+  ;; Return VALUE if it is a symbol, otherwise DEFAULT.
+  (if (symbolp value)
+      value
+      default))
+
 (defun %sanitize-chat-message (value)
   ;; Sanitize chat message: ensure string and enforce length limit.
   ;; Security: Prevents oversized messages from malicious clients.
@@ -1111,52 +1117,55 @@
 (defun apply-intent-plist (intent plist)
   ;; Apply PLIST values to INTENT in place.
   ;; Security: All values are validated/sanitized to prevent type confusion attacks.
-  (let ((pickup-id (getf plist :requested-pickup-target-id)))
+  (let* ((pickup-id (%symbol-or (getf plist :requested-pickup-target-id) nil))
+         (pickup-tx (%nonneg-int-or (getf plist :requested-pickup-tx) nil))
+         (pickup-ty (%nonneg-int-or (getf plist :requested-pickup-ty) nil))
+         (drop-id (%symbol-or (getf plist :requested-drop-item-id) nil))
+         (drop-count (%int-or (getf plist :requested-drop-count) 0)))
     (when pickup-id
       (log-verbose "RECV-INTENT: pickup id=~a tx=~a ty=~a"
                    pickup-id
-                   (getf plist :requested-pickup-tx)
-                   (getf plist :requested-pickup-ty))))
-  (let ((drop-id (getf plist :requested-drop-item-id)))
+                   pickup-tx
+                   pickup-ty))
     (when drop-id
       (log-verbose "RECV-INTENT: drop item=~a count=~a"
                    drop-id
-                   (getf plist :requested-drop-count))))
-  (when (and intent plist)
-    (setf (intent-move-dx intent) (%clamp-direction (getf plist :move-dx))
-          (intent-move-dy intent) (%clamp-direction (getf plist :move-dy))
-          (intent-face-dx intent) (%float-or (getf plist :face-dx) 0.0)
-          (intent-face-dy intent) (%float-or (getf plist :face-dy) 0.0)
-          (intent-target-x intent) (%float-or (getf plist :target-x) 0.0)
-          (intent-target-y intent) (%float-or (getf plist :target-y) 0.0)
-          (intent-target-active intent) (getf plist :target-active nil)
-          (intent-attack intent) (getf plist :attack nil)
-          (intent-run-toggle intent) (getf plist :run-toggle nil)
-          (intent-requested-attack-target-id intent)
-          (%int-or (getf plist :requested-attack-target-id) 0)
-          (intent-requested-follow-target-id intent)
-          (%int-or (getf plist :requested-follow-target-id) 0)
-          (intent-requested-pickup-target-id intent)
-          (getf plist :requested-pickup-target-id nil)
-          (intent-requested-pickup-tx intent)
-          (%nonneg-int-or (getf plist :requested-pickup-tx) nil)
-          (intent-requested-pickup-ty intent)
-          (%nonneg-int-or (getf plist :requested-pickup-ty) nil)
-          (intent-requested-drop-item-id intent)
-          (getf plist :requested-drop-item-id nil)
-          (intent-requested-drop-count intent)
-          (%int-or (getf plist :requested-drop-count) 0)
-          (intent-requested-drop-slot-index intent)
-          (%nonneg-int-or (getf plist :requested-drop-slot-index) nil)
-          (intent-requested-swap-slot-a intent)
-          (%int-or (getf plist :requested-swap-slot-a) nil)
-          (intent-requested-swap-slot-b intent)
-          (%int-or (getf plist :requested-swap-slot-b) nil)
-          (intent-requested-chat-message intent)
-          (%sanitize-chat-message (getf plist :requested-chat-message))
-          (intent-requested-unstuck intent)
-          (and (getf plist :requested-unstuck) t)))
-  intent)
+                   drop-count))
+    (when (and intent plist)
+      (setf (intent-move-dx intent) (%clamp-direction (getf plist :move-dx))
+            (intent-move-dy intent) (%clamp-direction (getf plist :move-dy))
+            (intent-face-dx intent) (%float-or (getf plist :face-dx) 0.0)
+            (intent-face-dy intent) (%float-or (getf plist :face-dy) 0.0)
+            (intent-target-x intent) (%float-or (getf plist :target-x) 0.0)
+            (intent-target-y intent) (%float-or (getf plist :target-y) 0.0)
+            (intent-target-active intent) (getf plist :target-active nil)
+            (intent-attack intent) (getf plist :attack nil)
+            (intent-run-toggle intent) (getf plist :run-toggle nil)
+            (intent-requested-attack-target-id intent)
+            (%int-or (getf plist :requested-attack-target-id) 0)
+            (intent-requested-follow-target-id intent)
+            (%int-or (getf plist :requested-follow-target-id) 0)
+            (intent-requested-pickup-target-id intent)
+            pickup-id
+            (intent-requested-pickup-tx intent)
+            pickup-tx
+            (intent-requested-pickup-ty intent)
+            pickup-ty
+            (intent-requested-drop-item-id intent)
+            drop-id
+            (intent-requested-drop-count intent)
+            drop-count
+            (intent-requested-drop-slot-index intent)
+            (%nonneg-int-or (getf plist :requested-drop-slot-index) nil)
+            (intent-requested-swap-slot-a intent)
+            (%int-or (getf plist :requested-swap-slot-a) nil)
+            (intent-requested-swap-slot-b intent)
+            (%int-or (getf plist :requested-swap-slot-b) nil)
+            (intent-requested-chat-message intent)
+            (%sanitize-chat-message (getf plist :requested-chat-message))
+            (intent-requested-unstuck intent)
+            (and (getf plist :requested-unstuck) t)))
+    intent))
 
 (defun combat-event->plist (event)
   ;; Convert a combat EVENT to a serializable plist.

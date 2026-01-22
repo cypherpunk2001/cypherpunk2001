@@ -477,7 +477,15 @@
                      (zone-npcs (if zone-state
                                     (zone-state-npcs zone-state)
                                     npcs))  ; fallback to game-npcs
-                     (zone-players (players-in-zone zone-id players)))
+                     (zone-players (if zone-state
+                                       (let ((cache (zone-state-zone-players zone-state)))
+                                         ;; Rebuild cache once if stale/empty but players exist
+                                         (when (and cache
+                                                    (zerop (length cache))
+                                                    (> (zone-state-player-count zone-id players) 0))
+                                           (rebuild-zone-players-cache zone-state game))
+                                         (zone-state-zone-players zone-state))
+                                       (players-in-zone zone-id players))))
                 ;; Ensure all players in this zone are in the spatial grid
                 ;; (handles players who joined before zone-state existed)
                 (when (and zone-state zone-players)

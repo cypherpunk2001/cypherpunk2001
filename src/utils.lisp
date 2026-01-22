@@ -25,6 +25,7 @@
 
 ;;; Profiling Infrastructure (Task 6.1)
 ;;; Optional timing macros for measuring hot path performance.
+;;; NOTE: defvar preserves state across reloads for long-running profiling sessions.
 
 (defvar *profile-enabled* nil
   "When T, with-timing macro collects timing data.")
@@ -206,6 +207,7 @@
 
 (defun screen-to-world (screen-x screen-y target-x target-y camera-offset camera-zoom)
   ;; Convert screen coordinates into world space using camera offset and zoom.
+  ;; Client-only helper (depends on raylib vector accessors).
   (let* ((zoom (if (zerop camera-zoom) 1.0 camera-zoom))
          (sx (float screen-x 1.0))
          (sy (float screen-y 1.0)))
@@ -440,13 +442,13 @@
   (when pool
     (setf (vector-pool-index pool) 0)))
 
-(defun acquire-pooled-vector (pool)
+(defun acquire-pooled-vector (pool &optional element-size)
   "Acquire a pre-allocated vector from the pool.
    Returns a fresh vector if pool is exhausted (grows the pool).
    The vector's contents are undefined - caller must fill all elements."
   (if (null pool)
       ;; No pool - create fresh vector (fallback)
-      (make-array 22 :initial-element 0)
+      (make-array (or element-size 22) :initial-element 0)
       (let ((index (vector-pool-index pool))
             (capacity (vector-pool-capacity pool)))
         (incf (vector-pool-index pool))  ; Always increment to track usage

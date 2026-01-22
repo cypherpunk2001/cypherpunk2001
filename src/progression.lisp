@@ -237,14 +237,14 @@
           (db-update-leaderboard-level (player-id player) combat-lvl)))
       ;; Tier-1 write: level-ups must be saved immediately to prevent
       ;; XP rollback past level boundary on crash/logout
-      ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
+      ;; Use exponential backoff per Tier-1 policy (5 retries, 100-500ms)
       (when level-ups
         (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                  :max-retries 10
+                                  :max-retries 5
                                   :initial-delay 100
-                                  :max-delay 2000
+                                  :max-delay 500
                                   :on-final-fail (lambda (e)
-                                                   (warn "CRITICAL: Level-up save FAILED for player ~d after 10 retries: ~a - using dirty flag fallback"
+                                                   (warn "CRITICAL: Level-up save FAILED for player ~d after 5 retries: ~a - using dirty flag fallback"
                                                          (player-id player) e)
                                                    ;; Fallback to dirty flag - will save within 30s if server survives
                                                    (mark-player-dirty (player-id player))))))
@@ -553,7 +553,7 @@
               (mark-player-hud-stats-dirty player)
               ;; Tier-1 write: equipment changes saved immediately (prevents item loss on crash)
               (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                        :max-retries 10
+                                        :max-retries 5
                                         :initial-delay 100
                                         :max-delay 500
                                         :on-final-fail (lambda (e)
@@ -581,7 +581,7 @@
               (mark-player-hud-stats-dirty player)
               ;; Tier-1 write: equipment changes saved immediately (prevents item loss on crash)
               (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                        :max-retries 10
+                                        :max-retries 5
                                         :initial-delay 100
                                         :max-delay 500
                                         :on-final-fail (lambda (e)
@@ -641,27 +641,29 @@
    Thread-safe: protects zone-objects modification from concurrent pickup."
   (with-zone-objects-lock
     (when objects
-      (dolist (object objects)
-        (when (object-respawnable-p object)
-          (let* ((timer (object-respawn-timer object)))
-            (when (> timer 0.0)
-              (setf timer (max 0.0 (- timer dt))
-                    (getf object :respawn) timer)
-              (when (<= timer 0.0)
-                (let* ((object-id (getf object :id))
-                       (archetype (and object-id (find-object-archetype object-id)))
-                       (base-count (getf object :base-count nil)))
-                  (cond
-                    (archetype
-                     (setf (getf object :count) (object-archetype-count archetype)
-                           (getf object :respawn) 0.0
-                           ;; Mark dirty so delta snapshot includes respawn
-                           (getf object :snapshot-dirty) t))
-                    ((and base-count (numberp base-count) (> base-count 0))
-                     (setf (getf object :count) (truncate base-count)
-                           (getf object :respawn) 0.0
-                           ;; Mark dirty so delta snapshot includes respawn
-                           (getf object :snapshot-dirty) t))))))))))))
+      (loop :for cell :on objects
+            :for object = (car cell)
+            :do (when (object-respawnable-p object)
+                  (let* ((timer (object-respawn-timer object)))
+                    (when (> timer 0.0)
+                      (setf timer (max 0.0 (- timer dt))
+                            object (plist-put object :respawn timer))
+                      (when (<= timer 0.0)
+                        (let* ((object-id (getf object :id))
+                               (archetype (and object-id (find-object-archetype object-id)))
+                               (base-count (getf object :base-count nil)))
+                          (cond
+                            (archetype
+                             (setf object (plist-put object :count (object-archetype-count archetype))
+                                   object (plist-put object :respawn 0.0)
+                                   ;; Mark dirty so delta snapshot includes respawn
+                                   object (plist-put object :snapshot-dirty t)))
+                            ((and base-count (numberp base-count) (> base-count 0))
+                             (setf object (plist-put object :count (truncate base-count))
+                                   object (plist-put object :respawn 0.0)
+                                   ;; Mark dirty so delta snapshot includes respawn
+                                   object (plist-put object :snapshot-dirty t))))))))
+                  (setf (car cell) object))))))
 
 (defun update-object-respawns (world dt)
   ;; Tick down respawn timers for world's current zone.
@@ -716,13 +718,13 @@
                             ((zerop leftover)
                              (if (> respawn 0.0)
                                  (progn
-                                   (setf (getf object :count) 0
-                                         (getf object :respawn) respawn)
+                                   (setf object (plist-put object :count 0)
+                                         object (plist-put object :respawn respawn))
                                    (log-verbose "PICKUP-TILE: set respawn timer to ~a on object ~a" respawn (getf object :id))
                                    (push object remaining))
                                  nil))
                             (t
-                             (setf (getf object :count) leftover)
+                             (setf object (plist-put object :count leftover))
                              (push object remaining))))
                         (push object remaining)))
                   (push object remaining))))
@@ -812,7 +814,11 @@
                           ((and existing (not existing-respawnable))
                            (log-verbose "DROP-INV: adding to existing non-respawnable")
                            (let ((base-count (object-entry-count existing obj-archetype)))
-                             (setf (getf existing :count) (+ base-count dropped))))
+                             (let ((pos (and objects (position existing objects :test #'eq))))
+                               (setf existing (plist-put existing :count (+ base-count dropped)))
+                               ;; If plist-put returned a new list, update the zone objects list.
+                               (when pos
+                                (setf (nth pos objects) existing)))))
                           ((and existing existing-respawnable)
                            (log-verbose "DROP-INV: creating new object (existing is respawnable)")
                            (zone-add-object zone (list :id object-id

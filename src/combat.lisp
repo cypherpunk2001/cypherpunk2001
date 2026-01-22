@@ -39,18 +39,18 @@
     (setf (player-snapshot-dirty combatant) t)
     ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
     ;; to prevent logout-to-survive exploit
-    ;; Use aggressive retry with exponential backoff (10 retries over ~10s)
+    ;; Use exponential backoff per Tier-1 policy (5 retries, 100-500ms)
     (when (and (= new-hp 0) (> old-hp 0))
       ;; Phase 5: Increment player deaths counter before leaderboard update
       (incf (player-deaths combatant))
       ;; Update deaths leaderboard with new total (Phase 5: uses zadd, not zincrby)
       (db-update-leaderboard-deaths (player-id combatant) (player-deaths combatant))
       (with-retry-exponential (saved (lambda () (db-save-player-immediate combatant))
-                                :max-retries 10
+                                :max-retries 5
                                 :initial-delay 100
-                                :max-delay 2000
+                                :max-delay 500
                                 :on-final-fail (lambda (e)
-                                                 (warn "CRITICAL: Death save FAILED for player ~d after 10 retries: ~a - using dirty flag fallback"
+                                                 (warn "CRITICAL: Death save FAILED for player ~d after 5 retries: ~a - using dirty flag fallback"
                                                        (player-id combatant) e)
                                                  ;; Fallback to dirty flag - will save within 30s if server survives
                                                  (mark-player-dirty (player-id combatant))))))

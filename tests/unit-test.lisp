@@ -771,17 +771,23 @@
 (defun test-apply-intent-plist-rejects-bad-pickup ()
   "Ensure malformed pickup/drop intent fields are sanitized."
   (let ((intent (make-intent)))
-    (apply-intent-plist intent (list :requested-pickup-target-id :arrows
+    (apply-intent-plist intent (list :requested-pickup-target-id "bad-id"
+                                     :requested-drop-item-id 123
                                      :requested-pickup-tx "bad"
                                      :requested-pickup-ty -3
                                      :requested-drop-slot-index "oops"))
+    (assert (null (intent-requested-pickup-target-id intent)) () "pickup-id invalid -> nil")
+    (assert (null (intent-requested-drop-item-id intent)) () "drop-id invalid -> nil")
     (assert (null (intent-requested-pickup-tx intent)) () "pickup-tx invalid -> nil")
     (assert (null (intent-requested-pickup-ty intent)) () "pickup-ty invalid -> nil")
     (assert (null (intent-requested-drop-slot-index intent)) () "drop-slot invalid -> nil")
     (apply-intent-plist intent (list :requested-pickup-target-id :arrows
+                                     :requested-drop-item-id :coins
                                      :requested-pickup-tx 2
                                      :requested-pickup-ty 3
                                      :requested-drop-slot-index 1))
+    (assert (eq (intent-requested-pickup-target-id intent) :arrows) () "pickup-id valid -> :arrows")
+    (assert (eq (intent-requested-drop-item-id intent) :coins) () "drop-id valid -> :coins")
     (assert (= (intent-requested-pickup-tx intent) 2) () "pickup-tx valid -> 2")
     (assert (= (intent-requested-pickup-ty intent) 3) () "pickup-ty valid -> 3")
     (assert (= (intent-requested-drop-slot-index intent) 1) () "drop-slot valid -> 1")))
@@ -3842,8 +3848,6 @@ hello
           (player-hit-frame player) 2
           (player-hit-facing player) :side
           (player-hit-facing-sign player) -1.0
-          (player-attack-target-id player) 99
-          (player-follow-target-id player) 101
           (player-run-stamina player) 6.5
           (player-last-sequence player) 123)
     ;; Serialize to compact vector
@@ -3859,8 +3863,6 @@ hello
       (assert (getf plist :attacking) nil "attacking flag not preserved")
       (assert (getf plist :hit-active) nil "hit-active flag not preserved")
       (assert (getf plist :running) nil "running flag not preserved")
-      (assert-equal 99 (getf plist :attack-target-id) "attack-target-id not preserved")
-      (assert-equal 101 (getf plist :follow-target-id) "follow-target-id not preserved")
       (assert (< (abs (- 6.5 (getf plist :run-stamina))) 0.05) nil
               "run-stamina not preserved within tolerance")
       (assert-equal 123 (getf plist :last-sequence) "last-sequence not preserved")))
@@ -3983,8 +3985,6 @@ hello
           (player-hit-frame source) 2
           (player-hit-facing source) :side
           (player-hit-facing-sign source) -1.0
-          (player-attack-target-id source) 99
-          (player-follow-target-id source) 101
           (player-run-stamina source) 6.5
           (player-last-sequence source) 123)
     ;; Set client-only state on target that should be preserved
@@ -4006,7 +4006,6 @@ hello
       (assert (player-attacking player) nil "attacking flag not applied")
       (assert (player-hit-active player) nil "hit-active flag not applied")
       (assert (player-running player) nil "running flag not applied")
-      (assert-equal 99 (player-attack-target-id player) "attack-target-id not applied")
       ;; Verify client-only state was preserved
       (assert-equal 555.0 (player-click-marker-x player) "click-marker-x was overwritten!")
       (assert-equal 666.0 (player-click-marker-y player) "click-marker-y was overwritten!")
@@ -4091,9 +4090,9 @@ hello
       ;; Zone-id should be zone-1
       (assert-equal :zone-1 (getf delta :zone-id)
                     "Delta zone-id should be zone-1")
-      ;; Format should be delta-v4 (zone-id added to compact player format)
-      (assert-equal :delta-v4 (getf delta :format)
-                    "Delta format should be delta-v4"))
+      ;; Format should be delta-v5 (target IDs removed from public compact format)
+      (assert-equal :delta-v5 (getf delta :format)
+                    "Delta format should be delta-v5"))
     ;; Serialize delta for zone-2
     (let ((delta (serialize-game-state-delta-for-zone game :zone-2 nil 2)))
       (assert-equal 2 (length (getf delta :changed-players))
@@ -5358,8 +5357,10 @@ hello
     (when players
       (cond
         ;; Compact or delta format: players is a vector of vectors
-       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3) (eq format :compact-v4)
-            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3) (eq format :delta-v4))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
+            (eq format :compact-v4) (eq format :compact-v5)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3)
+            (eq format :delta-v4) (eq format :delta-v5))
          (when (and (vectorp players) (> (length players) 0))
            (let ((vec (aref players 0)))
              (when (and (vectorp vec) (>= (length vec) 3))
@@ -5384,8 +5385,10 @@ hello
     (when players
       (cond
         ;; Compact or delta format: convert vectors to plists
-       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3) (eq format :compact-v4)
-            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3) (eq format :delta-v4))
+       ((or (eq format :compact-v1) (eq format :compact-v2) (eq format :compact-v3)
+            (eq format :compact-v4) (eq format :compact-v5)
+            (eq format :delta-v1) (eq format :delta-v2) (eq format :delta-v3)
+            (eq format :delta-v4) (eq format :delta-v5))
          (when (vectorp players)
            (loop :for vec :across players
                  :collect (deserialize-player-compact vec))))

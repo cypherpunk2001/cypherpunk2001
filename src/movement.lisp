@@ -1148,7 +1148,7 @@
                   ;; Tier-1 write: zone transition saves immediately
                   (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
                                             :max-retries 5
-                                            :initial-delay 50
+                                            :initial-delay 100
                                             :max-delay 500
                                             :on-final-fail (lambda (e)
                                                              (warn "Zone transition save failed: ~a" e)

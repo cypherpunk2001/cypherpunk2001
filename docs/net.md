@@ -27,8 +27,9 @@ Message format (plist, printed with `prin1`)
     `:load-failed`, `:internal-error`, `:wrong-zone`
   - When `:wrong-zone`, the server includes `:zone-id` with the player's saved zone.
 - `(:type :snapshot :format <format> :state <game-state> ...)` -> server snapshot
-  - Formats: `:compact-v4` (full state), `:delta-v4` (changed entities only)
-  - v4 adds zone-id-hash to player (index 21) and NPC (index 14) vectors for client filtering
+  - Formats: `:compact-v5` (full state), `:delta-v5` (changed entities only)
+  - v5 removes attack/follow target IDs from public player vectors and keeps zone-id-hash
+    for client filtering (player index 19, NPC index 14)
 - `(:type :snapshot-chunk :seq <n> :chunk <i> :total <n> :data <str>)` -> fragmented snapshot piece
 - `(:type :private-state :player-id <id> :payload <plist>)` -> owner-only inventory/equipment/stats update
 
@@ -203,9 +204,9 @@ Replaces verbose plist serialization with compact vector format:
 **Private state:** Inventory, equipment, and stats are excluded from compact snapshots and sent
 to the owning client via `:private-state` messages.
 
-**Player vector fields:** The compact player vector includes `run-stamina` at index 19,
-`last-sequence` at index 20 (server's last processed input sequence for prediction), and
-`zone-id-hash` at index 21 (djb2 hash of zone-id for client-side filtering).
+**Player vector fields:** The compact player vector includes `run-stamina` at index 17,
+`last-sequence` at index 18 (server's last processed input sequence for prediction), and
+`zone-id-hash` at index 19 (djb2 hash of zone-id for client-side filtering).
 
 **NPC vector fields:** The compact NPC vector includes `zone-id-hash` at index 14 for
 client-side zone filtering.
@@ -235,7 +236,7 @@ Only transmits entities that changed since last acknowledged snapshot.
   needs-full-resync)    ; T after zone change or reconnect
 
 ;; Delta snapshot format
-(:format :delta-v4
+(:format :delta-v5
  :seq 12345
  :baseline-seq 12340
  :zone-id :world
