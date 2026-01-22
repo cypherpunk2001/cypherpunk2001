@@ -89,33 +89,57 @@
         (player-auto-up player) nil))
 
 (defun clear-player-attack-target (player)
-  ;; Clear any active attack target.
-  (setf (player-attack-target-id player) 0))
+  ;; Clear any active attack target and its marker.
+  (setf (player-attack-target-id player) 0
+        (player-click-marker-target-id player) 0
+        (player-click-marker-kind player) nil))
 
 (defun clear-player-follow-target (player)
-  ;; Clear any active follow target.
-  (setf (player-follow-target-id player) 0))
+  ;; Clear any active follow target and marker tracking.
+  (setf (player-follow-target-id player) 0
+        (player-click-marker-target-id player) 0
+        (player-click-marker-kind player) nil))
 
 (defun clear-player-pickup-target (player)
-  ;; Clear any active pickup target.
+  ;; Clear any active pickup target and marker tracking.
   (setf (player-pickup-target-active player) nil
-        (player-pickup-target-id player) nil))
+        (player-pickup-target-id player) nil
+        (player-click-marker-target-id player) 0
+        (player-click-marker-kind player) nil))
 
-(defun trigger-click-marker (player world-x world-y kind)
-  ;; Set a fading click marker at the given world position.
+(defun trigger-click-marker (player world-x world-y kind &optional (target-id 0))
+  "Set a click marker at the given world position.
+   If TARGET-ID is non-zero, marker follows that NPC until it dies or target is cleared."
   (setf (player-click-marker-x player) world-x
         (player-click-marker-y player) world-y
         (player-click-marker-kind player) kind
-        (player-click-marker-timer player) *click-marker-duration*))
+        (player-click-marker-timer player) *click-marker-duration*
+        (player-click-marker-target-id player) target-id))
 
-(defun update-click-marker (player dt)
-  ;; Tick the click marker timer down.
-  (let ((timer (player-click-marker-timer player)))
-    (when (> timer 0.0)
-      (setf timer (max 0.0 (- timer dt)))
-      (setf (player-click-marker-timer player) timer)
-      (when (<= timer 0.0)
-        (setf (player-click-marker-kind player) nil)))))
+(defun update-click-marker (player dt &optional npcs)
+  "Update click marker timer and position (if tracking a target NPC).
+   When tracking (target-id > 0), marker follows the NPC and persists until it dies."
+  (let ((target-id (player-click-marker-target-id player)))
+    (if (> target-id 0)
+        ;; Tracking mode: update position from NPC, keep marker alive
+        (when npcs
+          (let ((npc (find-npc-by-id npcs target-id)))
+            (if (and npc (combatant-alive-p npc))
+                ;; Target alive: follow it and keep marker visible
+                (setf (player-click-marker-x player) (npc-x npc)
+                      (player-click-marker-y player) (npc-y npc)
+                      (player-click-marker-timer player) 1.0)
+                ;; Target dead or gone: clear tracking and marker
+                (setf (player-click-marker-target-id player) 0
+                      (player-click-marker-kind player) nil
+                      (player-click-marker-timer player) 0.0))))
+        ;; Non-tracking mode: normal timer decay
+        (let ((timer (player-click-marker-timer player)))
+          (when (> timer 0.0)
+            (setf timer (max 0.0 (- timer dt)))
+            (setf (player-click-marker-timer player) timer)
+            (when (<= timer 0.0)
+              (setf (player-click-marker-kind player) nil)))))))
 
 (defun set-player-walk-target (player intent world-x world-y &optional (mark-p t))
   ;; Request a walk target via intent (server validates and clears conflicting targets).
@@ -127,26 +151,32 @@
   ;; Only clear pickup if no active pickup target (don't interrupt walk-to-pickup)
   (unless (intent-requested-pickup-target-id intent)
     (clear-requested-pickup-target intent))
+  ;; Clear any NPC-tracking marker (walk overrides attack target)
+  (setf (player-click-marker-target-id player) 0)
   (when mark-p
     (trigger-click-marker player world-x world-y :walk)))
 
 (defun set-player-attack-target (player intent npc &optional (mark-p t))
   ;; Request an NPC attack target via intent (server validates and sets authoritative target).
+  ;; Marker tracks NPC position until death.
   (when npc
     (request-attack-target intent (npc-id npc))
     (clear-requested-follow-target intent)
     (clear-requested-pickup-target intent)
     (set-intent-target intent (npc-x npc) (npc-y npc))
     (when mark-p
-      (trigger-click-marker player (npc-x npc) (npc-y npc) :attack))))
+      (trigger-click-marker player (npc-x npc) (npc-y npc) :attack (npc-id npc)))))
 
 (defun set-player-follow-target (player intent npc &optional (mark-p t))
   ;; Request an NPC follow target via intent (server validates and sets authoritative target).
+  ;; Follow uses a walk marker (yellow), not attack marker, and clears attack marker tracking.
   (when npc
     (request-follow-target intent (npc-id npc))
     (clear-requested-attack-target intent)
     (clear-requested-pickup-target intent)
     (set-intent-target intent (npc-x npc) (npc-y npc))
+    ;; Clear attack marker tracking (follow overrides attack)
+    (setf (player-click-marker-target-id player) 0)
     (when mark-p
       (trigger-click-marker player (npc-x npc) (npc-y npc) :walk))))
 

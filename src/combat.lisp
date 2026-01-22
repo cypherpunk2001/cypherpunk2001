@@ -315,7 +315,8 @@
 
 (defun sync-player-attack-target (player intent npcs world)
   ;; Validate requested attack target and set authoritative state (server authority).
-  ;; Checks range to prevent targeting distant NPCs.
+  ;; No range check - player will walk to target and auto-attack when in melee range.
+  (declare (ignore world))
   (let* ((requested-id (intent-requested-attack-target-id intent))
          (current-id (player-attack-target-id player)))
     ;; Process clear request (requested-id = 0 means client wants to cancel)
@@ -325,15 +326,15 @@
     ;; Process new attack target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc) (target-in-range-p player npc world))
+        (if (and npc (combatant-alive-p npc))
             (progn
-              ;; Valid target in range: set authoritative state and clear conflicting targets
+              ;; Valid target: set authoritative state and clear conflicting targets
               (setf (player-attack-target-id player) requested-id
                     (player-follow-target-id player) 0
                     (player-pickup-target-id player) nil
                     (player-pickup-target-active player) nil)
               (clear-player-auto-walk player))
-            ;; Invalid target or out of range: reject request
+            ;; Invalid target (dead or not found): reject request
             (clear-requested-attack-target intent))))
     ;; Sync current authoritative target to intent position
     (let ((target (player-attack-target player npcs)))
@@ -345,7 +346,8 @@
 
 (defun sync-player-follow-target (player intent npcs world)
   ;; Validate requested follow target and set authoritative state (server authority).
-  ;; Checks range to prevent targeting distant NPCs.
+  ;; No range check - player will walk to target.
+  (declare (ignore world))
   (let* ((requested-id (intent-requested-follow-target-id intent))
          (current-id (player-follow-target-id player)))
     ;; Process clear request (requested-id = 0 means client wants to cancel)
@@ -355,15 +357,15 @@
     ;; Process new follow target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc) (target-in-range-p player npc world))
+        (if (and npc (combatant-alive-p npc))
             (progn
-              ;; Valid target in range: set authoritative state and clear conflicting targets
+              ;; Valid target: set authoritative state and clear conflicting targets
               (setf (player-follow-target-id player) requested-id
                     (player-attack-target-id player) 0
                     (player-pickup-target-id player) nil
                     (player-pickup-target-active player) nil)
               (clear-player-auto-walk player))
-            ;; Invalid target: reject request
+            ;; Invalid target (dead or not found): reject request
             (clear-requested-follow-target intent))))
     ;; Sync current authoritative target to intent position
     (let ((target (player-follow-target player npcs)))

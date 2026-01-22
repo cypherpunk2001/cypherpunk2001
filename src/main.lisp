@@ -54,11 +54,19 @@
   (unload-editor-tilesets (game-editor game) (game-assets game))
   (unload-assets (game-assets game)))
 
+(defun npc-array-for-player-zone (game player)
+  "Return the correct NPC array for PLAYER's current zone.
+   Uses zone-state NPCs when available, falls back to game-npcs."
+  (let* ((zone-id (or (player-zone-id player) *starting-zone-id*))
+         (zone-state (and zone-id (get-zone-state zone-id))))
+    (or (and zone-state (zone-state-npcs zone-state))
+        (game-npcs game))))
+
 (defun update-client-input (game dt)
   ;; Read raylib input and update UI/audio state; writes player intent.
   (let* ((player (game-player game))
          (world (game-world game))
-         (npcs (game-npcs game))
+         (npcs (npc-array-for-player-zone game player))
          (audio (game-audio game))
          (ui (game-ui game))
          (camera (game-camera game))
@@ -77,7 +85,7 @@
     (update-camera-zoom camera)
     (update-ui-loading ui dt)
     (update-ui-hud-log ui dt)
-    (update-click-marker player dt)
+    (update-click-marker player dt npcs)
     (ensure-preview-zones world player camera editor)
     ;; Clear per-frame intent at start before processing new input
     (reset-frame-intent client-intent)
@@ -401,8 +409,9 @@
     (when allow-player-control
       (loop :for current-player :across players
             :for current-intent = (player-intent current-player)
-            :do (sync-player-follow-target current-player current-intent npcs world)
-                (sync-player-attack-target current-player current-intent npcs world)
+            :for player-npcs = (npc-array-for-player-zone game current-player)
+            :do (sync-player-follow-target current-player current-intent player-npcs world)
+                (sync-player-attack-target current-player current-intent player-npcs world)
                 (sync-player-pickup-target current-player current-intent world)
                 (when (intent-requested-drop-item-id current-intent)
                   (log-verbose "UPDATE-SIM: processing drop for player=~a (obj ~a) item=~a count=~a"
@@ -454,7 +463,8 @@
         (reset-npc-frame-intents npcs))
       (when allow-player-control
         (loop :for current-player :across players
-              :do (update-player-attack-intent current-player npcs world)))
+              :for player-npcs = (npc-array-for-player-zone game current-player)
+              :do (update-player-attack-intent current-player player-npcs world)))
       (loop :for current-player :across players
             :for current-intent = (player-intent current-player)
             :do (process-chat-intent current-player current-intent world event-queue)

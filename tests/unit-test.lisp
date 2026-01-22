@@ -273,7 +273,15 @@
                 test-with-timing-enabled
                 test-clear-profile-log
                 test-gc-stats-reset
-                test-gc-hook-increment-count)))
+                test-gc-hook-increment-count
+                ;; Combat Targeting Fix Tests (COMBAT_PLAN.md)
+                test-npc-array-for-player-zone
+                test-sync-attack-target-accepts-distant
+                test-sync-follow-target-accepts-distant
+                test-click-marker-tracks-target
+                test-click-marker-clears-on-target-death
+                test-clear-follow-target-clears-marker
+                test-clear-pickup-target-clears-marker)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -7692,3 +7700,152 @@ hello
     (mmorpg::gc-hook-increment-count)
     (assert (= *gc-stats-frame-count* 1) () "Frame GC count should increment")
     (assert (= *gc-stats-total-count* 1) () "Total GC count should increment")))
+
+;;; ============================================================
+;;; COMBAT TARGETING FIX TESTS (COMBAT_PLAN.md)
+;;; Tests for P0-A, P0-B, P1 fixes
+;;; ============================================================
+
+(defun test-sync-attack-target-accepts-distant ()
+  "Test that sync-player-attack-target accepts distant NPCs (range-gate removed)."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (player (make-player 100.0 100.0 :id 1))
+         (intent (make-intent :target-x 100.0 :target-y 100.0))
+         ;; NPC at 1000,1000 - far beyond *max-target-distance-tiles* (15 tiles * 32 = 480px)
+         (npc-far (make-npc 1000.0 1000.0 :archetype archetype :id 99))
+         (npcs (vector npc-far))
+         (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
+    ;; Request attack on distant NPC
+    (request-attack-target intent 99)
+    ;; Sync should accept the target (no range-gate)
+    (sync-player-attack-target player intent npcs world)
+    ;; Verify target was set (not rejected due to range)
+    (assert (= (player-attack-target-id player) 99)
+            () "sync-attack: should accept distant NPC (range-gate removed)")))
+
+(defun test-sync-follow-target-accepts-distant ()
+  "Test that sync-player-follow-target accepts distant NPCs (range-gate removed)."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (player (make-player 100.0 100.0 :id 1))
+         (intent (make-intent :target-x 100.0 :target-y 100.0))
+         ;; NPC at 1000,1000 - far beyond *max-target-distance-tiles*
+         (npc-far (make-npc 1000.0 1000.0 :archetype archetype :id 88))
+         (npcs (vector npc-far))
+         (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
+    ;; Request follow on distant NPC
+    (request-follow-target intent 88)
+    ;; Sync should accept the target (no range-gate)
+    (sync-player-follow-target player intent npcs world)
+    ;; Verify target was set (not rejected due to range)
+    (assert (= (player-follow-target-id player) 88)
+            () "sync-follow: should accept distant NPC (range-gate removed)")))
+
+(defun test-click-marker-tracks-target ()
+  "Test that click marker follows NPC position when target-id is set."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (player (make-player 100.0 100.0 :id 1))
+         ;; NPC starts at 200,200
+         (npc (make-npc 200.0 200.0 :archetype archetype :id 42))
+         (npcs (vector npc)))
+    ;; Set attack marker tracking NPC 42
+    (trigger-click-marker player 200.0 200.0 :attack 42)
+    ;; Verify initial marker position
+    (assert (= (player-click-marker-x player) 200.0) () "marker: initial x")
+    (assert (= (player-click-marker-y player) 200.0) () "marker: initial y")
+    (assert (eq (player-click-marker-kind player) :attack) () "marker: attack kind")
+    (assert (= (player-click-marker-target-id player) 42) () "marker: target-id set")
+    ;; NPC moves to 300,400
+    (setf (npc-x npc) 300.0
+          (npc-y npc) 400.0)
+    ;; Update marker (should follow NPC)
+    (update-click-marker player 0.016 npcs)
+    ;; Verify marker followed NPC
+    (assert (= (player-click-marker-x player) 300.0) () "marker: followed x")
+    (assert (= (player-click-marker-y player) 400.0) () "marker: followed y")
+    (assert (eq (player-click-marker-kind player) :attack) () "marker: still attack kind")
+    (assert (> (player-click-marker-timer player) 0) () "marker: timer kept alive")))
+
+(defun test-click-marker-clears-on-target-death ()
+  "Test that click marker clears when tracked NPC dies."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (player (make-player 100.0 100.0 :id 1))
+         (npc (make-npc 200.0 200.0 :archetype archetype :id 77))
+         (npcs (vector npc)))
+    ;; Set attack marker tracking NPC 77
+    (trigger-click-marker player 200.0 200.0 :attack 77)
+    ;; Verify marker is active
+    (assert (eq (player-click-marker-kind player) :attack) () "marker: active before death")
+    (assert (= (player-click-marker-target-id player) 77) () "marker: tracking target")
+    ;; NPC dies
+    (setf (npc-alive npc) nil)
+    ;; Update marker (should clear because target is dead)
+    (update-click-marker player 0.016 npcs)
+    ;; Verify marker was cleared
+    (assert (null (player-click-marker-kind player)) () "marker: cleared after death")
+    (assert (= (player-click-marker-target-id player) 0) () "marker: target-id cleared")
+    (assert (= (player-click-marker-timer player) 0.0) () "marker: timer cleared")))
+
+(defun test-npc-array-for-player-zone ()
+  "Test that npc-array-for-player-zone returns zone-state NPCs when available."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         ;; Create game with global NPCs
+         (global-npcs (vector (make-npc 100.0 100.0 :archetype archetype :id 1)))
+         ;; Create zone-state with different NPCs
+         (zone-npcs (vector (make-npc 200.0 200.0 :archetype archetype :id 2)
+                            (make-npc 300.0 300.0 :archetype archetype :id 3)))
+         (zone-state (make-zone-state :zone-id :test-zone :npcs zone-npcs))
+         (player (make-player 100.0 100.0 :id 1 :zone-id :test-zone))
+         (game (%make-game :npcs global-npcs :player player :players (vector player))))
+    ;; Register zone-state
+    (setf (gethash :test-zone *zone-states*) zone-state)
+    (unwind-protect
+        (let ((result (npc-array-for-player-zone game player)))
+          ;; Should return zone-state NPCs, not game-npcs
+          (assert (eq result zone-npcs)
+                  () "npc-array: should return zone-state-npcs when available")
+          (assert (= (length result) 2)
+                  () "npc-array: zone-state has 2 NPCs"))
+      ;; Cleanup
+      (remhash :test-zone *zone-states*))))
+
+(defun test-clear-follow-target-clears-marker ()
+  "Test that clear-player-follow-target also clears marker tracking."
+  (let ((player (make-player 100.0 100.0 :id 1)))
+    ;; Set up marker tracking
+    (setf (player-follow-target-id player) 42
+          (player-click-marker-target-id player) 42
+          (player-click-marker-kind player) :walk)
+    ;; Clear follow target
+    (clear-player-follow-target player)
+    ;; Verify marker was also cleared
+    (assert (= (player-follow-target-id player) 0)
+            () "clear-follow: follow-target-id cleared")
+    (assert (= (player-click-marker-target-id player) 0)
+            () "clear-follow: marker target-id cleared")
+    (assert (null (player-click-marker-kind player))
+            () "clear-follow: marker kind cleared")))
+
+(defun test-clear-pickup-target-clears-marker ()
+  "Test that clear-player-pickup-target also clears marker tracking."
+  (let ((player (make-player 100.0 100.0 :id 1)))
+    ;; Set up marker tracking
+    (setf (player-pickup-target-active player) t
+          (player-pickup-target-id player) :gold
+          (player-click-marker-target-id player) 99
+          (player-click-marker-kind player) :walk)
+    ;; Clear pickup target
+    (clear-player-pickup-target player)
+    ;; Verify marker was also cleared
+    (assert (null (player-pickup-target-active player))
+            () "clear-pickup: pickup-target-active cleared")
+    (assert (null (player-pickup-target-id player))
+            () "clear-pickup: pickup-target-id cleared")
+    (assert (= (player-click-marker-target-id player) 0)
+            () "clear-pickup: marker target-id cleared")
+    (assert (null (player-click-marker-kind player))
+            () "clear-pickup: marker kind cleared")))

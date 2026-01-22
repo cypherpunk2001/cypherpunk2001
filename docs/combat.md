@@ -46,8 +46,8 @@ Key functions
 **Target Management:**
 - `player-attack-target` - Return active NPC attack target for player.
 - `player-follow-target` - Return active NPC follow target for player.
-- `sync-player-attack-target` - Validate requested attack target (server authority).
-- `sync-player-follow-target` - Validate requested follow target (server authority).
+- `sync-player-attack-target` - Validate requested attack target (server authority). Accepts targets at any distance; player walks to target and auto-attacks when in melee range.
+- `sync-player-follow-target` - Validate requested follow target (server authority). Accepts targets at any distance.
 - `sync-player-pickup-target` - Validate requested pickup target (server authority).
 - `update-player-attack-intent` - Request attacks when target is in range.
 - `player-attack-target-in-range-p` - Return true when target is inside player's melee hitbox.

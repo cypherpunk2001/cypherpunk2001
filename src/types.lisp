@@ -6,7 +6,7 @@
   id x y dx dy zone-id intent stats inventory equipment
   attack-target-id follow-target-id
   pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
-  click-marker-x click-marker-y click-marker-timer click-marker-kind
+  click-marker-x click-marker-y click-marker-timer click-marker-kind click-marker-target-id
   anim-state facing
   facing-sign class hp lifetime-xp playtime created-at
   ;; Deaths counter (Phase 4 - leaderboards)
@@ -394,6 +394,7 @@
                   :click-marker-y 0.0
                   :click-marker-timer 0.0
                   :click-marker-kind nil
+                  :click-marker-target-id 0
                   :anim-state :idle
                   :facing :down
                   :facing-sign 1.0
