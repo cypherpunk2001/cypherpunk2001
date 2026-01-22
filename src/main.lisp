@@ -461,8 +461,10 @@
                   (start-player-attack current-player current-intent)))
       (when (and player (or *verbose-logs* *verbose-coordinates*))
         (log-player-position player world))
+      ;; Update animations and hit effects in single pass for cache locality (Task 5.1)
       (loop :for entity :across entities
-            :do (update-entity-animation entity dt))
+            :do (update-entity-animation entity dt)
+                (combatant-update-hit-effect entity dt))
       ;; Per-zone melee combat and NPC simulation
       ;; For each occupied zone, run combat and NPC AI with that zone's players
       (let ((zone-ids (occupied-zone-ids players)))
@@ -496,8 +498,6 @@
                           (update-npc-intent npc target-player world dt)
                           (update-npc-movement npc world dt)
                           (update-npc-attack npc target-player world dt event-queue))))))
-      (loop :for entity :across entities
-            :do (combatant-update-hit-effect entity dt))
       (loop :for current-player :across players
             :do (consume-intent-actions (player-intent current-player)))
       ;; Increment playtime for all connected players (server-side tracking)
