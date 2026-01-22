@@ -2359,9 +2359,9 @@ hello
   "Test deriving wall map from zone collision tiles."
   (let* ((zone (make-empty-zone :test 10 10))
          (collision (zone-collision-tiles zone)))
-    ;; Add some collision tiles using cons cell keys (as used internally)
-    (setf (gethash (cons 2 3) collision) t)
-    (setf (gethash (cons 5 5) collision) t)
+    ;; Add some collision tiles using packed integer keys (as used by build-zone-collision-tiles)
+    (setf (gethash (tile-key 2 3) collision) t)
+    (setf (gethash (tile-key 5 5) collision) t)
     (let ((wall-map (derive-wall-map-from-zone zone)))
       (assert (arrayp wall-map) () "derive-wall-map: returns array")
       (assert (= (array-dimension wall-map 0) 10) () "derive-wall-map: correct height")

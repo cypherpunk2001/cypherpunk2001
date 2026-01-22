@@ -68,8 +68,9 @@
       (when collision-tiles
         (maphash (lambda (key _val)
                    (declare (ignore _val))
-                   (let ((tx (car key))
-                         (ty (cdr key)))
+                   ;; Keys are packed integers from tile-key, not cons cells
+                   (let ((tx (tile-key-x key))
+                         (ty (tile-key-y key)))
                      (when (and (>= tx 0) (< tx width)
                                 (>= ty 0) (< ty height))
                        (setf (aref map ty tx) 1))))
