@@ -586,17 +586,241 @@ All persistent data includes `:version N`. When changing schema:
 4. NEVER delete old migrations (players skip versions)
 5. Test on copy of production data
 
-### Performance Matters
+# AGENTS.md — Ultimate SBCL Common Lisp Codegen + Performance Rules
+**Target runtime:** SBCL
+**Target behavior:** stable 60 Hz simulation + rendering + networking with predictable GC and low allocation.
 
-**Hot loop optimization:**
-- Avoid per-frame consing in hot loops: reuse rectangles, vectors, strings, and animation state
-- Keep entity data in arrays/structs, not lists; use object pools
+This document is written for LLM agents generating or modifying code.
+Follow it literally. Do not “simplify” away details.
+
+---
+
+## 0) Prime Directive
+Any code that runs:
+- every tick/frame
+- per packet
+- per entity
+- per client
+
+**must be allocation-free, type-stable, and bounded-time.**
+If you can’t prove it, assume it violates the directive.
+
+---
+
+## 1) Performance Matters
+
+### Tick budget discipline (60 Hz)
+- At 60 Hz, every tick/frame has a fixed budget (~16.67ms).
+- Any periodic pause (GC, serialization spikes) will surface as jitter/stutter.
+- Therefore: any work that runs every tick must be strictly bounded in time and allocation behavior.
+
+### Hot loop optimization
+- Avoid per-frame/tick consing in hot loops: reuse rectangles, vectors, strings, and animation state
+- Keep entity/component data in arrays/structs (SoA-style when useful), not lists
 - Separate update/draw; keep animation state lightweight
+- **Hot path rule:** if it runs every tick or per-packet, it must be allocation-free and bounded-time
+  (prove with allocation profiling)
+- Avoid hidden allocations in hot code paths:
+  - No `format`, string concatenation, or ad-hoc string building in-frame/in-tick (UI/debug/logging)
+  - Avoid allocating closures/lambdas inside hot loops (especially capturing lambdas)
+  - Avoid per-tick hash-table growth/rehash and transient key creation; pre-size tables and reuse keys/containers
+  - Be cautious with generic dispatch/abstraction layers that encourage temporary allocations
 
-**Rendering optimization:**
-- Cull off-screen tiles/sprites; draw only what's visible
-- Chunk the map (e.g., 32×32 tiles) and cache static chunks in a render texture
-- Batch draw calls when possible
+
+### Allocation & reuse policy (pools / scratch / arenas)
+- Use object pools/freelists not just for entities, but also for support churn:
+  - intents/events (combat, movement, AI)
+  - query result containers (nearby entities, visibility sets)
+  - pathfinding nodes and temporary spatial data
+- Prefer per-thread/per-system scratch buffers (arrays with fill-pointers)
+- Use arena-style “dies-together” allocation for tick-local or snapshot-local work
+- Pools must be bounded and actively managed:
+  - cap growth and recycle aggressively
+  - avoid unbounded pools that grow at peak load and never shrink
+  - watch for large pooled objects/buffers that inflate heap size and make rare full GCs expensive
+
+
+### Networking / serialization optimization (often the real hot path)
+- Treat snapshot building and serialization as a first-class hot loop
+- Avoid constructing intermediate “message objects” that are later serialized
+- Write directly into reusable byte buffers when possible
+- Maintain reusable per-connection or per-worker buffers with explicit write cursors
+- Reuse delta-state and snapshot scratch structures; avoid per-send allocations
+- **Schedule network output intentionally:** keep simulation at 60 Hz, but consider sending snapshots/deltas at a lower
+  or adaptive rate (e.g., 20–30 Hz) to reduce serialization load and allocation/spike risk while preserving sim stability
+
+
+### Rendering optimization
+- Cull off-screen tiles and sprites; draw only what’s visible
+- Chunk the map (e.g., 32×32 tiles) and cache static chunks in render textures
+- Batch draw calls whenever possible
+
+
+## 2) Hacks that Actually Improve GC Predictability
+
+### 1) Schedule GC at safe points (make it your decision)
+If you have a 60Hz tick, pick deliberate moments where a pause hurts least:
+- right after you finish a snapshot send
+- right after zone handoff / shard transfer
+- during menu / loading / between matches (client)
+- during low-pop intervals (server)
+
+Even a simple “GC every N seconds” policy can prevent rare, catastrophic full collections.
+
+
+### 2) Give the heap more headroom (reduce GC frequency spikes)
+A too-small heap makes the runtime collect constantly and unpredictably.
+- Bigger heap → fewer collections → fewer “surprise” pauses
+- You trade memory for smoothness
+
+This is one of the most common “we fixed the hitch” changes on servers.
+
+
+### 3) Tune for *small + frequent* vs *rare + huge*
+Most modern Common Lisp implementations use generational GC. You generally want:
+- young-generation collections to be cheap and frequent
+- avoid accidental promotion of short-lived garbage into old generations
+- avoid heap growth oscillation (collect → grow → collect → grow)
+
+**Practical hack:** warm up the server (load maps, create common objects, run a few ticks) so long-lived data settles
+before peak load. This reduces later promotion churn.
+
+
+### 4) Keep big buffers and OS resources out of the GC heap
+Even with good discipline, large byte arrays, strings, and foreign handles can cause:
+- increased scanning pressure
+- larger old generations
+- longer full GC pauses
+
+Common approaches:
+- reusable foreign buffers (or static/pinned arrays if your implementation supports them)
+- keep only small metadata objects in the Lisp heap
+
+
+### 5) Avoid features that make GC timing messier
+Depending on the implementation, these often correlate with unpredictable pauses:
+- lots of finalizers (cleanup hooks)
+- weak hash tables / ephemeron-heavy caches
+- excessive interning of new symbols or keywords at runtime
+- “log everything” strategies with string building in hot paths
+
+Not forbidden — just be aware they can turn GC into a wildcard.
+
+
+## 3) SBCL Compiler Optimization Tips (For Best Code Generation)
+
+These are SBCL-specific rules for producing **maximum-performance Common Lisp**.
+
+### 3.1 Use optimization policy deliberately (and locally)
+- SBCL honors `(optimize ...)` strongly.
+- Prefer localized policies:
+  - package/file level: balanced defaults
+  - hot functions: speed-focused
+
+Typical patterns (adjust per project):
+- Dev: `(speed 2) (safety 2) (debug 2)`
+- Hot loop: `(speed 3) (safety 0-1) (debug 0-1) (compilation-speed 0)`
+
+Guidelines:
+- Use `(declaim (optimize ...))` for file/package defaults.
+- Use `(declare (optimize ...))` inside the 5–20 hottest functions.
+- Be careful with `(safety 0)` in server code: it can turn bugs into silent corruption.
+
+
+### 3.2 Type declarations are performance features in SBCL
+SBCL generates unboxed, fast machine code when it knows types.
+
+Declare aggressively in hot code:
+- numeric types: `fixnum`, `(unsigned-byte 32)`, `single-float`, etc.
+- array element types: specialized arrays avoid boxing
+- struct slot types: typed `defstruct` slots are a big win
+
+Why it matters:
+- prevents generic arithmetic (boxed numbers)
+- enables specialized array access (fast element access)
+- reduces dispatch and runtime checks
+
+Preferred data patterns:
+- `simple-array` / `simple-vector` where possible
+- specialized arrays like:
+  - `(simple-array single-float (*))`
+  - `(simple-array (unsigned-byte 8) (*))`
+- `defstruct` with typed slots (and keep types “obvious” for SBCL inference)
+
+
+### 3.3 Avoid “accidental generic” operations
+If SBCL can’t infer a type (value becomes `T`), it will often fall back to generic operations:
+- arithmetic becomes generic (boxing + slower)
+- comparisons become generic
+- sequence operations become generic
+
+Hot code rule:
+- ensure loop indices, accumulators, and frequently accessed fields are type-declared
+- keep types stable across calls (don’t mix floats/integers unpredictably)
+
+
+### 3.4 Avoid CLOS generic dispatch in the innermost loops
+- CLOS is fine at the edges.
+- In the innermost hot loops, generic function dispatch is often too expensive.
+- Use direct functions and typed structs in hot paths; keep polymorphism at system boundaries.
+
+
+### 3.5 Use inlining selectively for tiny hot helpers
+- `(declaim (inline foo))` can remove call overhead and help SBCL optimize across function boundaries.
+- Only inline small helpers that are called extremely often.
+- Do not blanket-inline everything.
+
+
+### 3.6 Profile with SBCL tooling (do not guess)
+Measure:
+- time in hot functions
+- allocation rate in hot paths
+
+Useful tools:
+- `time` / `sb-ext:time` for quick checks
+- `sb-sprof` for sampling profiler
+- `sb-profile` for call-count/time profiling
+
+
+### 3.7 Serialization hot spots: use specialized byte buffers
+For networking/snapshots in SBCL, prefer:
+- `(simple-array (unsigned-byte 8) (*))` for byte buffers
+- typed cursor indices into those buffers
+- direct writing into buffers (avoid intermediate message objects)
+
+This reduces allocation/GC pressure and improves throughput.
+
+## 4) Code Generation Checklist (LLM Must Follow)
+When generating or editing code:
+
+1) **Identify the hot path**
+- Does it run every tick, per packet, per entity, or per client?
+  - If yes: it must not allocate and must be bounded-time.
+
+2) **Choose data layout that SBCL optimizes well**
+- arrays/structs, typed slots, specialized arrays
+- avoid list pipelines in tight loops
+
+3) **Add SBCL-friendly declarations**
+- `(declare (type ...))` for parameters, locals, indices, accumulators
+- typed arrays and buffer cursors
+- `(declare (optimize ...))` locally in the hot functions
+
+4) **Reject hidden allocation sources**
+- no `format`/string building in hot paths
+- no capturing lambdas in hot loops
+- avoid hash-table growth/rehash in hot loops
+- avoid CLOS dispatch in inner loops
+
+5) **Networking is a hot loop**
+- no intermediate message objects
+- reuse byte buffers
+- typed cursors and specialized arrays
+
+6) **Verify**
+- use SBCL profiling tools to validate time and allocation behavior
+
+---
 
 ## Key Files and Their Roles
 
