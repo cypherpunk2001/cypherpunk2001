@@ -111,19 +111,16 @@ Each CREATE event triggers GPU allocation mid-frame. With 1030 CREATE events, th
 
 **Fix required:** Move ALL chunk creation to a pre-render step BEFORE `begin-drawing`.
 
-### Bug #3: Layer Iteration Asymmetry (NEW FROM DATA)
+### ~~Bug #3: Layer Iteration Asymmetry~~ (EXPLAINED BY A2 DATA)
 
 **Evidence from debug session:**
 - WALLS layer chunks: 21-27 duplicates each
 - FLOOR layer chunks: 9-11 duplicates each
-- Ratio: ~2× more WALLS duplicates
+- Ratio: ~3× more WALLS duplicates
 
-**Possible causes:**
-1. WALLS layer drawn in multiple iteration passes (collision + normal?)
-2. WALLS layer has more visible chunks (unlikely - same viewport)
-3. WALLS layer cache key differs between passes
+**Root cause (from A2):** WALLS layer uses 3 separate tilesets (OVERWORLD, CAVE, OBJECTS). Cache key is `(layer-id . tileset-id)`, so each tileset creates separate cache entries. The ~3× ratio is expected behavior, not a bug.
 
-**Investigation needed:** Check layer iteration logic for duplicate visits.
+**Status:** No fix needed. Cache key design is correct.
 
 ### Bug #4: Out-of-Bounds Chunk Generation (MEDIUM - CONFIRMED BY DATA)
 
@@ -273,30 +270,115 @@ If `tile-dest-size` is 16 (scale 1.0) instead of 64 (scale 4.0), earlier math wa
 2. Is any cache clear function being called during movement?
 3. What are the actual runtime chunk dimensions?
 
-### Phase A3: Layer Iteration Audit
+### ~~Phase A3: Layer Iteration Audit~~ (REMOVED)
 
-**Goal:** Determine why WALLS has 2× more duplicates than FLOOR.
+**Status:** REMOVED - A2 data answered this question.
+
+**Original goal:** Determine why WALLS has 2× more duplicates than FLOOR.
+
+**Answer from A2:** WALLS layer uses 3 separate tilesets (OVERWORLD, CAVE, OBJECTS). Cache key includes `(layer-id . tileset-id)`, so these are correctly 3 separate cache entries. The ~3× ratio vs FLOOR is expected behavior, not a bug.
+
+### Phase X1: Fix Zone-Change Clear Behavior
+
+**Goal:** Stop clearing destination zone cache on zone transitions.
+
+**Evidence from A2:** `CLEAR-ALL zones:4 caller:zone-change` clears ALL zones including destination, forcing complete rebuild.
+
+**Fix:** Change `clear-all-zone-render-caches` to `clear-other-zone-render-caches` in the zone-change hook.
 
 ```lisp
-;; Add at start of each layer iteration pass:
-(when *debug-render-cache*
-  (format t "~&[CACHE] LAYER-ITER zone:~A layer:~A pass:~A~%"
-          (zone-id zone)
-          (zone-layer-id layer)
-          pass-name))  ; "normal", "collision", "object"
+;; BEFORE (current behavior - clears everything):
+(clear-all-zone-render-caches "zone-change")
+
+;; AFTER (keep destination warm):
+(clear-other-zone-render-caches destination-zone-id "zone-change")
 ```
 
-**Check:**
-1. Is WALLS matching multiple conditions? (collision-p AND not excluded from normal pass?)
-2. Count iterations per layer per frame
+**Prerequisites (if not already done in A2):**
+1. Ensure `clear-other-zone-render-caches` accepts `(keep-zone-id &optional caller)` parameter
+2. Ensure `clear-all-zone-render-caches` accepts `(&optional caller)` parameter
+3. If these functions don't accept caller, add the parameter (A2.2 should have done this)
+
+**Location:** Find the zone-change hook in `rendering.lisp` that calls the clear function. This is likely `*client-zone-change-hook*` or a function called from zone transition logic.
+
+### Phase X2: Zone-ID Normalization Verification
+
+**Goal:** Confirm zone-id is stable and cache lookups use consistent keys.
+
+**Evidence from A2:** Same cache key `(ZONE-4, (-2,-2), WALLS, OVERWORLD)` created twice WITHOUT any CLEAR between (lines 1884→2231). Cache lookup is failing.
+
+**Possible causes:**
+1. Zone-id type mismatch (symbol vs string vs keyword)
+2. Multiple cache instances for same zone-id
+3. Hash table test function mismatch (eql vs equal)
+
+**X2.1: Add zone-id diagnostic logging**
+
+```lisp
+;; In get-or-create-zone-render-cache, AFTER retrieving/creating the cache:
+(defun get-or-create-zone-render-cache (zone-id tile-dest-size)
+  (let* ((normalized-id (normalize-zone-id zone-id))
+         (cache (or (gethash normalized-id *zone-render-caches*)
+                    (setf (gethash normalized-id *zone-render-caches*)
+                          (make-zone-render-cache ...)))))
+    ;; Log AFTER cache is available:
+    (when *debug-render-cache*
+      (format t "~&[CACHE] LOOKUP zone-id:~S normalized:~S type:~A cache-id:~D~%"
+              zone-id
+              normalized-id
+              (type-of zone-id)
+              (sxhash cache)))
+    cache))
+```
+
+**X2.2: Add cache instance identity to CREATE logs**
+
+```lisp
+;; In get-or-render-chunk (or ensure-chunk-cached):
+(when *debug-render-cache*
+  (format t "~&[CACHE] CREATE zone:~S cache-id:~D chunk:(~D,~D) layer:~A tileset:~A~%"
+          (zone-id zone)
+          (sxhash cache)  ; detect if different cache instances
+          chunk-x chunk-y
+          (zone-layer-id layer)
+          (zone-layer-tileset-id layer)))
+```
+
+**X2.3: Verify hash table test function**
+
+Check that `*zone-render-caches*` uses appropriate test:
+```lisp
+;; If zone-ids can be strings or symbols:
+(defvar *zone-render-caches* (make-hash-table :test 'equal))
+
+;; If zone-ids are always keywords (preferred):
+(defvar *zone-render-caches* (make-hash-table :test 'eql))
+```
+
+**X2.4: Normalize zone-id at cache boundary**
+
+Add a normalization helper (used in X2.1's updated `get-or-create-zone-render-cache`):
+
+```lisp
+(defun normalize-zone-id (zone-id)
+  "Ensure zone-id is always a keyword for consistent hash table lookup."
+  (etypecase zone-id
+    (keyword zone-id)
+    (symbol (intern (symbol-name zone-id) :keyword))
+    (string (intern zone-id :keyword))))
+```
+
+This normalization is already integrated into the X2.1 example above.
+
+**Validation:** After X2 changes, re-run A2 diagnostics. If cache-id values are consistent and no duplicate CREATEs without CLEAR, the lookup bug is fixed.
 
 ### Phase B: Pre-Render Step (Core Fix for Black Flash)
 
 **Goal:** Move ALL chunk creation outside the draw pass.
 
-**IMPORTANT:** This phase should only be done AFTER Phase A2/A3 diagnose the cache lookup failure. If we move creation to pre-render but cache lookup still fails, we'll just do the same 1030 FBO allocations earlier in the frame.
+**IMPORTANT:** This phase should only be done AFTER Phases X1 and X2 fix the cache lookup failure. If we move creation to pre-render but cache lookup still fails, we'll just do the same 1030 FBO allocations earlier in the frame.
 
-**Prerequisite:** Bug #1 (cache lookup failure) must be understood and fixed first.
+**Prerequisite:** Bug #1 (cache lookup failure) must be understood and fixed first. X2 validation must pass.
 
 **Principle:**
 ```
@@ -631,27 +713,37 @@ With corrected math, 64 chunks is sufficient for 3+ viewports at max zoom-out. I
 
 ---
 
-## Implementation Order (Revised Based on Data)
+## Implementation Order (Revised Based on A2 Data + Codex Review)
 
 | Phase | Description | Risk | Effort | Status |
 |-------|-------------|------|--------|--------|
 | A | Basic instrumentation | Low | 1h | ✓ DONE |
-| A2 | Diagnostic enhancement (zone context, clear logs, config) | Low | 0.5h | **NEXT** |
-| C | Zone bounds clamping (skip negative/OOB chunks) | Low | 0.5h | **HIGH PRIORITY** |
-| A3 | Layer iteration audit (if needed after A2) | Low | 0.5h | Pending |
-| X | Fix cache lookup bug (based on A2 findings) | Medium | 1-3h | Pending |
-| B | Pre-render step + draw-only refactor | High | 3h | Pending |
+| A2 | Diagnostic enhancement (zone context, clear logs, config) | Low | 0.5h | ✓ DONE |
+| C | Zone bounds clamping (skip negative/OOB chunks) | Low | 0.5h | **NEXT - TOP PRIORITY** |
+| X1 | Fix zone-change clear behavior (clear-others, not clear-all) | Low | 0.25h | **HIGH PRIORITY** |
+| X2 | Zone-id normalization + cache identity verification | Low | 0.5h | Pending |
+| B | Pre-render step + draw-only refactor | High | 3h | **BLOCKED until X2 verified** |
 | D | Preview zone handling | Medium | 1h | Pending |
 | - | Testing and validation | Medium | 2h | Pending |
 
-**Order:** A ✓ → A2 → C → (collect data) → X (fix) → B → D → Testing
+**Order:** A ✓ → A2 ✓ → C → X1 → X2 (verify) → B → D → Testing
 
-**Rationale:**
-1. **A2 first:** Must add zone context to logs before we can interpret duplicate CREATEs correctly.
-2. **C immediately after A2:** Bounds clamping is a hard bug fix with guaranteed ROI. Eliminates 218+ wasted FBOs regardless of other issues.
-3. **Collect data after C:** Run another debug session to see if bounds clamping alone fixes the majority of issues.
-4. **X (fix) based on new data:** May be simple (unnecessary cache clear) or complex (architectural).
-5. **B after root cause fixed:** Pre-render refactor is high-effort. Only worth doing once cache lookup is reliable.
+**Rationale (updated with A2 findings + Codex review):**
+
+1. **C first (bounds clamping):** Negative coords confirmed in A2 data (297 ZONE-4 creates with negative coords). Guaranteed to cut FBO bursts dramatically. Quick win.
+
+2. **X1 (fix clear behavior):** A2 showed `CLEAR-ALL zones:4 caller:zone-change` clears destination zone unnecessarily. Change to `clear-other-zone-render-caches(destination-zone-id)` to keep destination warm. See "Phase X1" section for implementation.
+
+3. **X2 (zone-id normalization + cache identity):** A2 showed same cache key created twice WITHOUT clear between (lines 1884→2231). Must verify:
+   - Zone-id type consistency (keyword vs symbol vs string)
+   - Cache instance identity (no duplicate caches for same zone)
+   - Hash table test function compatibility
+   See "Phase X2" section for detailed steps (X2.1-X2.4).
+
+4. **B blocked until X2:** Pre-render refactor is high-effort. Only worth doing once cache lookup is proven reliable. X2 validation must pass first.
+
+**Removed phases:**
+- A3 (layer iteration audit): Multi-tileset layers explained by A2 data - WALLS uses 3 tilesets (OVERWORLD/CAVE/OBJECTS). Not a bug, just inflates counts. Cache key `(layer-id . tileset-id)` is correct.
 
 ---
 
@@ -738,21 +830,24 @@ With corrected math, 64 chunks is sufficient for 3+ viewports at max zoom-out. I
 
 2. ~~**Exact cause of black flash:**~~ → 1030 mid-frame FBO allocations.
 
-### Still Open (Will Be Answered by Phase A2/A3)
+### Still Open (Will Be Answered by Phase X2)
 
-3. **Are duplicate CREATEs from same zone or different zones?**
-   - Phase A2 zone-id logging will answer.
+3. ~~**Are duplicate CREATEs from same zone or different zones?**~~
+   - **ANSWERED by A2:** Same zone (ZONE-4), same key, no clear between. Lookup bug confirmed.
 
-4. **Is any cache clear function called during movement?**
-   - Phase A2 clear logging will answer.
+4. ~~**Is any cache clear function called during movement?**~~
+   - **ANSWERED by A2:** Yes, `CLEAR-ALL` on zone-change clears destination unnecessarily.
 
-5. **What are actual runtime chunk dimensions?**
-   - Phase A2 config logging will answer.
+5. ~~**What are actual runtime chunk dimensions?**~~
+   - **ANSWERED by A2:** tile-dest:64, chunk-px:1024, chunk-tiles:16, max:64. As expected.
 
-6. **Why does WALLS have 2× more duplicates than FLOOR?**
-   - Phase A3 layer iteration audit will answer.
+6. ~~**Why does WALLS have 2× more duplicates than FLOOR?**~~
+   - **ANSWERED by A2:** WALLS uses 3 tilesets (OVERWORLD/CAVE/OBJECTS). 3× entries, not a bug.
 
-7. **Remaining tile seam tearing:**
+7. **Why does cache lookup fail for identical keys?**
+   - Phase X2 zone-id normalization and cache identity logging will answer.
+
+8. **Remaining tile seam tearing:**
    - May be separate precision issue unrelated to caching.
 
 ---
