@@ -1,3 +1,33 @@
+SUMMARY
+
+```
+ All phases complete!
+  ┌───────┬────────┬──────────────────────────────────────────────────────┐
+  │ Phase │ Status │                       Summary                        │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ A     │ Done   │ Basic instrumentation (stats, logging)               │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ A2    │ Done   │ Enhanced diagnostics (zone context, LOOKUP logging)  │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ C     │ Done   │ Zone bounds clamping (no negative/OOB chunks)        │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ X1    │ Done   │ Keep destination zone cache warm on zone change      │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ X2    │ Done   │ Zone-id normalization (consistent keyword lookup)    │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ B     │ Done   │ Pre-render step + draw-only path + per-tile fallback │
+  ├───────┼────────┼──────────────────────────────────────────────────────┤
+  │ D     │ Done   │ Preview zone handling (already implemented)          │
+  └───────┴────────┴──────────────────────────────────────────────────────┘
+  Key results from X2 validation:
+  - 83% reduction in chunk CREATEs (174 vs 1030)
+  - 99.8% cache hit rate
+  - Zero duplicate CREATEs
+  - Stable cache identity
+
+  All 220 tests pass. No staged changes remaining - Phase B was committed. The chunk cache fix is complete.
+```
+
 # Unified Chunk Cache Fix Plan (Revised)
 
 **Date:** 2026-01-23 (Revised)
