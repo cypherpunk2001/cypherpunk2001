@@ -914,3 +914,99 @@ INFO: FBO: [ID M] Framebuffer object created successfully
 ### Data Location
 
 Full debug output: `/tmp/claude/-home-telecommuter-repos-mmorpg/tasks/b8f4146.output` (555.9KB)
+
+---
+
+## Appendix Part 2: A2 Debug Session Data (2026-01-23)
+
+### Test Protocol
+- Same as Part 1: walk zone 1, cross to another zone, return
+- A2 diagnostics enabled: zone context, cache clear logging, config log
+
+### Key Findings
+
+#### Finding 1: CLEAR-ALL on Zone Change (Root Cause Candidate)
+
+```
+[CACHE] CLEAR-ALL zones:4 caller:zone-change
+[CACHE] CLEAR zone:ZONE-4 entries:64 caller:zone-change
+[CACHE] CLEAR zone:ZONE-3 entries:64 caller:zone-change
+[CACHE] CLEAR zone:ZONE-2 entries:56 caller:zone-change
+[CACHE] CLEAR zone:ZONE-1 entries:64 caller:zone-change
+```
+
+**Observation:** Zone change triggers `clear-all-zone-render-caches`, which clears ALL zones including the destination zone. This forces complete cache rebuild on every zone transition.
+
+#### Finding 2: Multiple Tilesets per Layer Name
+
+Same chunk coords created with DIFFERENT tilesets:
+```
+Line 1884: zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OVERWORLD
+Line 1932: zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:CAVE
+Line 1980: zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OBJECTS
+Line 2231: zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OVERWORLD (duplicate!)
+```
+
+ZONE-4 WALLS layer tileset distribution:
+```
+     48 tileset:CAVE
+    128 tileset:OBJECTS
+     48 tileset:OVERWORLD
+```
+
+**Observation:** There are 3 different tilesets for "WALLS" layer. Cache key includes tileset, so these are 3 separate cache entries. This explains the ~3× ratio of WALLS vs FLOOR duplicates.
+
+#### Finding 3: Duplicate Creates WITHOUT Clear Between
+
+```
+[CACHE] CREATE zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OVERWORLD  (line 1884)
+[CACHE] CREATE zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:CAVE       (line 1932)
+[CACHE] CREATE zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OBJECTS    (line 1980)
+[CACHE] CREATE zone:ZONE-4 chunk:(-2,-2) layer:WALLS tileset:OVERWORLD  (line 2231) ← DUPLICATE!
+```
+
+**No CLEAR event between lines 1884 and 2231.** The exact same cache key `(ZONE-4, (-2,-2), WALLS, OVERWORLD)` is created twice without any cache clearing.
+
+**Conclusion:** Cache lookup is genuinely failing. Same key, same zone, no clear, but created twice.
+
+#### Finding 4: Config Confirmed
+
+```
+[CACHE] CONFIG tile-dest:64 chunk-px:1024 chunk-tiles:16 max-chunks:64
+```
+
+Config is as expected: tile-dest 64px, chunk 1024px, 16 tiles/chunk, 64 max per zone.
+
+#### Finding 5: Per-Zone Entry Counts (Steady State)
+
+```
+[CACHE]   zone:ZONE-1 entries:60
+[CACHE]   zone:ZONE-2 entries:40
+```
+
+Per-zone counts are stable during steady state. Each zone is under 64 limit individually.
+
+### Raw Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total CREATE events | 644 |
+| Total CLEAR events | 8 (1 zone-change + 1 shutdown, each clearing multiple zones) |
+| ZONE-4 CREATE events | 297 |
+| ZONE-1 CREATE events | 129 |
+| Max duplicates (same key) | 14× |
+
+### Updated Hypotheses
+
+| Hypothesis | Status |
+|------------|--------|
+| H1: Cache key lookup fails | **CONFIRMED** - same key created twice without clear |
+| H2: Per-zone caches independent | **CONFIRMED** - each zone under 64, global sum > 64 |
+| H3: Preview zones duplicate coords | **CONFIRMED** - ZONE-4 is preview zone with negative coords |
+| H4: Eviction not triggering | **EXPECTED** - per-zone counts under limit |
+| **NEW H5: Multiple tilesets per layer** | **CONFIRMED** - 3 tilesets for WALLS, explains 3× ratio |
+| **NEW H6: CLEAR-ALL too aggressive** | **LIKELY** - clears destination zone cache unnecessarily |
+
+### Data Location
+
+Full A2 debug output: `/tmp/claude/-home-telecommuter-repos-mmorpg/tasks/bbed7d0.output`
