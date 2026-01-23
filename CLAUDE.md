@@ -504,6 +504,7 @@ Don’t assume .fasl sitting next to .lisp will be used automatically.
 
 ## SIMD / auto-vectorization (compute-bound kernels only)
 SIMD is a deliberate tradeoff: it maximizes arithmetic throughput in compute-bound kernels, but increases code complexity and offers little benefit (or harm) in memory- or branch-bound loops, so it should be applied selectively, not universally.
+**Current decision: DEFER SIMD for now.** Fix allocations, type declarations, and hot-path dispatch first; only introduce SIMD after profiling shows compute-bound kernels.
 SIMD should be “default” only inside isolated numeric kernels (typed arrays, low branching, batch processing), which in your codebase most naturally live in:
 spatial.lisp (broadphase/grid/partition math, AABB overlap, distance-to-cell, packed queries) — best SIMD ROI
 movement.lisp (SoA position/velocity integration, batch collision broadphase math, distance checks) — SIMD if entity data is packed/branch-light
