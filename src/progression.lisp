@@ -82,6 +82,7 @@
                         0)))
         (+ base bonus))))
 
+;;; Generic combatant functions (for non-hot paths and backwards compatibility)
 (defun combatant-attack-level (combatant)
   (stat-block-effective-level (combatant-stats combatant) :attack))
 
@@ -93,6 +94,45 @@
 
 (defun combatant-max-hp (combatant)
   (max 1 (stat-block-effective-level (combatant-stats combatant) :hitpoints)))
+
+;;; Type-specific stat functions (Task 1.5: CLOS removal in hot paths)
+;;; These avoid CLOS dispatch by using direct struct accessors.
+
+(defun player-attack-level (player)
+  "Return effective attack level for PLAYER. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player))
+  (stat-block-effective-level (player-stats player) :attack))
+
+(defun player-defense-level (player)
+  "Return effective defense level for PLAYER. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player))
+  (stat-block-effective-level (player-stats player) :defense))
+
+(defun player-max-hp (player)
+  "Return max HP for PLAYER. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player))
+  (max 1 (stat-block-effective-level (player-stats player) :hitpoints)))
+
+(defun npc-attack-level (npc)
+  "Return effective attack level for NPC. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (stat-block-effective-level (npc-stats npc) :attack))
+
+(defun npc-defense-level (npc)
+  "Return effective defense level for NPC. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (stat-block-effective-level (npc-stats npc) :defense))
+
+(defun npc-max-hp (npc)
+  "Return max HP for NPC. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (max 1 (stat-block-effective-level (npc-stats npc) :hitpoints)))
 
 (defun combat-level (stats)
   ;; Compute a simple melee combat level approximation.

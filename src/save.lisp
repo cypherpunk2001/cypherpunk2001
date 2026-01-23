@@ -450,11 +450,11 @@
           (setf fixed-plist (plist-put fixed-plist :y *default-spawn-y*))
           (setf needs-clamp t))))
 
-    ;; Playtime clamping: < 0 → 0
+    ;; Playtime clamping: < 0 → 0.0
     (let ((playtime (getf fixed-plist :playtime)))
       (when (and playtime (numberp playtime) (< playtime 0))
         (push (format nil "Playtime ~f clamped to 0" playtime) issues)
-        (setf fixed-plist (plist-put fixed-plist :playtime 0))
+        (setf fixed-plist (plist-put fixed-plist :playtime 0.0))
         (setf needs-clamp t)))
 
     ;; Deaths clamping: < 0 → 0
@@ -647,7 +647,7 @@
     (setf (player-hp player) (getf plist :hp 10)
           (player-zone-id player) (getf plist :zone-id)  ; Also set explicitly for clarity
           (player-lifetime-xp player) (getf plist :lifetime-xp 0)
-          (player-playtime player) (getf plist :playtime 0)
+          (player-playtime player) (float (getf plist :playtime 0) 1.0)
           (player-created-at player) (getf plist :created-at (get-universal-time))
           (player-deaths player) (getf plist :deaths 0)  ; Phase 4 - leaderboards
           (player-stats player) (deserialize-stat-block (getf plist :stats))

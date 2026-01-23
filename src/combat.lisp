@@ -137,6 +137,132 @@
               (npc-hit-timer combatant) 0.0
               (npc-hit-frame combatant) 0)))))
 
+;;; Non-generic hit effect functions (Task 1.5: CLOS dispatch removal)
+;;; These avoid CLOS dispatch overhead in hot loops by being called directly
+;;; when the entity type is already known.
+
+(defun update-player-hit-effect (player dt)
+  "Update hit effect animation for PLAYER. Non-generic version for hot loops."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type single-float dt))
+  (when (player-hit-active player)
+    (let* ((frame-count *blood-frame-count*)
+           (frame-time *blood-frame-time*)
+           (timer (+ (player-hit-timer player) dt))
+           (duration (* frame-count frame-time))
+           (frame (min (the fixnum (truncate (/ timer frame-time)))
+                       (the fixnum (1- frame-count)))))
+      (declare (type fixnum frame-count frame)
+               (type single-float frame-time timer duration))
+      (setf (player-hit-timer player) timer
+            (player-hit-frame player) frame)
+      (when (>= timer duration)
+        (setf (player-hit-active player) nil
+              (player-hit-timer player) 0.0
+              (player-hit-frame player) 0)))))
+
+(defun update-npc-hit-effect (npc dt)
+  "Update hit effect animation for NPC. Non-generic version for hot loops."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type single-float dt))
+  (when (npc-hit-active npc)
+    (let* ((frame-count *blood-frame-count*)
+           (frame-time *blood-frame-time*)
+           (timer (+ (npc-hit-timer npc) dt))
+           (duration (* frame-count frame-time))
+           (frame (min (the fixnum (truncate (/ timer frame-time)))
+                       (the fixnum (1- frame-count)))))
+      (declare (type fixnum frame-count frame)
+               (type single-float frame-time timer duration))
+      (setf (npc-hit-timer npc) timer
+            (npc-hit-frame npc) frame)
+      (when (>= timer duration)
+        (setf (npc-hit-active npc) nil
+              (npc-hit-timer npc) 0.0
+              (npc-hit-frame npc) 0)))))
+
+;;; Type-specific apply-hit and trigger-hit-effect (Task 1.5: CLOS removal)
+;;; These avoid CLOS dispatch in hot combat loops.
+
+(defun npc-trigger-hit-effect (npc)
+  "Trigger hit effect animation on NPC. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (setf (npc-hit-active npc) t
+        (npc-hit-timer npc) 0.0
+        (npc-hit-frame npc) 0
+        (npc-hit-facing npc) (npc-facing npc)
+        (npc-hit-facing-sign npc) 1.0))
+
+(defun player-trigger-hit-effect (player)
+  "Trigger hit effect animation on PLAYER. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player))
+  (setf (player-hit-active player) t
+        (player-hit-timer player) 0.0
+        (player-hit-frame player) 0
+        (player-hit-facing player) (player-facing player)
+        (player-hit-facing-sign player) (player-facing-sign player)))
+
+(defun npc-apply-hit (npc &optional amount)
+  "Apply damage to NPC and return T if killed. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (let* ((damage (if amount amount 1))
+         (max-hits (npc-max-hp npc))
+         (before (npc-hits-left npc)))
+    (when (and max-hits (> (npc-hits-left npc) max-hits))
+      (setf (npc-hits-left npc) max-hits))
+    (decf (npc-hits-left npc) damage)
+    (setf (npc-provoked npc) t)
+    (setf (npc-snapshot-dirty npc) t)
+    (let ((killed nil))
+      (when (<= (npc-hits-left npc) 0)
+        (setf (npc-hits-left npc) 0
+              (npc-alive npc) nil
+              killed t))
+      (when killed
+        (let ((respawn (npc-respawn-seconds npc)))
+          (when (and respawn (> respawn 0.0))
+            (setf (npc-respawn-timer npc) respawn))))
+      (when *debug-npc-logs*
+        (let* ((archetype (npc-archetype npc))
+               (name (if archetype (npc-archetype-name archetype) "NPC"))
+               (flee-at (if archetype (npc-archetype-flee-at-hits archetype) 0)))
+          (format t "~&NPC-HIT ~a hits-left=~d->~d flee-at=~d alive=~a state=~a~%"
+                  name before (npc-hits-left npc) flee-at (npc-alive npc)
+                  (npc-behavior-state npc))
+          (finish-output)))
+      killed)))
+
+(defun player-apply-hit (player &optional amount)
+  "Apply damage to PLAYER. Direct accessor for hot paths."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player))
+  (let* ((damage (if amount amount 1))
+         (old-hp (player-hp player))
+         (hp (- old-hp damage))
+         (new-hp (max 0 hp)))
+    (setf (player-hp player) new-hp)
+    (setf (player-snapshot-dirty player) t)
+    ;; Tier-1 write: player death (HP reaches 0) must be saved immediately
+    (when (and (= new-hp 0) (> old-hp 0))
+      (incf (player-deaths player))
+      (db-update-leaderboard-deaths (player-id player) (player-deaths player))
+      (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
+                                :max-retries 5
+                                :initial-delay 100
+                                :max-delay 500
+                                :on-final-fail (lambda (e)
+                                                 (warn "CRITICAL: Death save FAILED for player ~d after 5 retries: ~a - using dirty flag fallback"
+                                                       (player-id player) e)
+                                                 (mark-player-dirty (player-id player))))))
+    ;; Tier-2 write: HP changes should be marked dirty for batched saves
+    (when (/= hp new-hp)
+      (mark-player-dirty (player-id player)))))
+
 (defun combatant-display-name (combatant)
   ;; Return a short display name for combat logs.
   (typecase combatant
@@ -202,7 +328,9 @@
                     :killed killed)))
 
 (defun aabb-overlap-p (ax ay ahw ahh bx by bhw bhh)
-  ;; Return true when two axis-aligned boxes overlap (center + half sizes).
+  "Return true when two axis-aligned boxes overlap (center + half sizes)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type real ax ay ahw ahh bx by bhw bhh))
   (and (<= (abs (- ax bx)) (+ ahw bhw))
        (<= (abs (- ay by)) (+ ahh bhh))))
 
@@ -286,21 +414,29 @@
                             (npc-grid-cell-y npc) cy))))))))
 
 (defun player-attack-target (player npcs)
-  ;; Return the active NPC target for PLAYER, if any.
+  "Return the active NPC target for PLAYER, if any.
+   Uses direct npc-alive instead of CLOS (Task 1.5)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
   (let* ((id (player-attack-target-id player))
          (npc (and (> id 0) (find-npc-by-id npcs id))))
-    (when (and npc (combatant-alive-p npc))
+    (when (and npc (npc-alive npc))
       npc)))
 
 (defun player-follow-target (player npcs)
-  ;; Return the active NPC follow target for PLAYER, if any.
+  "Return the active NPC follow target for PLAYER, if any.
+   Uses direct npc-alive instead of CLOS (Task 1.5)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
   (let* ((id (player-follow-target-id player))
          (npc (and (> id 0) (find-npc-by-id npcs id))))
-    (when (and npc (combatant-alive-p npc))
+    (when (and npc (npc-alive npc))
       npc)))
 
 (defun target-in-range-p (player npc world)
   "Check if NPC is within targeting range of PLAYER."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type npc npc)
+           (type world world))
   (let* ((px (player-x player))
          (py (player-y player))
          (nx (npc-x npc))
@@ -311,6 +447,7 @@
          (tile-size (world-tile-dest-size world))
          (max-dist (* *max-target-distance-tiles* tile-size))
          (max-dist-sq (* max-dist max-dist)))
+    (declare (type single-float px py nx ny dx dy dist-sq tile-size max-dist max-dist-sq))
     (<= dist-sq max-dist-sq)))
 
 (defun sync-player-attack-target (player intent npcs world)
@@ -326,7 +463,7 @@
     ;; Process new attack target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc))
+        (if (and npc (npc-alive npc))
             (progn
               ;; Valid target: set authoritative state and clear conflicting targets
               (setf (player-attack-target-id player) requested-id
@@ -357,7 +494,7 @@
     ;; Process new follow target request
     (when (and requested-id (> requested-id 0) (not (= requested-id current-id)))
       (let ((npc (find-npc-by-id npcs requested-id)))
-        (if (and npc (combatant-alive-p npc))
+        (if (and npc (npc-alive npc))  ; Task 1.5: direct accessor, no CLOS
             (progn
               ;; Valid target: set authoritative state and clear conflicting targets
               (setf (player-follow-target-id player) requested-id
@@ -414,15 +551,20 @@
             (player-follow-target-id player) 0))))
 
 (defun player-attack-target-in-range-p (player target world)
-  ;; Return true when TARGET is inside the player's melee hitbox.
+  "Return true when TARGET (NPC) is inside the player's melee hitbox.
+   Uses direct struct accessors instead of CLOS dispatch (Task 1.5)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type npc target)
+           (type world world))
   (multiple-value-bind (ax ay ahw ahh)
       (attack-hitbox player world)
-    (multiple-value-bind (thw thh)
-        (combatant-collision-half target world)
-      (multiple-value-bind (tx ty)
-          (combatant-position target)
-        (aabb-overlap-p ax ay ahw ahh
-                        tx ty thw thh)))))
+    (let ((thw (world-collision-half-width world))
+          (thh (world-collision-half-height world))
+          (tx (npc-x target))
+          (ty (npc-y target)))
+      (declare (type single-float ax ay ahw ahh thw thh tx ty))
+      (aabb-overlap-p ax ay ahw ahh tx ty thw thh))))
 
 (defun update-player-attack-intent (player npcs world)
   ;; Request attacks when the active attack target is in range.
@@ -505,16 +647,21 @@
           (player-attack-hit player) nil)))
 
 (defun apply-melee-hit (player target world event-queue)
-  ;; Apply melee damage once per attack if the hitbox overlaps the target (server-side).
+  "Apply melee damage once per attack if the hitbox overlaps the target (server-side).
+   Uses direct NPC accessors instead of CLOS dispatch (Task 1.5)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type npc target)
+           (type world world))
   (when (and (player-attacking player)
              (not (player-attack-hit player))
-             (combatant-alive-p target))
+             (npc-alive target))
     (multiple-value-bind (ax ay ahw ahh)
         (attack-hitbox player world)
-      (multiple-value-bind (thw thh)
-          (combatant-collision-half target world)
-        (multiple-value-bind (tx ty)
-            (combatant-position target)
+      (let ((thw (world-collision-half-width world))
+            (thh (world-collision-half-height world))
+            (tx (npc-x target))
+            (ty (npc-y target)))
           (when (aabb-overlap-p ax ay ahw ahh
                                 tx ty thw thh)
             (setf (player-attack-hit player) t)
@@ -526,8 +673,8 @@
                 (if hit
                     (progn
                       (setf damage (roll-melee-damage player)
-                            killed (combatant-apply-hit target damage))
-                      (combatant-trigger-hit-effect target)
+                            killed (npc-apply-hit target damage))
+                      (npc-trigger-hit-effect target)
                       (let ((old-combat (combat-level (player-stats player))))
                         (multiple-value-bind (attack-xp strength-xp defense-xp hitpoints-xp level-ups)
                             (award-combat-xp player (* damage *xp-per-damage*))
@@ -541,8 +688,8 @@
                                                         "Congratulations! Combat level ~d."
                                                         new-combat))))))
                       (push-combat-log event-queue player target t chance roll
-                                       (combatant-attack-level player)
-                                       (combatant-defense-level target)
+                                       (player-attack-level player)
+                                       (npc-defense-level target)
                                        :damage damage
                                        :xp-text xp-text
                                        :killed killed)
@@ -567,12 +714,15 @@
                                                               new-combat))))))))
                           (award-npc-loot player target)))))
                     (push-combat-log event-queue player target nil chance roll
-                                     (combatant-attack-level player)
-                                     (combatant-defense-level target)
-                                     :xp-text "XP 0"))))))))
+                                     (player-attack-level player)
+                                     (npc-defense-level target)
+                                     :xp-text "XP 0")))))))
 
 (defun update-player-animation (player dt)
-  ;; Advance animation timers and set facing/state.
+  "Advance animation timers and set facing/state."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type single-float dt))
   (let* ((dx (player-dx player))
          (dy (player-dy player))
          (moving (or (not (zerop dx)) (not (zerop dy))))
@@ -585,6 +735,7 @@
                             (player-direction dx dy)
                             (player-facing player))
                         (player-direction dx dy))))
+    (declare (type single-float dx dy))
     (when (and (eq direction :side) (not (zerop dx)))
       (setf (player-facing-sign player) (if (> dx 0.0) 1.0 -1.0)))
     (multiple-value-bind (frame-count base-frame-time)
@@ -627,13 +778,18 @@
               (player-frame-timer player) frame-timer)))))
 
 (defun update-npc-attack (npc player world dt event-queue)
-  ;; Handle NPC melee attacks and cooldowns (server-side).
+  "Handle NPC melee attacks and cooldowns (server-side)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world)
+           (type single-float dt))
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
-           (timer (max 0.0 (- (npc-attack-timer npc) dt)))
+           (timer (max 0.0f0 (- (npc-attack-timer npc) dt)))
            (state (npc-behavior-state npc))
            (attack-range (npc-attack-range npc world))
            (attack-range-sq (* attack-range attack-range)))
+      (declare (type single-float timer attack-range attack-range-sq))
       (setf (npc-attack-timer npc) timer)
       (when (and (intent-attack intent)
                  (<= timer 0.0)
@@ -647,26 +803,31 @@
                 (roll-melee-hit npc player)
               (if hit
                   (let ((damage (roll-melee-damage npc (npc-attack-damage npc))))
-                    (combatant-apply-hit player damage)
-                    (combatant-trigger-hit-effect player)
+                    (player-apply-hit player damage)
+                    (player-trigger-hit-effect player)
                     (emit-hud-message event-queue "You are under attack!")
                     (push-combat-log event-queue npc player t chance roll
-                                     (combatant-attack-level npc)
-                                     (combatant-defense-level player)
+                                     (npc-attack-level npc)
+                                     (player-defense-level player)
                                      :damage damage))
                   (push-combat-log event-queue npc player nil chance roll
-                                   (combatant-attack-level npc)
-                                   (combatant-defense-level player)
+                                   (npc-attack-level npc)
+                                   (player-defense-level player)
                                    :xp-text "XP 0"))))
           (setf (npc-attack-timer npc) (npc-attack-cooldown npc)))))))
 
 (defun update-npc-animation (npc dt)
-  ;; Advance idle animation frames for the NPC.
+  "Advance idle animation frames for the NPC."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type single-float dt))
   (when (npc-alive npc)
     (let* ((frame-count *idle-frame-count*)
            (frame-time *idle-frame-time*)
            (frame-index (npc-frame-index npc))
            (frame-timer (npc-frame-timer npc)))
+      (declare (type fixnum frame-count frame-index)
+               (type single-float frame-time frame-timer))
       (incf frame-timer dt)
       (loop :while (>= frame-timer frame-time)
             :do (decf frame-timer frame-time)
@@ -687,6 +848,8 @@
   "Apply melee hits from attacking players to nearby NPCs using spatial grid.
    O(P×k) where k = NPCs in each player's 3x3 cell region, vs O(P×N) brute force.
    Uses O(1) NPC lookup via zone-state's npc-index-map."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type world world))
   (when (and players zone-state (> (length players) 0))
     (let ((npc-grid (zone-state-npc-grid zone-state))
           (zone-npcs (zone-state-npcs zone-state)))

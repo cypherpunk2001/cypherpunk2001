@@ -5,6 +5,8 @@
   "Return the closest alive player to NPC, if any.
    When ZONE-STATE and GAME are provided, uses spatial grid for O(1) cell lookup
    instead of O(n) linear scan of all players."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
   (let ((best nil)
         (best-dist nil)
         (grid (and zone-state (zone-state-player-grid zone-state))))
@@ -17,7 +19,8 @@
                            (npc-grid-cell-y npc))))
           (dolist (id nearby-ids)
             (let ((player (find-player-by-id-fast game id)))
-              (when (and player (combatant-alive-p player))
+              ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
+              (when player
                 (let* ((dx (- (player-x player) (npc-x npc)))
                        (dy (- (player-y player) (npc-y npc)))
                        (dist (+ (* dx dx) (* dy dy))))
@@ -27,7 +30,7 @@
         ;; Fallback: O(n) linear scan of all players
         (when players
           (loop :for player :across players
-                :when (combatant-alive-p player)
+                ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
                 :do (let* ((dx (- (player-x player) (npc-x npc)))
                            (dy (- (player-y player) (npc-y npc)))
                            (dist (+ (* dx dx) (* dy dy))))
@@ -99,22 +102,30 @@
       (normalize-vector dx dy))))
 
 (defun npc-perception-range-sq (npc world)
-  ;; Return squared perception range in world pixels.
+  "Return squared perception range in world pixels."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world))
   (let* ((archetype (npc-archetype npc))
          (tiles (if archetype
-                    (npc-archetype-perception-tiles archetype)
-                    0.0))
+                    (float (npc-archetype-perception-tiles archetype) 1.0f0)
+                    0.0f0))
          (range (* tiles (world-tile-dest-size world))))
+    (declare (type single-float tiles range))
     (* range range)))
 
 (defun npc-in-perception-range-p (npc player world)
-  ;; Return true when the player is within the NPC perception radius.
+  "Return true when the player is within the NPC perception radius."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world))
   (when player
     (let* ((dx (- (player-x player) (npc-x npc)))
            (dy (- (player-y player) (npc-y npc)))
            (dist-sq (+ (* dx dx) (* dy dy)))
            (range-sq (npc-perception-range-sq npc world)))
-      (and (> range-sq 0.0)
+      (declare (type single-float dx dy dist-sq range-sq))
+      (and (> range-sq 0.0f0)
            (<= dist-sq range-sq)))))
 
 (defun npc-should-flee-p (npc)
@@ -127,7 +138,10 @@
          (<= (npc-hits-left npc) flee-at))))
 
 (defun update-npc-behavior (npc player world)
-  ;; Update NPC behavior state based on archetype rules and player range.
+  "Update NPC behavior state based on archetype rules and player range."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world))
   (let* ((archetype (npc-archetype npc))
          (old-state (npc-behavior-state npc))
          (new-state nil)
@@ -166,7 +180,11 @@
         (finish-output)))))
 
 (defun update-npc-intent (npc player world dt)
-  ;; Populate the NPC intent based on behavior and proximity.
+  "Populate the NPC intent based on behavior and proximity."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world)
+           (type single-float dt))
   (when (and (npc-alive npc) player)
     (let* ((intent (npc-intent npc))
            (state (if (npc-should-flee-p npc)
@@ -174,11 +192,12 @@
                       (npc-behavior-state npc)))
            (attack-range (npc-attack-range npc world))
            (attack-range-sq (* attack-range attack-range))
-           (dx 0.0)
-           (dy 0.0)
-           (face-dx 0.0)
-           (face-dy 0.0)
+           (dx 0.0f0)
+           (dy 0.0f0)
+           (face-dx 0.0f0)
+           (face-dy 0.0f0)
            (attack-request nil))
+      (declare (type single-float attack-range attack-range-sq dx dy face-dx face-dy))
       (let* ((home-radius (npc-home-radius npc world))
              (home-dx (- (npc-home-x npc) (npc-x npc)))
              (home-dy (- (npc-home-y npc) (npc-y npc)))
@@ -226,17 +245,22 @@
         (setf (intent-attack intent) t)))))
 
 (defun update-npc-movement (npc world dt &optional zone-state)
-  ;; Move NPC based on intent and keep it near its home radius.
-  ;; When ZONE-STATE is provided, use per-zone collision bounds and wall-map.
+  "Move NPC based on intent and keep it near its home radius.
+   When ZONE-STATE is provided, use per-zone collision bounds and wall-map."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type world world)
+           (type single-float dt))
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
            (state (npc-behavior-state npc))
-           (speed (npc-move-speed npc))
-           (flee-mult (npc-flee-speed-mult npc))
+           (speed (float (npc-move-speed npc) 1.0f0))
+           (flee-mult (float (npc-flee-speed-mult npc) 1.0f0))
            (dx (intent-move-dx intent))
            (dy (intent-move-dy intent))
            (face-dx (intent-face-dx intent))
            (face-dy (intent-face-dy intent)))
+      (declare (type single-float speed flee-mult dx dy face-dx face-dy))
       (when (eq state :flee)
         (setf speed (* speed (max 1.0 flee-mult))))
       (when (or (not (zerop face-dx))

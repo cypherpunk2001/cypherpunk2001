@@ -407,7 +407,11 @@
             (interpolation-buffer-head buffer) 0))))
 
 (defun update-sim (game dt &optional (allow-player-control t))
-  ;; Run one fixed-tick simulation step. Returns true on zone transition.
+  "Run one fixed-tick simulation step. Returns true on zone transition.
+   Task 1.3/1.4: Type and optimize declarations for hot tick function."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type game game)
+           (type single-float dt))
   (reset-gc-stats)  ; Start GC tracking for this tick (Task 6.2)
   (with-timing (:update-sim)
     (let* ((player (game-player game))
@@ -484,10 +488,14 @@
                   (start-player-attack current-player current-intent)))
       (when (and player (or *verbose-logs* *verbose-coordinates*))
         (log-player-position player world))
-      ;; Update animations and hit effects in single pass for cache locality (Task 5.1)
-      (loop :for entity :across entities
-            :do (update-entity-animation entity dt)
-                (combatant-update-hit-effect entity dt))
+      ;; Update animations and hit effects - split by type to avoid CLOS dispatch (Task 1.5)
+      ;; Players and NPCs processed separately for direct function calls
+      (loop :for player :across players
+            :do (update-player-animation player dt)
+                (update-player-hit-effect player dt))
+      (loop :for npc :across npcs
+            :do (update-npc-animation npc dt)
+                (update-npc-hit-effect npc dt))
       ;; Per-zone melee combat and NPC simulation
       ;; For each occupied zone, run combat and NPC AI with that zone's players
       (let ((zone-ids (occupied-zone-ids players)))

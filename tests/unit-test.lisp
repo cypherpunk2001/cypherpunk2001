@@ -3789,7 +3789,8 @@ hello
       ;; Verify v2 field (lifetime-xp) added
       (assert-equal 0 (getf migrated :lifetime-xp) "lifetime-xp not added by v2 migration")
       ;; Verify v3 fields (playtime, created-at) added
-      (assert-equal 0 (getf migrated :playtime) "playtime not added by v3 migration")
+      ;; Note: playtime is 0.0 (single-float) for type consistency with player-playtime slot
+      (assert-equal 0.0 (getf migrated :playtime) "playtime not added by v3 migration")
       (assert-true (getf migrated :created-at) "created-at not added by v3 migration")
       ;; Verify v4 field (deaths) added
       (assert-equal 0 (getf migrated :deaths) "deaths not added by v4 migration")
@@ -4451,10 +4452,9 @@ hello
               (db-load-player-validated player-id)
             (assert-nil player "Invalid data should not load")
             (assert-nil zone-id "Zone-id should be NIL for invalid data"))
-          ;; Verify unvalidated load still works (for comparison)
-          (let ((player (db-load-player player-id)))
-            ;; This may succeed or produce garbage - the point is validated load rejected it
-            (declare (ignore player)))
+          ;; Note: We no longer test unvalidated load here because typed struct slots
+          ;; will throw type errors for invalid data (e.g., string in single-float slot).
+          ;; This is the correct behavior - the validated path catches it first.
           t)
       ;; Restore global state
       (setf *storage* old-storage))))
@@ -6514,7 +6514,7 @@ hello
   ;; Create minimal world and player to test pickup-tile-in-range-p
   (let* ((tile-size 64.0)  ; typical tile-dest-size
          (world (mmorpg::%make-world))
-         (player (mmorpg::make-player :id 1)))
+         (player (mmorpg::make-player 160.0 224.0 :id 1)))  ; Start at test position
     ;; Set world tile size
     (setf (mmorpg::world-tile-dest-size world) tile-size)
 
@@ -6841,9 +6841,9 @@ hello
                    (if (evenp i)
                        (update-object-respawns my-world 0.1)
                        ;; Attempt pickup at various tiles
-                       (let ((player (make-player :id (+ 2000 my-t-idx))))
-                         (setf (player-x player) (* 64.0 (+ 5 (mod i 3)))
-                               (player-y player) (* 64.0 (+ 5 (mod i 3))))
+                       (let ((player (make-player (* 64.0 (+ 5 (mod i 3)))
+                                                           (* 64.0 (+ 5 (mod i 3)))
+                                                           :id (+ 2000 my-t-idx))))
                          (pickup-object-at-tile player my-world
                                                 (+ 5 (mod i 3))
                                                 (+ 5 (mod i 3))

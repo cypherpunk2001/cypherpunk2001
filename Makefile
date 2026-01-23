@@ -1,8 +1,10 @@
-.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests profile
+.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests profile server-prod
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 STRESS_CLIENTS ?= 10
 STRESS_DURATION ?= 60
+# Build environment: dev (default) or prod
+MMORPG_ENV ?= dev
 
 tests: checkparens ci smoke test-unit checkdocs
 	@echo "All tests passed!"
@@ -17,13 +19,16 @@ smoke:
 	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp
 
 server:
-	sbcl --script scripts/server.lisp
+	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/server.lisp
+
+server-prod:
+	MMORPG_ENV=prod sbcl --script scripts/server.lisp
 
 client:
-	sbcl --script scripts/client.lisp
+	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/client.lisp
 
 local:
-	sbcl --script scripts/local.lisp
+	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/local.lisp
 
 checkparens:
 	./scripts/checkparens.sh

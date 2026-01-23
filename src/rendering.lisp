@@ -22,11 +22,15 @@
         (raylib:rectangle-height rect) height)
   rect)
 
+;;; Viewport and Distance Check Functions
+;;; Type-specific versions avoid CLOS dispatch in hot render loops (Task 1.5)
+
 (defun entity-in-viewport-p (entity camera-x camera-y zoom margin-x margin-y)
   "Return true if ENTITY is within the viewport bounds plus margin.
    CAMERA-X, CAMERA-Y: center of the camera view in world coordinates.
    ZOOM: camera zoom factor.
-   MARGIN-X, MARGIN-Y: padding to add to viewport bounds (sprite half-sizes)."
+   MARGIN-X, MARGIN-Y: padding to add to viewport bounds (sprite half-sizes).
+   Note: Uses generic combatant-position - prefer type-specific versions in hot loops."
   (let* ((half-view-width (/ (current-screen-width) (* 2.0 zoom)))
          (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
          (view-left (- camera-x half-view-width margin-x))
@@ -39,9 +43,52 @@
            (>= ey view-top)
            (<= ey view-bottom)))))
 
+(defun npc-in-viewport-p (npc camera-x camera-y zoom margin-x margin-y)
+  "Return true if NPC is within the viewport bounds plus margin.
+   Non-generic version for hot render loops (Task 1.5 CLOS removal)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc)
+           (type single-float camera-x camera-y zoom margin-x margin-y))
+  (let* ((half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
+         (view-left (- camera-x half-view-width margin-x))
+         (view-right (+ camera-x half-view-width margin-x))
+         (view-top (- camera-y half-view-height margin-y))
+         (view-bottom (+ camera-y half-view-height margin-y))
+         (ex (npc-x npc))
+         (ey (npc-y npc)))
+    (declare (type single-float half-view-width half-view-height
+                   view-left view-right view-top view-bottom ex ey))
+    (and (>= ex view-left)
+         (<= ex view-right)
+         (>= ey view-top)
+         (<= ey view-bottom))))
+
+(defun player-in-viewport-p (player camera-x camera-y zoom margin-x margin-y)
+  "Return true if PLAYER is within the viewport bounds plus margin.
+   Non-generic version for hot render loops (Task 1.5 CLOS removal)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type single-float camera-x camera-y zoom margin-x margin-y))
+  (let* ((half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
+         (view-left (- camera-x half-view-width margin-x))
+         (view-right (+ camera-x half-view-width margin-x))
+         (view-top (- camera-y half-view-height margin-y))
+         (view-bottom (+ camera-y half-view-height margin-y))
+         (ex (player-x player))
+         (ey (player-y player)))
+    (declare (type single-float half-view-width half-view-height
+                   view-left view-right view-top view-bottom ex ey))
+    (and (>= ex view-left)
+         (<= ex view-right)
+         (>= ey view-top)
+         (<= ey view-bottom))))
+
 (defun entity-in-render-distance-p (entity player)
   "Return T if entity is within render distance, or if distance check disabled.
-   Uses *entity-render-max-distance* (nil = unlimited, default)."
+   Uses *entity-render-max-distance* (nil = unlimited, default).
+   Note: Uses generic combatant-position - prefer type-specific versions in hot loops."
   (or (null *entity-render-max-distance*)
       (null player)
       (multiple-value-bind (ex ey) (combatant-position entity)
@@ -49,6 +96,19 @@
               (dy (- ey (player-y player))))
           (<= (+ (* dx dx) (* dy dy))
               (* *entity-render-max-distance* *entity-render-max-distance*))))))
+
+(defun npc-in-render-distance-p (npc player)
+  "Return T if NPC is within render distance, or if distance check disabled.
+   Non-generic version for hot render loops (Task 1.5 CLOS removal)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type npc npc))
+  (or (null *entity-render-max-distance*)
+      (null player)
+      (let ((dx (- (npc-x npc) (player-x player)))
+            (dy (- (npc-y npc) (player-y player))))
+        (declare (type single-float dx dy))
+        (<= (+ (* dx dx) (* dy dy))
+            (* *entity-render-max-distance* *entity-render-max-distance*)))))
 
 (defun draw-entities-with-spatial-culling (game player camera-x camera-y zoom
                                             margin-x margin-y assets render)
@@ -67,10 +127,12 @@
          (zone-state (and zone-id (get-zone-state zone-id)))
          (npcs (if zone-state (zone-state-npcs zone-state) (game-npcs game))))
     ;; Draw NPCs first (so players render on top, preserving prior draw order)
+    ;; Draw NPCs - use direct draw-npc call and type-specific viewport checks
+    ;; to avoid CLOS dispatch (Task 1.5)
     (let ((npc-grid (and zone-state (zone-state-npc-grid zone-state))))
       (if npc-grid
           ;; Use spatial query for NPCs - only iterate cells in viewport
-          ;; Still apply entity-in-viewport-p since cell boundaries may include
+          ;; Still apply npc-in-viewport-p since cell boundaries may include
           ;; NPCs outside the actual viewport
           (let ((candidate-ids (spatial-grid-query-rect npc-grid
                                                          view-left view-top
@@ -78,21 +140,22 @@
             (dolist (npc-id candidate-ids)
               (let ((npc (find-npc-by-id-fast zone-state npc-id)))
                 (when (and npc
-                           (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
-                           (entity-in-render-distance-p npc player))
-                  (draw-entity npc assets render)))))
+                           (npc-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                           (npc-in-render-distance-p npc player))
+                  (draw-npc npc assets render)))))
           ;; Fallback: iterate all NPCs with viewport check
           (when npcs
             (loop :for npc :across npcs
-                  :when (and (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
-                             (entity-in-render-distance-p npc player))
-                  :do (draw-entity npc assets render)))))
+                  :when (and (npc-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                             (npc-in-render-distance-p npc player))
+                  :do (draw-npc npc assets render)))))
     ;; Draw players last (so they render on top of NPCs)
+    ;; Direct draw-player call and type-specific viewport check to avoid CLOS dispatch (Task 1.5)
     ;; Note: distance filter not applied to players (always render other players in view)
     (when players
       (loop :for p :across players
-            :when (entity-in-viewport-p p camera-x camera-y zoom margin-x margin-y)
-            :do (draw-entity p assets render)))))
+            :when (player-in-viewport-p p camera-x camera-y zoom margin-x margin-y)
+            :do (draw-player p assets render)))))
 
 (defun set-tile-source-rect (rect tile-index tile-size-f &optional (columns *tileset-columns*))
   ;; Set the atlas source rectangle for a given tile index.
@@ -1458,8 +1521,9 @@
                                  *health-bar-border-color*)))
 
 (defun draw-npc (npc assets render)
-  ;; Render the NPC sprite at its world position.
-  (let ((alive (combatant-alive-p npc)))
+  "Render the NPC sprite at its world position.
+   Uses direct struct accessors instead of CLOS (Task 1.5)."
+  (let ((alive (npc-alive npc)))
     (when alive
       (let* ((direction (npc-facing npc))
              (texture (npc-texture-for npc assets direction))
@@ -1480,8 +1544,8 @@
                                  (render-origin render)
                                  0.0
                                  raylib:+white+)
-        (multiple-value-bind (hp max-hp)
-            (combatant-health npc)
+        (let ((hp (npc-hits-left npc))
+              (max-hp (npc-max-hp npc)))
           (draw-health-bar (npc-x npc) (npc-y npc) hp max-hp assets)
           (when *debug-npc-logs*
             (let* ((archetype (npc-archetype npc))
@@ -1561,8 +1625,8 @@
                              (render-origin render)
                              0.0
                              raylib:+white+)
-    (multiple-value-bind (hp max-hp)
-        (combatant-health player)
+    (let ((hp (player-hp player))
+          (max-hp (player-max-hp player)))
       (draw-health-bar (player-x player) (player-y player) hp max-hp assets))
     (when (player-hit-active player)
       (draw-hit-effect (player-x player)

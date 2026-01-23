@@ -2,6 +2,24 @@
 (in-package #:mmorpg)
 
 ;;;; ========================================================================
+;;;; ENVIRONMENT-DRIVEN OPTIMIZATION POLICY
+;;;; Set MMORPG_ENV=prod for production builds, dev (default) for development.
+;;;; This MUST come before any other definitions to affect all compilation.
+;;;; ========================================================================
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defvar *mmorpg-environment*
+    (or (uiop:getenv "MMORPG_ENV") "dev")
+    "Build environment: 'dev' for development (safe, debuggable) or 'prod' for production (fast).")
+
+  (if (string= *mmorpg-environment* "prod")
+      ;; Production: maximize speed, maintain basic safety
+      ;; Never use global (safety 0) - only localize in proven hot functions
+      (declaim (optimize (speed 3) (safety 1) (debug 0) (compilation-speed 0)))
+      ;; Development: balance speed with debugging, maximize correctness
+      (declaim (optimize (speed 2) (safety 2) (debug 2) (compilation-speed 2)))))
+
+;;;; ========================================================================
 ;;;; SHARED OPTIONS - Restart Required
 ;;;; Used by both client and server. Restart required for changes.
 ;;;; ========================================================================

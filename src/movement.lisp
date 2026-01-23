@@ -476,52 +476,68 @@
                       (npc-wander-y npc) ny)))))
 
 (defun blocked-at-p (world x y half-w half-h tile-size)
-  ;; Test collider bounds against blocked tiles in the world map.
-  (let* ((left (- x half-w))
-         (right (+ x half-w))
-         (top (- y half-h))
-         (bottom (+ y half-h))
-         (right-edge (- right *collision-edge-epsilon*))
-         (bottom-edge (- bottom *collision-edge-epsilon*))
-         (tx1 (floor left tile-size))
-         (tx2 (floor right-edge tile-size))
-         (ty1 (floor top tile-size))
-         (ty2 (floor bottom-edge tile-size)))
-    (loop :for ty :from ty1 :to ty2
-          :thereis (loop :for tx :from tx1 :to tx2
+  "Test collider bounds against blocked tiles in the world map."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type world world)
+           (type single-float x y half-w half-h tile-size))
+  (let* ((left (the single-float (- x half-w)))
+         (right (the single-float (+ x half-w)))
+         (top (the single-float (- y half-h)))
+         (bottom (the single-float (+ y half-h)))
+         (right-edge (the single-float (- right *collision-edge-epsilon*)))
+         (bottom-edge (the single-float (- bottom *collision-edge-epsilon*)))
+         (tx1 (the fixnum (floor left tile-size)))
+         (tx2 (the fixnum (floor right-edge tile-size)))
+         (ty1 (the fixnum (floor top tile-size)))
+         (ty2 (the fixnum (floor bottom-edge tile-size))))
+    (declare (type single-float left right top bottom right-edge bottom-edge)
+             (type fixnum tx1 tx2 ty1 ty2))
+    (loop :for ty fixnum :from ty1 :to ty2
+          :thereis (loop :for tx fixnum :from tx1 :to tx2
                          :thereis (world-blocked-tile-p world tx ty)))))
 
 (defun blocked-at-p-with-map (wall-map x y half-w half-h tile-size)
   "Test collider bounds against blocked tiles using WALL-MAP (zero-origin).
    Factored from blocked-at-p to support per-zone collision checking."
-  (let* ((left (- x half-w))
-         (right (+ x half-w))
-         (top (- y half-h))
-         (bottom (+ y half-h))
-         (right-edge (- right *collision-edge-epsilon*))
-         (bottom-edge (- bottom *collision-edge-epsilon*))
-         (tx1 (floor left tile-size))
-         (tx2 (floor right-edge tile-size))
-         (ty1 (floor top tile-size))
-         (ty2 (floor bottom-edge tile-size)))
-    (loop :for ty :from ty1 :to ty2
-          :thereis (loop :for tx :from tx1 :to tx2
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null array) wall-map)
+           (type single-float x y half-w half-h tile-size))
+  (let* ((left (the single-float (- x half-w)))
+         (right (the single-float (+ x half-w)))
+         (top (the single-float (- y half-h)))
+         (bottom (the single-float (+ y half-h)))
+         (right-edge (the single-float (- right *collision-edge-epsilon*)))
+         (bottom-edge (the single-float (- bottom *collision-edge-epsilon*)))
+         (tx1 (the fixnum (floor left tile-size)))
+         (tx2 (the fixnum (floor right-edge tile-size)))
+         (ty1 (the fixnum (floor top tile-size)))
+         (ty2 (the fixnum (floor bottom-edge tile-size))))
+    (declare (type single-float left right top bottom right-edge bottom-edge)
+             (type fixnum tx1 tx2 ty1 ty2))
+    (loop :for ty fixnum :from ty1 :to ty2
+          :thereis (loop :for tx fixnum :from tx1 :to tx2
                          :thereis (wall-blocked-p-zero-origin wall-map tx ty)))))
 
 (defun attempt-move (world x y dx dy step half-w half-h tile-size)
-  ;; Resolve movement per axis and cancel movement when blocked.
+  "Resolve movement per axis and cancel movement when blocked."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type world world)
+           (type single-float x y dx dy step half-w half-h tile-size))
   (let ((nx x)
         (ny y)
         (out-dx 0.0)
         (out-dy 0.0))
+    (declare (type single-float nx ny out-dx out-dy))
     (when (not (zerop dx))
-      (let ((try-x (+ x (* dx step))))
+      (let ((try-x (the single-float (+ x (* dx step)))))
+        (declare (type single-float try-x))
         (if (blocked-at-p world try-x y half-w half-h tile-size)
             (setf out-dx 0.0)
             (setf nx try-x
                   out-dx dx))))
     (when (not (zerop dy))
-      (let ((try-y (+ ny (* dy step))))
+      (let ((try-y (the single-float (+ ny (* dy step)))))
+        (declare (type single-float try-y))
         (if (blocked-at-p world nx try-y half-w half-h tile-size)
             (setf out-dy 0.0)
             (setf ny try-y
@@ -531,18 +547,24 @@
 (defun attempt-move-with-map (wall-map x y dx dy step half-w half-h tile-size)
   "Resolve movement per axis using WALL-MAP for collision.
    Used for per-zone collision checking where global world map isn't appropriate."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null array) wall-map)
+           (type single-float x y dx dy step half-w half-h tile-size))
   (let ((nx x)
         (ny y)
         (out-dx 0.0)
         (out-dy 0.0))
+    (declare (type single-float nx ny out-dx out-dy))
     (when (not (zerop dx))
-      (let ((try-x (+ x (* dx step))))
+      (let ((try-x (the single-float (+ x (* dx step)))))
+        (declare (type single-float try-x))
         (if (blocked-at-p-with-map wall-map try-x y half-w half-h tile-size)
             (setf out-dx 0.0)
             (setf nx try-x
                   out-dx dx))))
     (when (not (zerop dy))
-      (let ((try-y (+ ny (* dy step))))
+      (let ((try-y (the single-float (+ ny (* dy step)))))
+        (declare (type single-float try-y))
         (if (blocked-at-p-with-map wall-map nx try-y half-w half-h tile-size)
             (setf out-dy 0.0)
             (setf ny try-y
@@ -555,8 +577,11 @@
     (values half half)))
 
 (defun update-running-state (player dt moving toggle-run)
-  ;; Update stamina and return the current speed multiplier.
+  "Update stamina and return the current speed multiplier."
+  (declare (type player player)
+           (type single-float dt))
   (let ((old-stamina (player-run-stamina player)))
+    (declare (type single-float old-stamina))
     (when toggle-run
     (if (> (player-run-stamina player) 0.0)
         (setf (player-running player) (not (player-running player)))
@@ -578,8 +603,13 @@
         1.0)))
 
 (defun update-player-position (player intent world speed-mult dt)
-  ;; Move the player with collision and target logic.
-  ;; Uses per-zone collision when available, falls back to global world collision.
+  "Move the player with collision and target logic.
+   Uses per-zone collision when available, falls back to global world collision."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type player player)
+           (type intent intent)
+           (type world world)
+           (type single-float speed-mult dt))
   (let* ((x (player-x player))
          (y (player-y player))
          (input-dx (intent-move-dx intent))
@@ -592,6 +622,7 @@
          (half-w (world-collision-half-width world))
          (half-h (world-collision-half-height world))
          (tile-size (world-tile-dest-size world)))
+    (declare (type single-float x y input-dx input-dy dx dy half-w half-h tile-size))
     ;; Define move helper that uses per-zone or global collision
     (flet ((do-move (from-x from-y dir-x dir-y step)
              (if zone-wall-map

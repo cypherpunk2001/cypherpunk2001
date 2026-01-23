@@ -3,78 +3,149 @@
 
 (defstruct (player (:constructor %make-player))
   ;; Player state used by update/draw loops.
-  id x y dx dy zone-id intent stats inventory equipment
-  attack-target-id follow-target-id
-  pickup-target-id pickup-target-tx pickup-target-ty pickup-target-active
-  click-marker-x click-marker-y click-marker-timer click-marker-kind click-marker-target-id
-  anim-state facing
-  facing-sign class hp lifetime-xp playtime created-at
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (id 0 :type fixnum)
+  (x 0.0 :type single-float)
+  (y 0.0 :type single-float)
+  (dx 0.0 :type single-float)
+  (dy 0.0 :type single-float)
+  (zone-id nil :type (or null keyword))
+  (intent nil :type (or null intent))
+  (stats nil :type (or null stat-block))
+  (inventory nil :type (or null inventory))
+  (equipment nil :type (or null equipment))
+  (attack-target-id 0 :type fixnum)
+  (follow-target-id 0 :type fixnum)
+  (pickup-target-id nil :type (or null symbol))
+  (pickup-target-tx 0 :type fixnum)
+  (pickup-target-ty 0 :type fixnum)
+  (pickup-target-active nil :type boolean)
+  (click-marker-x 0.0 :type single-float)
+  (click-marker-y 0.0 :type single-float)
+  (click-marker-timer 0.0 :type single-float)
+  (click-marker-kind nil :type (or null keyword))
+  (click-marker-target-id 0 :type fixnum)
+  (anim-state :idle :type keyword)
+  (facing :down :type keyword)
+  (facing-sign 1.0 :type single-float)
+  (class nil :type (or null character-class))
+  (hp 0 :type fixnum)
+  (lifetime-xp 0 :type fixnum)
+  (playtime 0.0 :type single-float)
+  (created-at 0 :type fixnum)
   ;; Deaths counter (Phase 4 - leaderboards)
-  (deaths 0)
-  frame-index frame-timer
-  attacking attack-timer attack-hit
-  hit-active hit-timer hit-frame hit-facing hit-facing-sign
-  running run-stamina
-  auto-right auto-left auto-down auto-up
-  mouse-hold-timer
-  inventory-lines inventory-count inventory-dirty
-  hud-stats-lines hud-stats-count hud-stats-dirty
-  last-sequence
+  (deaths 0 :type fixnum)
+  (frame-index 0 :type fixnum)
+  (frame-timer 0.0 :type single-float)
+  (attacking nil :type boolean)
+  (attack-timer 0.0 :type single-float)
+  (attack-hit nil :type boolean)
+  (hit-active nil :type boolean)
+  (hit-timer 0.0 :type single-float)
+  (hit-frame 0 :type fixnum)
+  (hit-facing :down :type keyword)
+  (hit-facing-sign 1.0 :type single-float)
+  (running nil :type boolean)
+  (run-stamina 0.0 :type single-float)
+  (auto-right nil :type boolean)
+  (auto-left nil :type boolean)
+  (auto-down nil :type boolean)
+  (auto-up nil :type boolean)
+  (mouse-hold-timer 0.0 :type single-float)
+  (inventory-lines nil :type (or null simple-vector))
+  (inventory-count 0 :type fixnum)
+  (inventory-dirty t :type boolean)
+  (hud-stats-lines nil :type (or null simple-vector))
+  (hud-stats-count 0 :type fixnum)
+  (hud-stats-dirty t :type boolean)
+  (last-sequence 0 :type fixnum)
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
-  snapshot-dirty
+  (snapshot-dirty t :type boolean)
   ;; Spatial grid cell tracking (nil if not in a grid)
-  grid-cell-x grid-cell-y)
+  (grid-cell-x nil :type (or null fixnum))
+  (grid-cell-y nil :type (or null fixnum)))
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
-  id x y intent stats
-  anim-state facing
-  archetype behavior-state provoked
-  home-x home-y
-  wander-x wander-y wander-timer
-  attack-timer
-  frame-index frame-timer
-  hits-left alive respawn-timer
-  hit-active hit-timer hit-frame hit-facing hit-facing-sign
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (id 0 :type fixnum)
+  (x 0.0 :type single-float)
+  (y 0.0 :type single-float)
+  (intent nil :type (or null intent))
+  (stats nil :type (or null stat-block))
+  (anim-state :idle :type keyword)
+  (facing :down :type keyword)
+  (archetype nil :type (or null npc-archetype))
+  (behavior-state :idle :type keyword)
+  (provoked nil :type boolean)
+  (home-x 0.0 :type single-float)
+  (home-y 0.0 :type single-float)
+  (wander-x 0.0 :type single-float)
+  (wander-y 0.0 :type single-float)
+  (wander-timer 0.0 :type single-float)
+  (attack-timer 0.0 :type single-float)
+  (frame-index 0 :type fixnum)
+  (frame-timer 0.0 :type single-float)
+  (hits-left 0 :type fixnum)
+  (alive t :type boolean)
+  (respawn-timer 0.0 :type single-float)
+  (hit-active nil :type boolean)
+  (hit-timer 0.0 :type single-float)
+  (hit-frame 0 :type fixnum)
+  (hit-facing :down :type keyword)
+  (hit-facing-sign 1.0 :type single-float)
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
-  snapshot-dirty
+  (snapshot-dirty t :type boolean)
   ;; Spatial grid cell tracking (nil if not in a grid)
-  grid-cell-x grid-cell-y)
+  (grid-cell-x nil :type (or null fixnum))
+  (grid-cell-y nil :type (or null fixnum)))
 
 (defstruct zone-state
   "State for a single zone: zone data, NPCs, and derived collision data.
-   Used by *zone-states* cache to support multiple simultaneous zones."
-  (zone-id nil :type (or null symbol))
-  (zone nil)           ; Zone struct (tiles, collision, objects, spawns)
-  (npcs (vector))      ; Vector of NPCs in this zone
-  (wall-map nil)       ; 2D array for collision detection
-  (objects nil)        ; Respawning objects list
+   Used by *zone-states* cache to support multiple simultaneous zones.
+   Type declarations for SBCL optimization (Phase 1 perf work)."
+  (zone-id nil :type (or null keyword))
+  (zone nil :type (or null zone))           ; Zone struct (tiles, collision, objects, spawns)
+  (npcs (vector) :type vector)              ; Vector of NPCs in this zone
+  (wall-map nil :type (or null array))      ; 2D array for collision detection
+  (objects nil :type list)                  ; Respawning objects list
   ;; Spatial grids for proximity queries (per-zone, not global)
-  (player-grid nil)    ; Spatial grid for players in this zone
-  (npc-grid nil)       ; Spatial grid for NPCs in this zone
+  (player-grid nil :type (or null spatial-grid))  ; Spatial grid for players in this zone
+  (npc-grid nil :type (or null spatial-grid))     ; Spatial grid for NPCs in this zone
   ;; NPC index map for O(1) lookup by ID (npc-id -> array index)
-  (npc-index-map nil)
+  (npc-index-map nil :type (or null hash-table))
   ;; Cached player array for O(zone-players) serialization (Task 4.1)
   ;; Maintained by add/remove-player-zone-cache and zone transitions
-  (zone-players (make-array 0 :adjustable t :fill-pointer 0)))
+  (zone-players (make-array 0 :adjustable t :fill-pointer 0) :type vector))
 
 (defstruct (skill (:constructor make-skill (&key (level 1) (xp 0))))
   ;; Skill state tracking level and xp.
-  level xp)
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (level 1 :type fixnum)
+  (xp 0 :type fixnum))
 
 (defstruct (stat-modifiers (:constructor make-stat-modifiers
                               (&key (attack 0) (strength 0) (defense 0) (hitpoints 0))))
   ;; Additive stat bonuses from equipment or buffs.
-  attack strength defense hitpoints)
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (attack 0 :type fixnum)
+  (strength 0 :type fixnum)
+  (defense 0 :type fixnum)
+  (hitpoints 0 :type fixnum))
 
 (defstruct (stat-block (:constructor make-stat-block))
   ;; Combat stats and training mode for a combatant.
-  attack strength defense hitpoints training-mode modifiers)
+  ;; Skills are typed via skill struct; training-mode is keyword or nil
+  attack strength defense hitpoints
+  (training-mode nil :type (or null keyword))
+  modifiers)
 
 (defstruct (inventory-slot (:constructor make-inventory-slot
                               (&key item-id (count 0))))
   ;; Single inventory slot holding stackable items.
-  item-id count)
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (item-id nil :type (or null keyword))
+  (count 0 :type fixnum))
 
 (defstruct (inventory (:constructor %make-inventory))
   ;; Inventory slots for a player.
@@ -93,13 +164,26 @@
   persistent)
 
 (defstruct (world (:constructor %make-world))
-  ;; World state including tiles, collision, and derived bounds.
-  tile-size-f tile-dest-size floor-index zone zone-label world-graph
-  zone-preview-cache
-  minimap-spawns minimap-collisions
-  wall-map wall-map-width wall-map-height
-  collision-half-width collision-half-height
-  wall-min-x wall-max-x wall-min-y wall-max-y)
+  "World state including tiles, collision, and derived bounds.
+   Type declarations for SBCL optimization (Phase 1 perf work)."
+  (tile-size-f 0.0 :type single-float)
+  (tile-dest-size 0.0 :type single-float)
+  (floor-index 0 :type fixnum)
+  (zone nil :type (or null zone))
+  (zone-label nil :type (or null string))
+  (world-graph nil :type (or null world-graph))
+  (zone-preview-cache nil :type (or null hash-table))
+  (minimap-spawns nil :type list)
+  (minimap-collisions nil :type (or null vector))
+  (wall-map nil :type (or null array))
+  (wall-map-width 0 :type fixnum)
+  (wall-map-height 0 :type fixnum)
+  (collision-half-width 0.0 :type single-float)
+  (collision-half-height 0.0 :type single-float)
+  (wall-min-x 0.0 :type single-float)
+  (wall-max-x 0.0 :type single-float)
+  (wall-min-y 0.0 :type single-float)
+  (wall-max-y 0.0 :type single-float))
 
 (defstruct (audio (:constructor %make-audio))
   ;; Audio state for music playback and UI labels.
@@ -230,40 +314,44 @@
 
 (defstruct (interpolation-snapshot (:constructor %make-interpolation-snapshot))
   ;; Cached entity positions at a specific timestamp for interpolation.
-  (timestamp 0.0)
-  (entity-positions nil))  ; Hash table: entity-id -> (x y)
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (timestamp 0.0 :type single-float)
+  (entity-positions nil :type (or null hash-table)))  ; Hash table: entity-id -> (x y)
 
 (defstruct (interpolation-buffer (:constructor %make-interpolation-buffer))
   ;; Ring buffer of recent snapshots for smooth entity interpolation.
-  (snapshots nil)    ; Simple-vector of interpolation-snapshot
-  (head 0)           ; Write position (circular)
-  (count 0)          ; Number of valid snapshots
-  (capacity 4)       ; Buffer size
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (snapshots nil :type (or null simple-vector))    ; Simple-vector of interpolation-snapshot
+  (head 0 :type fixnum)           ; Write position (circular)
+  (count 0 :type fixnum)          ; Number of valid snapshots
+  (capacity 4 :type fixnum)       ; Buffer size
   ;; Pool of position tables matching ring buffer capacity (one per snapshot slot).
   ;; This avoids aliasing - each snapshot has its own dedicated position table.
-  (position-pool nil))  ; Simple-vector of hash tables (length = capacity)
+  (position-pool nil :type (or null simple-vector)))  ; Simple-vector of hash tables (length = capacity)
 
 (defstruct (prediction-input (:constructor %make-prediction-input))
   ;; A single input with sequence number for prediction reconciliation.
-  (sequence 0)
-  (timestamp 0.0)
-  (move-dx 0.0)
-  (move-dy 0.0)
-  (target-x 0.0)
-  (target-y 0.0)
-  (target-active nil))
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (sequence 0 :type fixnum)
+  (timestamp 0.0 :type single-float)
+  (move-dx 0.0 :type single-float)
+  (move-dy 0.0 :type single-float)
+  (target-x 0.0 :type single-float)
+  (target-y 0.0 :type single-float)
+  (target-active nil :type boolean))
 
 (defstruct (prediction-state (:constructor %make-prediction-state))
   ;; Client-side prediction state for reconciliation.
-  (inputs nil)              ; Ring buffer of recent inputs
-  (input-head 0)            ; Write position
-  (input-count 0)           ; Number of valid inputs
-  (input-capacity 64)       ; Buffer size
-  (input-sequence 0)        ; Monotonic counter for outgoing inputs
-  (last-acked-sequence 0)   ; Last sequence server acknowledged
-  (predicted-x 0.0)         ; Client's predicted position
-  (predicted-y 0.0)
-  (misprediction-count 0))  ; Debug counter
+  ;; Type declarations for SBCL optimization (Phase 1 perf work)
+  (inputs nil :type (or null simple-vector)) ; Ring buffer of recent inputs
+  (input-head 0 :type fixnum)            ; Write position
+  (input-count 0 :type fixnum)           ; Number of valid inputs
+  (input-capacity 64 :type fixnum)       ; Buffer size
+  (input-sequence 0 :type fixnum)        ; Monotonic counter for outgoing inputs
+  (last-acked-sequence 0 :type fixnum)   ; Last sequence server acknowledged
+  (predicted-x 0.0 :type single-float)   ; Client's predicted position
+  (predicted-y 0.0 :type single-float)
+  (misprediction-count 0 :type fixnum))  ; Debug counter
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
@@ -421,7 +509,7 @@
                   :class class
                   :hp max-hp
                   :lifetime-xp 0
-                  :playtime 0
+                  :playtime 0.0
                   :created-at (get-universal-time)
                   :frame-index 0
                   :frame-timer 0.0

@@ -28,7 +28,9 @@
 
 (defun position-to-cell (x y cell-size)
   "Convert world position to cell coordinates. Returns (values cell-x cell-y)."
-  (values (floor x cell-size) (floor y cell-size)))
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type single-float x y cell-size))
+  (values (the fixnum (floor x cell-size)) (the fixnum (floor y cell-size))))
 
 (defun make-cell-key (cx cy)
   "Create a hash key for cell coordinates."
@@ -38,15 +40,25 @@
 
 (defun spatial-grid-insert (grid id x y)
   "Insert entity ID at position (X, Y). Returns the cell key."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type fixnum id)
+           (type single-float x y))
   (when grid
     (let ((cell-size (spatial-grid-cell-size grid)))
+      (declare (type single-float cell-size))
       (multiple-value-bind (cx cy) (position-to-cell x y cell-size)
+        (declare (type fixnum cx cy))
         (let ((key (make-cell-key cx cy)))
           (push id (gethash key (spatial-grid-cells grid)))
           key)))))
 
 (defun spatial-grid-remove (grid id cx cy)
   "Remove entity ID from cell (CX, CY). Returns T if found and removed."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type fixnum id)
+           (type (or null fixnum) cx cy))
   (when (and grid cx cy)
     (let* ((key (make-cell-key cx cy))
            (cells (spatial-grid-cells grid))
@@ -61,9 +73,16 @@
 (defun spatial-grid-move (grid id old-cx old-cy new-x new-y)
   "Move entity from old cell to new position. Returns (values new-cx new-cy changed-p).
    If OLD-CX/OLD-CY are nil, performs insert only."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type fixnum id)
+           (type (or null fixnum) old-cx old-cy)
+           (type single-float new-x new-y))
   (when grid
     (let ((cell-size (spatial-grid-cell-size grid)))
+      (declare (type single-float cell-size))
       (multiple-value-bind (new-cx new-cy) (position-to-cell new-x new-y cell-size)
+        (declare (type fixnum new-cx new-cy))
         (let ((changed (or (null old-cx)
                            (null old-cy)
                            (/= old-cx new-cx)
@@ -92,12 +111,15 @@
 (defun spatial-grid-query-neighbors (grid cx cy)
   "Get all entity IDs in cell (CX, CY) and its 8 neighbors (9 cells total).
    Returns a fresh list of IDs."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type fixnum cx cy))
   (when grid
     (let ((cells (spatial-grid-cells grid))
           (result nil))
-      (loop :for dx :from -1 :to 1
-            :do (loop :for dy :from -1 :to 1
-                      :for key = (make-cell-key (+ cx dx) (+ cy dy))
+      (loop :for dx fixnum :from -1 :to 1
+            :do (loop :for dy fixnum :from -1 :to 1
+                      :for key = (make-cell-key (the fixnum (+ cx dx)) (the fixnum (+ cy dy)))
                       :for cell-ids = (gethash key cells)
                       :when cell-ids
                       :do (setf result (nconc (copy-list cell-ids) result))))
@@ -107,12 +129,15 @@
   "Get all entity IDs within RADIUS cells of (CX, CY).
    Radius 0 = center cell only, 1 = 3x3, 2 = 5x5, etc.
    Returns a fresh list of IDs."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type fixnum cx cy radius))
   (when grid
     (let ((cells (spatial-grid-cells grid))
           (result nil))
-      (loop :for dx :from (- radius) :to radius
-            :do (loop :for dy :from (- radius) :to radius
-                      :for key = (make-cell-key (+ cx dx) (+ cy dy))
+      (loop :for dx fixnum :from (- radius) :to radius
+            :do (loop :for dy fixnum :from (- radius) :to radius
+                      :for key = (make-cell-key (the fixnum (+ cx dx)) (the fixnum (+ cy dy)))
                       :for cell-ids = (gethash key cells)
                       :when cell-ids
                       :do (setf result (nconc (copy-list cell-ids) result))))
@@ -121,24 +146,33 @@
 (defun spatial-grid-query-position (grid x y)
   "Get all entity IDs in the cell containing position (X, Y) and neighbors.
    Convenience wrapper around spatial-grid-query-neighbors."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type single-float x y))
   (when grid
     (multiple-value-bind (cx cy) (position-to-cell x y (spatial-grid-cell-size grid))
+      (declare (type fixnum cx cy))
       (spatial-grid-query-neighbors grid cx cy))))
 
 (defun spatial-grid-query-rect (grid left top right bottom)
   "Return list of entity IDs within the world-coordinate rectangle.
    Queries all cells overlapping the rectangle bounds.
    Used for viewport culling during rendering."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null spatial-grid) grid)
+           (type single-float left top right bottom))
   (when grid
     (let* ((cell-size (spatial-grid-cell-size grid))
            (cells (spatial-grid-cells grid))
-           (start-cx (floor left cell-size))
-           (end-cx (floor right cell-size))
-           (start-cy (floor top cell-size))
-           (end-cy (floor bottom cell-size))
+           (start-cx (the fixnum (floor left cell-size)))
+           (end-cx (the fixnum (floor right cell-size)))
+           (start-cy (the fixnum (floor top cell-size)))
+           (end-cy (the fixnum (floor bottom cell-size)))
            (result nil))
-      (loop :for cy :from start-cy :to end-cy
-            :do (loop :for cx :from start-cx :to end-cx
+      (declare (type single-float cell-size)
+               (type fixnum start-cx end-cx start-cy end-cy))
+      (loop :for cy fixnum :from start-cy :to end-cy
+            :do (loop :for cx fixnum :from start-cx :to end-cx
                       :for key = (make-cell-key cx cy)
                       :for cell-ids = (gethash key cells)
                       :when cell-ids
@@ -149,7 +183,11 @@
 
 (defun entity-cell-changed-p (old-cx old-cy new-x new-y cell-size)
   "Return T if position (NEW-X, NEW-Y) is in a different cell than (OLD-CX, OLD-CY)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (or null fixnum) old-cx old-cy)
+           (type single-float new-x new-y cell-size))
   (multiple-value-bind (new-cx new-cy) (position-to-cell new-x new-y cell-size)
+    (declare (type fixnum new-cx new-cy))
     (or (null old-cx)
         (null old-cy)
         (/= old-cx new-cx)

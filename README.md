@@ -44,6 +44,17 @@ MMORPG_WORKER_THREADS=4 make server      # Parallel snapshot sending
 MMORPG_WORKER_THREADS=$(nproc) make server   # Use all CPU cores
 ```
 
+### Build Environment
+```shell
+MMORPG_ENV=dev make server    # Development (default): safety checks, debug info
+MMORPG_ENV=prod make server   # Production: max speed, minimal safety
+make server-prod              # Shortcut for production build
+```
+
+The `MMORPG_ENV` variable controls SBCL optimization policy:
+- `dev` (default): `(speed 2) (safety 2) (debug 2)` - Good for development/debugging
+- `prod`: `(speed 3) (safety 1) (debug 0)` - Maximum performance for deployment
+
 ### SLIME (two Emacs sessions)
 
 Server REPL:

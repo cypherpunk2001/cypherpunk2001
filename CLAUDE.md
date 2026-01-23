@@ -183,6 +183,11 @@ MMORPG_VERBOSE_COORDS=1 make server             # Log entity positions (very ver
 MMORPG_WORKER_THREADS=4 make server             # Parallel snapshot sends (default: 1)
 MMORPG_WORKER_THREADS=$(nproc) make server      # Use all CPU cores
 
+# Build environment (optimization level)
+MMORPG_ENV=dev make server                      # Development (default): safety checks, debug info
+MMORPG_ENV=prod make server                     # Production: max speed, minimal safety
+make server-prod                                # Shortcut for production build
+
 # Database backend configuration (Redis is default)
 MMORPG_DB_BACKEND=memory make server            # Use in-memory storage (for tests/dev without Redis)
 MMORPG_REDIS_HOST=127.0.0.1 make server         # Redis host (default: 127.0.0.1)

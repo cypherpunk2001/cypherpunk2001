@@ -17,10 +17,10 @@
 
 (defun migrate-player-v2->v3 (data)
   "v2->v3: Add playtime and created-at fields.
-   playtime defaults to 0 (seconds played).
+   playtime defaults to 0.0 (seconds played, single-float).
    created-at defaults to current time for existing players."
   (unless (getf data :playtime)
-    (setf data (plist-put data :playtime 0)))
+    (setf data (plist-put data :playtime 0.0)))
   (unless (getf data :created-at)
     (setf data (plist-put data :created-at (get-universal-time))))
   data)
