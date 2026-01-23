@@ -397,7 +397,7 @@ Always use `*read-eval* nil` when deserializing data.
 
 ---
 
-# AGENTS.md — SBCL Performance Directives (MMORPG / 60Hz)
+# SBCL Performance Directives (MMORPG / 60Hz)
 
 This section defines how Claude/LLM agents must generate **max-performance SBCL Common Lisp** for MMO tick loops.
 
