@@ -1,3 +1,11 @@
+#############################################################################################
+ABORTED PLAN AFTER PHASE 1 BECAUSE THERE ARE TRADEOFFS AND PHASE 1 WAS THE FIX WE NEEDED.
+tradeoff notes for phase 2-5 if we revisit in teh future:
+Step 2 (pre‑render buffer): pre‑renders extra chunks around the viewport so the draw pass never falls back to per‑tile. This prevents mixed cached/uncached seams, but costs more CPU per frame and a bit more VRAM.
+Step 3 (force point filtering on chunk textures): guarantees no texture blending across chunk edges. It can make chunks look more pixelated even if you prefer smoother filtering.
+Step 4 (integer chunk positions): locks chunk draw positions to exact pixels. It’s a belt‑and‑suspenders fix for subpixel seams, but can slightly reduce subpixel smoothness when panning.
+Step 5 (diagnostics): just logging to prove what’s happening; no gameplay change.
+################################################################################################################################
 # Tile Seam Fix Plan - Final Solution
 
 ## Analysis Comparison
