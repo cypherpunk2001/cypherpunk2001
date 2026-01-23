@@ -46,9 +46,9 @@ The following architectural decisions have been approved for the 2000 concurrent
 **Decision**: Protocol changes acceptable if done incrementally and feature-flagged.
 **Rationale**: Binary snapshots (server + client) with old plist format for auth/control provides big perf wins without destabilizing everything at once.
 
-### 7. Automated Perf Regression Tests: Yes
-**Decision**: Implement lightweight, repeatable headless perf test (fixed sim duration, fixed entity counts, outputs avg tick time + alloc/tick).
-**Rationale**: At 1000-2000 players, performance regressions are as damaging as correctness bugs. Pays for itself quickly. Doesn't need to be complex to be valuable.
+### 7. Automated Perf Regression Tests: Deferred
+**Decision**: Defer until server is decoupled from localhost to a separate LAN machine.
+**Rationale**: Perf testing on localhost is noisy due to resource contention between client and server. Will implement lightweight, repeatable headless perf test once server runs on dedicated hardware.
 
 ---
 
@@ -122,16 +122,20 @@ The following architectural decisions have been approved for the 2000 concurrent
 
 ---
 
-## Phase 0: Baseline and Guardrails
+## Phase 0: Baseline and Guardrails (DEFERRED)
 
 **Priority**: Pre-requisite
 **Source**: CODEX
 **Estimated Benefit**: 0% (measurement enables safe iteration)
 **Risk**: None
+**Status**: DEFERRED until server runs on separate LAN machine (localhost perf testing too noisy)
 
-### Task 0.1: Baseline Profiling and Allocation Capture
+**Note**: The performance optimizations in this plan are well-supported by independent Common Lisp doctoral research on SBCL optimization patterns (type declarations, allocation-free hot loops, CLOS dispatch costs, numeric stability). Baseline measurements will be valuable for validation once proper test infrastructure exists, but the changes themselves are grounded in established research rather than speculative.
+
+### Task 0.1: Baseline Profiling and Allocation Capture (Deferred)
 
 **Purpose**: Establish measurable baselines before any changes.
+**Status**: DEFERRED until server on separate LAN machine.
 
 **Steps**:
 1. Use existing profiling hooks + GC logging
@@ -152,7 +156,7 @@ MMORPG_VERBOSE=1 make server
 
 ---
 
-### Task 0.2: Add Minimal Performance Regression Harness (Required)
+### Task 0.2: Add Minimal Performance Regression Harness (Deferred)
 
 **Purpose**: Enable safe iteration with measurable before/after comparison.
 
@@ -532,86 +536,13 @@ make tests
 - `:test 'equal` hash table
 - Hot call sites: AI target selection (`ai.lisp:12-18`), melee resolution (`combat.lisp:695-704`), render culling (`rendering.lisp:75-78`)
 
-**Step 2.2.1**: Replace cons keys with packed fixnum
+---
 
-```lisp
-(defun pack-cell-key (cx cy)
-  "Pack cell coordinates into a single fixnum key.
-   Supports coordinates up to ~1 million in each dimension."
-  (declare (optimize (speed 3) (safety 0))
-           (type fixnum cx cy))
-  (the fixnum (logior (the fixnum (ash cx 20))
-                      (the fixnum (logand cy #xFFFFF)))))
+#### Primary Implementation: Array-Backed Grid (APPROVED)
 
-(defun unpack-cell-key (key)
-  "Unpack cell key back to (values cx cy)."
-  (declare (optimize (speed 3) (safety 0))
-           (type fixnum key))
-  (values (the fixnum (ash key -20))
-          (the fixnum (logand key #xFFFFF))))
-```
+Array-backed grids sized from zone dimensions. Avoids hash-table entirely for deterministic O(1) access. Zone dimensions are known at load time.
 
-**Step 2.2.2**: Change hash table to use `:test 'eql`
-
-```lisp
-(defstruct spatial-grid
-  (cells (make-hash-table :test 'eql :size 1024) :type hash-table)
-  (cell-size 64 :type fixnum)
-  (width 0 :type fixnum)
-  (height 0 :type fixnum))
-```
-
-**Step 2.2.3**: Replace list-based cell contents with vectors
-
-```lisp
-;; Option A: Fixed-size vectors with fill-pointer per cell
-(defun make-cell-contents ()
-  (make-array 32 :element-type 'fixnum :fill-pointer 0 :adjustable nil))
-
-;; Option B: Pool of scratch vectors for query results (preferred)
-(defparameter *spatial-scratch-vector*
-  (make-array 256 :element-type 'fixnum :fill-pointer 0))
-
-(defparameter *spatial-scratch-vector-2*
-  (make-array 256 :element-type 'fixnum :fill-pointer 0))  ; For nested queries
-```
-
-**Step 2.2.4**: Provide no-cons query iteration
-
-```lisp
-(defun spatial-grid-query-into (grid x y radius result-vector)
-  "Query entities near (x,y) into pre-allocated result-vector.
-   Returns the fill-pointer (count of results).
-   Does not allocate."
-  (declare (optimize (speed 3) (safety 0))
-           (type spatial-grid grid)
-           (type single-float x y radius)
-           (type (simple-array fixnum (*)) result-vector))
-  (setf (fill-pointer result-vector) 0)
-  (let* ((cell-size (spatial-grid-cell-size grid))
-         (cells (spatial-grid-cells grid))
-         (cx (the fixnum (floor x cell-size)))
-         (cy (the fixnum (floor y cell-size)))
-         (cell-radius (the fixnum (ceiling radius cell-size))))
-    (declare (type fixnum cell-size cx cy cell-radius))
-    ;; Iterate neighboring cells
-    (loop for dx fixnum from (- cell-radius) to cell-radius do
-      (loop for dy fixnum from (- cell-radius) to cell-radius do
-        (let* ((key (pack-cell-key (+ cx dx) (+ cy dy)))
-               (cell (gethash key cells)))
-          (when cell
-            ;; Add entities from cell to result-vector
-            (loop for entity-id across cell do
-              (vector-push entity-id result-vector))))))
-    (fill-pointer result-vector)))
-```
-
-**Step 2.2.5**: Update all call sites
-- `src/ai.lisp:12-18` (AI target selection)
-- `src/combat.lisp:695-704` (melee resolution)
-- `src/rendering.lisp:75-78` (render culling)
-
-**Primary Implementation (APPROVED)**: Array-backed grids sized from zone dimensions. This avoids hash-table entirely for deterministic O(1) access. Zone dimensions are known at load time.
+**Step 2.2.1**: Define array-backed grid structure
 
 ```lisp
 (defstruct spatial-grid
@@ -631,7 +562,73 @@ make tests
      :height grid-h)))
 ```
 
-**Fallback**: For very large or sparse zones, use hybrid (array for active zones, hash for sparse). But for 2000 player target, prefer array-backed everywhere.
+**Step 2.2.2**: Provide scratch vectors for query results (no per-query allocation)
+
+```lisp
+(defparameter *spatial-scratch-vector*
+  (make-array 256 :element-type 'fixnum :fill-pointer 0))
+
+(defparameter *spatial-scratch-vector-2*
+  (make-array 256 :element-type 'fixnum :fill-pointer 0))  ; For nested queries
+```
+
+**Step 2.2.3**: Implement no-cons query iteration
+
+```lisp
+(defun spatial-grid-query-into (grid x y radius result-vector)
+  "Query entities near (x,y) into pre-allocated result-vector.
+   Returns the fill-pointer (count of results).
+   Does not allocate."
+  (declare (optimize (speed 3) (safety 0))
+           (type spatial-grid grid)
+           (type single-float x y radius)
+           (type (simple-array fixnum (*)) result-vector))
+  (setf (fill-pointer result-vector) 0)
+  (let* ((cell-size (spatial-grid-cell-size grid))
+         (cells (spatial-grid-cells grid))
+         (cx (the fixnum (floor x cell-size)))
+         (cy (the fixnum (floor y cell-size)))
+         (cell-radius (the fixnum (ceiling radius cell-size))))
+    (declare (type fixnum cell-size cx cy cell-radius))
+    ;; Direct 2D array access - O(1), no hashing
+    (loop for dx fixnum from (- cell-radius) to cell-radius do
+      (loop for dy fixnum from (- cell-radius) to cell-radius do
+        (let* ((nx (+ cx dx))
+               (ny (+ cy dy)))
+          (when (and (>= nx 0) (< nx (spatial-grid-width grid))
+                     (>= ny 0) (< ny (spatial-grid-height grid)))
+            (let ((cell (aref cells nx ny)))
+              (when cell
+                (loop for entity-id across cell do
+                  (vector-push entity-id result-vector))))))))
+    (fill-pointer result-vector)))
+```
+
+**Step 2.2.4**: Update all call sites
+- `src/ai.lisp:12-18` (AI target selection)
+- `src/combat.lisp:695-704` (melee resolution)
+- `src/rendering.lisp:75-78` (render culling)
+
+---
+
+#### Hash-Table Fallback (For Sparse/Unbounded Zones Only)
+
+Only use if zone dimensions are unknown or extremely large/sparse. Not recommended for 2000-player target.
+
+```lisp
+;; Packed fixnum keys avoid cons allocation
+(defun pack-cell-key (cx cy)
+  "Pack cell coordinates into a single fixnum key."
+  (declare (optimize (speed 3) (safety 0))
+           (type fixnum cx cy))
+  (the fixnum (logior (the fixnum (ash cx 20))
+                      (the fixnum (logand cy #xFFFFF)))))
+
+;; Hash-table with :test 'eql (not 'equal) for fixnum keys
+(defstruct spatial-grid-hash
+  (cells (make-hash-table :test 'eql :size 1024) :type hash-table)
+  (cell-size 64 :type fixnum))
+```
 
 **Verification**:
 ```bash
@@ -1287,37 +1284,38 @@ make test-unit      # 4th - All unit tests
 make checkdocs      # 5th - Verify documentation
 ```
 
-Add performance regression measurements before/after each phase.
+Add performance regression measurements before/after each phase (once server on LAN).
 
 ---
 
 ## Suggested Execution Order (If Timeboxed)
 
-### Week 1: Foundation + Critical (Phases 0-1)
-1. Task 0.1: Baseline profiling
-2. Task 1.1: Env-driven optimize policy
-3. Task 1.2: Type declarations (structs)
-4. Task 1.3: Type declarations (hot functions)
-5. Task 1.5: CLOS dispatch removal
+### Week 1: Foundation + Critical (Phase 1)
+*Phase 0 deferred until server on separate LAN machine*
+1. Task 1.1: Env-driven optimize policy
+2. Task 1.2: Type declarations (structs)
+3. Task 1.3: Type declarations (hot functions)
+4. Task 1.5: CLOS dispatch removal
 
 ### Week 2: Highest ROI (Phase 2)
-6. Task 2.1: Hash table pre-sizing
-7. Task 2.2: Spatial grid overhaul (largest task)
+5. Task 2.1: Hash table pre-sizing
+6. Task 2.2: Spatial grid overhaul (largest task)
 
 ### Week 3: Serialization (Phase 3)
-8. Task 3.1: Snapshot serialization fix
-9. Task 3.2: Snapshot rate decoupling
-10. Task 3.3: Host string caching
+7. Task 3.1: Snapshot serialization fix
+8. Task 3.2: Snapshot rate decoupling
+9. Task 3.3: Host string caching
 
 ### Week 4: Cleanup (Phase 4)
-11. Task 4.1: Zone tracking cache
-12. Task 4.2: Chunk cache key packing
-13. Task 4.3: Event ring buffer
-14. Task 4.4: Object pooling
+10. Task 4.1: Zone tracking cache
+11. Task 4.2: Chunk cache key packing
+12. Task 4.3: Event ring buffer
+13. Task 4.4: Object pooling
 
-### Later: Conditional (Phase 5)
-15. Task 5.1: Profile for compute-bound kernels
-16. Tasks 5.2-5.5: As warranted by profiling
+### Later: Conditional (Phase 5 + Phase 0)
+14. Task 5.1: Profile for compute-bound kernels
+15. Tasks 5.2-5.5: As warranted by profiling
+16. Phase 0: Baseline/regression harness (when server on LAN)
 
 ---
 
@@ -1328,7 +1326,7 @@ Add performance regression measurements before/after each phase.
 3. **Profile before SIMD** - Don't optimize non-bottlenecks
 4. **Keep generic functions for non-hot paths** - Maintain flexibility where perf doesn't matter
 5. **Incremental deployment** - Can ship partial improvements
-6. **Baseline before changes** - Phase 0 ensures measurable progress
+6. **Baseline when LAN hardware available** - Phase 0 deferred but will validate progress once server on dedicated machine
 
 ---
 
@@ -1344,7 +1342,7 @@ All design questions have been reviewed and answered. Decisions are captured in 
 | 4 | SIMD priority: Now or defer? | **Deferred** until after Phases 1-4 |
 | 5 | Binary serialization: Full rewrite or incremental? | **Incremental** with feature flag |
 | 6 | Protocol change risk: Acceptable? | **Yes**, if incremental |
-| 7 | Perf regression harness: Worth it? | **Yes**, required |
+| 7 | Perf regression harness: Worth it? | **Deferred** until server on separate LAN machine |
 
 ---
 
