@@ -484,6 +484,24 @@ Agents MUST:
 - inline only tiny hot helpers
 - profile; do not guess
 
+Optimization policy must be environment-driven. In development, compile/load with safe debugging defaults (e.g. (speed 2) (safety 2–3) (debug 2–3)) to maximize correctness, stack traces, bounds/type checks, and fast iteration. In production, compile/load with performance defaults (e.g. (speed 3) (safety 1) (debug 0–1) (compilation-speed 0)), but never use “global (safety 0)” project-wide—production should still catch most accidental corruption. The build system must expose this via a single toggle (e.g. MMORPG_ENV=dev|prod), and that toggle must select a single place where declaim (optimize ...) defaults are applied consistently across the whole build.
+
+Hot functions remain localized and explicit in both modes. Regardless of environment, the 5–20 proven hottest functions may contain a local (declare (optimize (speed 3) (safety 0) (debug 0))) only when correctness is already validated by tests, and only with full type declarations for args/locals/arrays. In dev mode, those functions may optionally stay at (safety 1) unless you’re actively profiling. The agent must not sprinkle optimize randomly—defaults come from the env toggle; exceptions are only inside measured hot loops.
+
+- Default policy
+At file/package top:
+(declaim (optimize (speed 2) (safety 2) (debug 2)))
+- Hot-path policy (only when proven hot + correct)
+Inside the function:
+(declare (optimize (speed 3) (safety 0) (debug 0)))
+Add full type declarations for args + locals + arrays.
+- Don’t global-nuke safety
+Never set (declaim (optimize (safety 0))) project-wide.
+Only localize it.
+- FASL expectation
+Build/test runs should go through make/ASDF so code is compiled.
+Don’t assume .fasl sitting next to .lisp will be used automatically.
+
 ## SIMD / auto-vectorization (compute-bound kernels only)
 SIMD is a deliberate tradeoff: it maximizes arithmetic throughput in compute-bound kernels, but increases code complexity and offers little benefit (or harm) in memory- or branch-bound loops, so it should be applied selectively, not universally.
 SIMD should be “default” only inside isolated numeric kernels (typed arrays, low branching, batch processing), which in your codebase most naturally live in:
