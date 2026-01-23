@@ -536,11 +536,12 @@
 
 ;; Register zone change hook to clear stale render caches on zone transition.
 ;; This keeps game logic (movement.lisp) decoupled from rendering.
-;; Uses clear-all (strict Option A) to ensure editor changes aren't stale.
+;; Phase X1: Changed from clear-all to clear-others to keep destination zone warm.
+;; This prevents forced cache rebuild of the zone we're entering.
 (defun on-zone-change (new-zone-id)
-  "Clear all render caches on zone transition. Cache rebuilds on first draw."
-  (declare (ignore new-zone-id))
-  (clear-all-zone-render-caches "zone-change"))
+  "Clear render caches for zones OTHER than NEW-ZONE-ID on zone transition.
+   Keeps destination zone cache warm to avoid FBO burst on entry."
+  (clear-other-zone-render-caches new-zone-id "zone-change"))
 
 (setf *client-zone-change-hook* #'on-zone-change)
 
