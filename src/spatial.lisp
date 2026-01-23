@@ -125,6 +125,26 @@
     (multiple-value-bind (cx cy) (position-to-cell x y (spatial-grid-cell-size grid))
       (spatial-grid-query-neighbors grid cx cy))))
 
+(defun spatial-grid-query-rect (grid left top right bottom)
+  "Return list of entity IDs within the world-coordinate rectangle.
+   Queries all cells overlapping the rectangle bounds.
+   Used for viewport culling during rendering."
+  (when grid
+    (let* ((cell-size (spatial-grid-cell-size grid))
+           (cells (spatial-grid-cells grid))
+           (start-cx (floor left cell-size))
+           (end-cx (floor right cell-size))
+           (start-cy (floor top cell-size))
+           (end-cy (floor bottom cell-size))
+           (result nil))
+      (loop :for cy :from start-cy :to end-cy
+            :do (loop :for cx :from start-cx :to end-cx
+                      :for key = (make-cell-key cx cy)
+                      :for cell-ids = (gethash key cells)
+                      :when cell-ids
+                      :do (setf result (nconc (copy-list cell-ids) result))))
+      result)))
+
 ;;; Entity Cell Tracking Helpers
 
 (defun entity-cell-changed-p (old-cx old-cy new-x new-y cell-size)

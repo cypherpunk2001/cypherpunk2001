@@ -292,7 +292,9 @@
                 test-toggle-tile-point-filter
                 ;; Preview Zone Cache Tests (Phase 2)
                 test-preview-zone-cache-separation
-                test-clear-other-zone-render-caches)))
+                test-clear-other-zone-render-caches
+                ;; Spatial Grid Query Tests (Phase 3)
+                test-spatial-grid-query-rect)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -8084,3 +8086,50 @@ hello
             () "clear-other: preview2 cache cleared"))
   ;; Clean up
   (clrhash *zone-render-caches*))
+
+(defun test-spatial-grid-query-rect ()
+  "Test spatial-grid-query-rect returns entities within world-coordinate bounds."
+  (let* ((cell-size 128.0)  ; Default *spatial-cell-size*
+         (grid (make-spatial-grid cell-size)))
+    ;; Insert entities at various positions
+    ;; Entity 1 at (64, 64) - in cell (0, 0)
+    (spatial-grid-insert grid 1 64.0 64.0)
+    ;; Entity 2 at (200, 64) - in cell (1, 0)
+    (spatial-grid-insert grid 2 200.0 64.0)
+    ;; Entity 3 at (64, 200) - in cell (0, 1)
+    (spatial-grid-insert grid 3 64.0 200.0)
+    ;; Entity 4 at (300, 300) - in cell (2, 2)
+    (spatial-grid-insert grid 4 300.0 300.0)
+    ;; Entity 5 at (500, 500) - in cell (3, 3) - far away
+    (spatial-grid-insert grid 5 500.0 500.0)
+
+    ;; Query rect covering cells (0,0) and (1,0) - should find entities 1 and 2
+    (let ((result (spatial-grid-query-rect grid 0.0 0.0 256.0 127.0)))
+      (assert (= (length result) 2)
+              () "query-rect: 2 entities in [0,256]x[0,127], got ~a" (length result))
+      (assert (member 1 result) () "query-rect: entity 1 should be in result")
+      (assert (member 2 result) () "query-rect: entity 2 should be in result"))
+
+    ;; Query rect covering just cell (2,2) - should find entity 4
+    ;; Use 383.0 to avoid including cell 3 which starts at 384
+    (let ((result (spatial-grid-query-rect grid 256.0 256.0 383.0 383.0)))
+      (assert (= (length result) 1)
+              () "query-rect: 1 entity in [256,383]x[256,383], got ~a" (length result))
+      (assert (member 4 result) () "query-rect: entity 4 should be in result"))
+
+    ;; Query rect covering all cells (0,0) through (2,2) - should find 1,2,3,4
+    ;; Use 383.0 to avoid including cell 3 which starts at 384
+    (let ((result (spatial-grid-query-rect grid 0.0 0.0 383.0 383.0)))
+      (assert (= (length result) 4)
+              () "query-rect: 4 entities in [0,383]x[0,383], got ~a" (length result))
+      (assert (not (member 5 result)) () "query-rect: entity 5 should NOT be in result"))
+
+    ;; Query empty rect (no cells) - should return nil
+    (let ((result (spatial-grid-query-rect grid 1000.0 1000.0 1100.0 1100.0)))
+      (assert (null result)
+              () "query-rect: no entities in empty area, got ~a" result))
+
+    ;; Query nil grid - should return nil gracefully
+    (let ((result (spatial-grid-query-rect nil 0.0 0.0 100.0 100.0)))
+      (assert (null result)
+              () "query-rect: nil grid should return nil"))))

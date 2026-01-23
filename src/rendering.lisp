@@ -39,6 +39,46 @@
            (>= ey view-top)
            (<= ey view-bottom)))))
 
+(defun draw-entities-with-spatial-culling (game player camera-x camera-y zoom
+                                            margin-x margin-y assets render)
+  "Draw entities using spatial grid for NPC viewport culling.
+   NPCs are drawn first, then players (so players render on top).
+   NPCs use spatial-grid-query-rect when grid is available."
+  (let* ((half-view-w (/ *window-width* (* 2.0 zoom)))
+         (half-view-h (/ *window-height* (* 2.0 zoom)))
+         (view-left (- camera-x half-view-w margin-x))
+         (view-right (+ camera-x half-view-w margin-x))
+         (view-top (- camera-y half-view-h margin-y))
+         (view-bottom (+ camera-y half-view-h margin-y))
+         (players (game-players game))
+         (zone-id (and player (player-zone-id player)))
+         (zone-state (and zone-id (get-zone-state zone-id)))
+         (npcs (if zone-state (zone-state-npcs zone-state) (game-npcs game))))
+    ;; Draw NPCs first (so players render on top, preserving prior draw order)
+    (let ((npc-grid (and zone-state (zone-state-npc-grid zone-state))))
+      (if npc-grid
+          ;; Use spatial query for NPCs - only iterate cells in viewport
+          ;; Still apply entity-in-viewport-p since cell boundaries may include
+          ;; NPCs outside the actual viewport
+          (let ((candidate-ids (spatial-grid-query-rect npc-grid
+                                                         view-left view-top
+                                                         view-right view-bottom)))
+            (dolist (npc-id candidate-ids)
+              (let ((npc (find-npc-by-id-fast zone-state npc-id)))
+                (when (and npc
+                           (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y))
+                  (draw-entity npc assets render)))))
+          ;; Fallback: iterate all NPCs with viewport check
+          (when npcs
+            (loop :for npc :across npcs
+                  :when (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                  :do (draw-entity npc assets render)))))
+    ;; Draw players last (so they render on top of NPCs)
+    (when players
+      (loop :for p :across players
+            :when (entity-in-viewport-p p camera-x camera-y zoom margin-x margin-y)
+            :do (draw-entity p assets render)))))
+
 (defun set-tile-source-rect (rect tile-index tile-size-f &optional (columns *tileset-columns*))
   ;; Set the atlas source rectangle for a given tile index.
   (let* ((cols (max 1 columns))
@@ -1970,7 +2010,6 @@
   (with-timing (:draw-game)
     (let* ((player (game-player game))
          (npcs (game-npcs game))
-         (entities (game-entities game))
          (world (game-world game))
          (audio (game-audio game))
          (ui (game-ui game))
@@ -1993,9 +2032,9 @@
           (raylib:with-mode-2d camera-2d
             (draw-world world render assets camera player npcs ui editor)
             (draw-zone-objects world render assets camera player editor)
-            (loop :for entity :across entities
-                  :when (entity-in-viewport-p entity camera-x camera-y zoom margin-x margin-y)
-                  :do (draw-entity entity assets render))
+            ;; Use spatial culling for entity rendering (Phase 3 optimization)
+            (draw-entities-with-spatial-culling game player camera-x camera-y zoom
+                                                 margin-x margin-y assets render)
             (draw-click-marker player world)
             (draw-editor-world-overlay editor world camera))))
       (draw-hud player ui world)

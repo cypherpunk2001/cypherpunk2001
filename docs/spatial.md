@@ -22,6 +22,7 @@ Key functions
 - `spatial-grid-move` - Update entity position (remove old, insert new).
 - `spatial-grid-query-neighbors` - Get IDs in cell and 8 neighbors (3x3).
 - `spatial-grid-query-radius` - Get IDs within N cells of center.
+- `spatial-grid-query-rect` - Get IDs within world-coordinate rectangle (for viewport culling).
 - `spatial-grid-query-position` - Query neighbors at world position.
 - `position-to-cell` - Convert world coords to cell coords.
 - `entity-cell-changed-p` - Check if position is in different cell.

@@ -44,6 +44,10 @@ Example: draw flow
 Design note
 - Entity rendering uses viewport culling via `entity-in-viewport-p` to skip off-screen
   entities. A margin equal to sprite half-size prevents pop-in at screen edges.
+- **Entity spatial culling** (`draw-entities-with-spatial-culling`): NPCs use the zone's
+  spatial grid for viewport culling via `spatial-grid-query-rect`. This queries only cells
+  overlapping the viewport instead of iterating all NPCs. Players use simple array iteration
+  (player count is typically small). Falls back to linear iteration if no spatial grid.
 - Culling bounds are zoom-aware: `half-view = window-size / (2 * zoom)`. Zooming out
   expands the visible area as expected (area scales as `1/zoom^2`), so more tiles/entities
   are drawn when players zoom out. This is correct behavior, but increases draw workload.
