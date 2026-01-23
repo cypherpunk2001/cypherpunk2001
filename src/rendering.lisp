@@ -2446,9 +2446,18 @@
       (prepare-game-render-caches game)
       (raylib:with-drawing
         (raylib:clear-background raylib:+black+)
-        (multiple-value-bind (camera-x camera-y)
+        (multiple-value-bind (raw-camera-x raw-camera-y)
             (editor-camera-target editor player)
           (let* ((zoom (camera-zoom camera))
+                 ;; Phase 2a: Screen-pixel snap - ensures camera aligns to screen pixels at any zoom
+                 ;; Formula: cam' = round(cam * zoom) / zoom
+                 ;; This prevents sub-pixel rendering artifacts (tile seams) during movement
+                 (camera-x (if (> zoom 0.0)
+                               (/ (fround (* raw-camera-x zoom)) zoom)
+                               raw-camera-x))
+                 (camera-y (if (> zoom 0.0)
+                               (/ (fround (* raw-camera-y zoom)) zoom)
+                               raw-camera-y))
                  (margin-x (assets-half-sprite-width assets))
                  (margin-y (assets-half-sprite-height assets))
                  (camera-2d (raylib:make-camera-2d
