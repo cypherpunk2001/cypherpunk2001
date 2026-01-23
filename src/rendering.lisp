@@ -407,6 +407,22 @@
   (list (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
         chunk-x chunk-y))
 
+;;; Phase C: Zone bounds helpers for chunk clamping
+(defun zone-max-chunk-x (zone)
+  "Return the maximum valid chunk X coordinate for ZONE (exclusive)."
+  (ceiling (zone-width zone) *render-chunk-size*))
+
+(defun zone-max-chunk-y (zone)
+  "Return the maximum valid chunk Y coordinate for ZONE (exclusive)."
+  (ceiling (zone-height zone) *render-chunk-size*))
+
+(defun chunk-in-zone-bounds-p (zone chunk-x chunk-y)
+  "Return T if chunk coords are within zone extents."
+  (and (>= chunk-x 0)
+       (>= chunk-y 0)
+       (< chunk-x (zone-max-chunk-x zone))
+       (< chunk-y (zone-max-chunk-y zone))))
+
 ;; A2.3: One-time config log flag
 (defvar *render-cache-config-logged* nil
   "T once we've logged the cache config. Reset on cache clear-all.")
@@ -603,6 +619,9 @@
 
 (defun get-or-render-chunk (cache zone layer chunk-x chunk-y tile-dest-size editor assets)
   "Get a cached chunk texture, rendering it if needed."
+  ;; Phase C: Defense-in-depth bounds check - skip out-of-bounds chunks entirely
+  (unless (chunk-in-zone-bounds-p zone chunk-x chunk-y)
+    (return-from get-or-render-chunk nil))
   ;; Instrumentation: count visible chunks
   (incf *render-cache-stats-visible*)
   (let* ((key (chunk-cache-key layer chunk-x chunk-y))
@@ -693,33 +712,38 @@
                           editor assets)
   "Draw all visible zone layers using cached chunk textures."
   (let* ((zone-layers (zone-layers zone))
-         (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache)))
+         (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+         ;; Phase C: Zone bounds for clamping
+         (max-chunk-x (zone-max-chunk-x zone))
+         (max-chunk-y (zone-max-chunk-y zone)))
     ;; Increment frame counter for LRU tracking
     (incf (zone-render-cache-frame-counter cache))
-    ;; Calculate visible chunk bounds
-    (let ((start-chunk-x (floor view-left chunk-pixel-size))
-          (end-chunk-x (ceiling view-right chunk-pixel-size))
-          (start-chunk-y (floor view-top chunk-pixel-size))
-          (end-chunk-y (ceiling view-bottom chunk-pixel-size)))
-      ;; Draw each layer in correct order with cached chunks
-      (labels ((draw-layer-cached (layer)
-                 (loop :for cy :from start-chunk-y :to end-chunk-y
-                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
-                                 :do (draw-cached-chunk cache zone layer cx cy
-                                                        chunk-pixel-size tile-dest-size
-                                                        editor assets zoom)))))
-        ;; Layer order: normal (non-collision, non-object) -> collision -> object
-        (loop :for layer :across zone-layers
-              :when (and (not (zone-layer-collision-p layer))
-                         (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
-              :do (draw-layer-cached layer))
-        (loop :for layer :across zone-layers
-              :when (zone-layer-collision-p layer)
-              :do (draw-layer-cached layer))
-        (loop :for layer :across zone-layers
-              :when (and (not (zone-layer-collision-p layer))
-                         (eql (zone-layer-id layer) *editor-object-layer-id*))
-              :do (draw-layer-cached layer))))))
+    ;; Calculate visible chunk bounds, CLAMPED to zone extents
+    (let ((start-chunk-x (max 0 (floor view-left chunk-pixel-size)))
+          (end-chunk-x (min (1- max-chunk-x) (ceiling view-right chunk-pixel-size)))
+          (start-chunk-y (max 0 (floor view-top chunk-pixel-size)))
+          (end-chunk-y (min (1- max-chunk-y) (ceiling view-bottom chunk-pixel-size))))
+      ;; Skip if entirely out of bounds (no overlap with zone)
+      (when (and (<= start-chunk-x end-chunk-x) (<= start-chunk-y end-chunk-y))
+        ;; Draw each layer in correct order with cached chunks
+        (labels ((draw-layer-cached (layer)
+                   (loop :for cy :from start-chunk-y :to end-chunk-y
+                         :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                   :do (draw-cached-chunk cache zone layer cx cy
+                                                          chunk-pixel-size tile-dest-size
+                                                          editor assets zoom)))))
+          ;; Layer order: normal (non-collision, non-object) -> collision -> object
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+                :do (draw-layer-cached layer))
+          (loop :for layer :across zone-layers
+                :when (zone-layer-collision-p layer)
+                :do (draw-layer-cached layer))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (eql (zone-layer-id layer) *editor-object-layer-id*))
+                :do (draw-layer-cached layer)))))))
 
 (defun draw-cached-chunk-with-offset (cache zone layer chunk-x chunk-y
                                       chunk-pixel-size tile-dest-size
@@ -756,6 +780,9 @@
          (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
          (zone-layers (zone-layers zone))
          (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+         ;; Phase C: Zone bounds for clamping
+         (max-chunk-x (zone-max-chunk-x zone))
+         (max-chunk-y (zone-max-chunk-y zone))
          ;; Adjust view bounds by offset to get preview-local coordinates
          (preview-left (- view-left offset-x))
          (preview-right (- view-right offset-x))
@@ -763,32 +790,34 @@
          (preview-bottom (- view-bottom offset-y)))
     ;; Increment frame counter for LRU tracking
     (incf (zone-render-cache-frame-counter cache))
-    ;; Calculate visible chunk bounds in preview zone's coordinate space
-    (let ((start-chunk-x (floor preview-left chunk-pixel-size))
-          (end-chunk-x (ceiling preview-right chunk-pixel-size))
-          (start-chunk-y (floor preview-top chunk-pixel-size))
-          (end-chunk-y (ceiling preview-bottom chunk-pixel-size)))
-      ;; Draw each layer in correct order with cached chunks (with offset)
-      (labels ((draw-layer-cached (layer)
-                 (loop :for cy :from start-chunk-y :to end-chunk-y
-                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
-                                 :do (draw-cached-chunk-with-offset
-                                      cache zone layer cx cy
-                                      chunk-pixel-size tile-dest-size
-                                      offset-x offset-y
-                                      editor assets zoom)))))
-        ;; Layer order: normal (non-collision, non-object) -> collision -> object
-        (loop :for layer :across zone-layers
-              :when (and (not (zone-layer-collision-p layer))
-                         (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
-              :do (draw-layer-cached layer))
-        (loop :for layer :across zone-layers
-              :when (zone-layer-collision-p layer)
-              :do (draw-layer-cached layer))
-        (loop :for layer :across zone-layers
-              :when (and (not (zone-layer-collision-p layer))
-                         (eql (zone-layer-id layer) *editor-object-layer-id*))
-              :do (draw-layer-cached layer))))))
+    ;; Calculate visible chunk bounds in preview zone's coordinate space, CLAMPED
+    (let ((start-chunk-x (max 0 (floor preview-left chunk-pixel-size)))
+          (end-chunk-x (min (1- max-chunk-x) (ceiling preview-right chunk-pixel-size)))
+          (start-chunk-y (max 0 (floor preview-top chunk-pixel-size)))
+          (end-chunk-y (min (1- max-chunk-y) (ceiling preview-bottom chunk-pixel-size))))
+      ;; Skip if entirely out of bounds (no overlap with zone)
+      (when (and (<= start-chunk-x end-chunk-x) (<= start-chunk-y end-chunk-y))
+        ;; Draw each layer in correct order with cached chunks (with offset)
+        (labels ((draw-layer-cached (layer)
+                   (loop :for cy :from start-chunk-y :to end-chunk-y
+                         :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                   :do (draw-cached-chunk-with-offset
+                                        cache zone layer cx cy
+                                        chunk-pixel-size tile-dest-size
+                                        offset-x offset-y
+                                        editor assets zoom)))))
+          ;; Layer order: normal (non-collision, non-object) -> collision -> object
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+                :do (draw-layer-cached layer))
+          (loop :for layer :across zone-layers
+                :when (zone-layer-collision-p layer)
+                :do (draw-layer-cached layer))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (eql (zone-layer-id layer) *editor-object-layer-id*))
+                :do (draw-layer-cached layer)))))))
 
 ;;;; ========================================================================
 ;;;; END RENDER CHUNK CACHE
