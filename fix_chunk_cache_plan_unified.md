@@ -2,19 +2,25 @@
 
 **Date:** 2026-01-23 (Revised)
 **Scope:** Chunk render cache (Phase 1-2 from findings_plan.md), preview zones, movement-driven artifacts
-**Status:** Analysis revised with corrected math, ready for implementation
+**Status:** Analysis revised with debug session data (2026-01-23)
 
 ---
 
 ## Executive Summary
 
-The chunk cache has bugs causing black screen flashes and tile glitches. After recalculating with actual config values, the "cache too small" theory is **disproven** - the real issues are:
+The chunk cache has bugs causing black screen flashes and tile glitches. Debug session data (see Appendix) reveals the actual issues:
 
-1. **Mid-frame FBO creation** (render target switches during draw loop)
-2. **Out-of-bounds chunk generation** (empty textures created for chunks outside zone)
-3. **Preview zone burst allocations** (sudden demand when entering edge thresholds)
+1. **Cache lookup failure during movement** - Same chunks created 20-27× each (DATA: 1030 CREATE events in 10s session)
+2. **Mid-frame FBO creation** - Render target switches during draw loop cause black flash (DATA: FBO logs interleaved with CREATE)
+3. **Per-zone cache isolation** - Each zone (main + up to 8 previews) has separate cache; cache-size:90 = sum across zones
+4. **Layer iteration asymmetry** - WALLS layer has ~2× more duplicates than FLOOR (DATA: 26× vs 11× avg)
 
-**Fix strategy:** Move chunk creation out of the draw pass entirely, clamp chunk ranges to zone bounds, and provide instrumentation to diagnose remaining issues.
+**Key insight from data:** Steady state shows 100% cache hits. The bug only manifests during movement/zone transitions. This suggests cache entries are being lost or keys are changing between frames.
+
+**Revised fix strategy:**
+1. Diagnose WHY cache lookups fail (key instability? cache clearing?)
+2. Fix the root cause before refactoring to pre-render step
+3. Clamp bounds to prevent out-of-bounds chunk generation
 
 ---
 
@@ -70,141 +76,227 @@ visible-chunks   = chunks-x × chunks-y × layer-count
 
 ---
 
-## Revised Bug Analysis
+## Revised Bug Analysis (Updated with Debug Data)
 
-### Bug #1: Mid-Frame FBO Creation (CRITICAL - Root Cause of Black Flash)
+### Bug #1: Cache Lookup Failure During Movement (CRITICAL - NEW FROM DATA)
+
+**Evidence from debug session:**
+- Same chunk coordinates created 20-27× each (e.g., `(2,-2) layer:WALLS` created 27×)
+- Total 1030 CREATE events in ~10 second session (expected ~100 for cold start + movement)
+- Steady state shows 100% hit rate - cache WORKS when stationary
+- Failure only occurs during movement/zone transitions
+
+**Possible causes (to investigate):**
+1. Cache key instability - key changes between frames for same logical chunk
+2. Preview zone cache thrashing - zones unloaded/reloaded clear their caches
+3. Hash table corruption - unlikely given steady state works
+4. Multiple code paths requesting same chunk with different cache instances
+
+**Investigation needed:** Add logging to trace exact key values and cache instance identity.
+
+### Bug #2: Mid-Frame FBO Creation (CRITICAL - CONFIRMED BY DATA)
 
 **Location:** `rendering.lisp:438-468` in `render-chunk-to-texture`
 
-**Problem:** FBOs are created on-demand inside the draw loop:
+**Problem:** FBOs are created on-demand inside the draw loop.
 
-```lisp
-;; Called from draw-world-cached → get-or-render-chunk → render-chunk-to-texture
-(let ((texture (raylib:load-render-texture tex-size tex-size)))  ; GPU allocation
-  (raylib:begin-texture-mode texture)   ; Switch render target
-  ;; ... render tiles ...
-  (raylib:end-texture-mode))            ; Switch back to screen
-```
-
-This happens while already drawing to the screen (inside `begin-drawing` / `begin-mode-2d`). The render target switch causes the black flash.
-
-**Evidence:** The raylib log shows bursts of texture/FBO creation during movement:
+**Evidence from debug session:** FBO creation logs interleaved with CREATE events:
 ```
 INFO: TEXTURE: [ID 109] Texture loaded successfully (1024x1024 ...)
 INFO: FBO: [ID 70] Framebuffer object created successfully
+[CACHE] CREATE chunk (X,Y) layer:WALLS
 ```
+
+Each CREATE event triggers GPU allocation mid-frame. With 1030 CREATE events, this causes severe render target switching.
 
 **Fix required:** Move ALL chunk creation to a pre-render step BEFORE `begin-drawing`.
 
-### Bug #2: Out-of-Bounds Chunk Generation (HIGH)
+### Bug #3: Layer Iteration Asymmetry (NEW FROM DATA)
+
+**Evidence from debug session:**
+- WALLS layer chunks: 21-27 duplicates each
+- FLOOR layer chunks: 9-11 duplicates each
+- Ratio: ~2× more WALLS duplicates
+
+**Possible causes:**
+1. WALLS layer drawn in multiple iteration passes (collision + normal?)
+2. WALLS layer has more visible chunks (unlikely - same viewport)
+3. WALLS layer cache key differs between passes
+
+**Investigation needed:** Check layer iteration logic for duplicate visits.
+
+### Bug #4: Out-of-Bounds Chunk Generation (MEDIUM - CONFIRMED BY DATA)
 
 **Location:** `rendering.lisp:551-554` in `draw-world-cached`
 
-**Problem:** Chunk bounds are calculated from view bounds without clamping:
+**Evidence from debug session:**
+- 218 CREATE events with negative X coordinates (e.g., `(-3,2)`, `(-2,-2)`)
+- These are preview zone chunks, but negative coords appear in main zone iteration too
 
-```lisp
-(let ((start-chunk-x (floor view-left chunk-pixel-size))   ; Can be negative!
-      (end-chunk-x (ceiling view-right chunk-pixel-size))  ; Can exceed zone
-      ...
-```
-
-When the camera is near zone edges:
-- `view-left` can be negative → `start-chunk-x` = -1
-- `view-right` can exceed zone width → `end-chunk-x` beyond zone bounds
-
-For each out-of-bounds chunk:
-1. `render-chunk-to-texture` creates an FBO (GPU allocation)
-2. All tile lookups return 0 (out of zone)
-3. Result: Empty texture created and cached
-
-At corners with preview zones, this can create many unnecessary empty textures.
+**Problem:** Chunk bounds calculated without clamping to zone extent.
 
 **Fix required:** Clamp chunk ranges to zone bounds, skip out-of-bounds chunks entirely.
 
-### Bug #3: Preview Zone Burst Allocation (MEDIUM)
+### Bug #5: Preview Zone Cache Thrashing (HIGH - INFERRED FROM DATA)
 
-**Location:** `rendering.lisp:795-810` (draw-preview-for-edge calls)
+**Evidence from debug session:**
+- cache-size:90 with per-zone limit of 64 → multiple zone caches active
+- Negative coordinate duplicates suggest preview zones being reloaded
+- Transitions cause burst of 30+ CREATE events
 
-**Problem:** When the view first exceeds a zone edge:
-- All visible preview zone chunks are rendered at once
-- Each preview zone is a separate zone with its own cache
-- Sudden demand → burst of FBO creations
+**Hypothesis:** Preview zones are unloaded when player moves away from edge, then reloaded when player returns. Each reload creates all chunks fresh.
 
-**Fix required:** Gradual warmup or throttled creation for preview zones.
+**Fix required:** Either persist preview zone caches longer, or pre-warm them.
 
-### ~~Bug #4: Cache Capacity Too Small~~ (DISPROVEN)
+### Bug #6: Zero Evictions Despite High Activity (INVESTIGATE)
 
-With corrected math, 64 chunks can hold 3+ full viewports at max zoom-out. This is NOT the issue.
+**Evidence from debug session:**
+- 0 EVICT events
+- cache-size reached 90 (but this is sum across zones)
+- Per-zone caches may each be under 64
 
-### ~~Bug #5: Frame Counter Incremented Multiple Times~~ (NOT A BUG)
+**Assessment:** Likely NOT a bug - per-zone caches staying under limit. However, verify eviction logic works by forcing a single zone to exceed 64 chunks.
 
-Each zone cache has its own frame counter. Preview zone increments don't affect main zone eviction. The per-zone counter design is actually correct.
+### ~~Bug #7: Cache Capacity Too Small~~ (DISPROVEN)
 
-### Bug #6: Entire Screen Black at Max Zoom-Out (CRITICAL)
+With corrected math and per-zone caches, capacity is sufficient.
 
-**Revised analysis:** This is NOT caused by cache overflow. With only 18 chunks needed, 64 is plenty. The black screen at zoom 0.5 must be caused by:
+### ~~Bug #8: Frame Counter Issue~~ (NOT A BUG)
 
-1. **More aggressive chunk boundary crossing** at low zoom (larger viewport = more chunks enter/leave)
-2. **More preview zones visible** at low zoom (up to 8 edges+corners = 8 separate caches)
-3. **Cumulative FBO creation** from main zone + all preview zones
-
-Each zone (main + up to 8 previews) may create chunks simultaneously, causing a large burst of render target switches.
-
----
-
-## Symptoms Not Yet Explained
-
-The user reported:
-- Water/collision river tiles "freaking out" during movement
-- Tiles appearing/disappearing
-
-This requires investigation. Possible causes:
-1. Layer draw order issue (collision layer evicted/re-rendered differently)
-2. Tileset ID instability in cache keys
-3. Race condition in eviction during layer iteration
-
-**Recommendation:** Add instrumentation first (Phase A) to capture which chunks are being evicted/re-rendered.
+Per-zone frame counters are correct design.
 
 ---
 
-## Fix Plan (Revised)
+## Symptoms Analysis (Updated with Data)
 
-### Phase A: Instrumentation (Do First)
+### Water/Collision Tiles "Freaking Out" - PARTIALLY EXPLAINED
 
-**Goal:** Capture cache dynamics to diagnose remaining issues.
+**Data correlation:** WALLS layer (which includes water/collision) has 2× more duplicate CREATE events than FLOOR layer.
 
-**Add to `src/rendering.lisp`:**
+**Likely cause:** The layer iteration logic may be processing WALLS layer multiple times per frame (once as "normal" layer, once as "collision" layer). Each iteration triggers cache lookup with potentially different context.
+
+**Remaining question:** Why does duplicate iteration cause visual glitches? Possibly the re-rendered chunk has slightly different content due to timing.
+
+### Tiles Appearing/Disappearing - EXPLAINED
+
+**Data correlation:** 1030 CREATE events = constant chunk re-creation. If a chunk is being created mid-frame while also being drawn, the texture may be in an incomplete state.
+
+**Root cause:** Cache lookup failure (Bug #1) combined with mid-frame creation (Bug #2).
+
+---
+
+## Fix Plan (Revised Based on Data)
+
+### Phase A: Instrumentation ✓ COMPLETED
+
+Basic instrumentation added. Debug session captured actionable data.
+
+### Phase A2: Diagnostic Enhancement (NEW - DO NEXT)
+
+**Goal:** Determine root cause of cache lookup failure and duplicate CREATEs.
+
+**A2.1: Add zone context to all cache logs (MUST-DO)**
+
+Current logs don't include zone-id, so duplicates might be different zones using same chunk coordinates.
 
 ```lisp
-(defparameter *debug-render-cache* nil
-  "When T, log cache stats and chunk creation/eviction events.")
+;; Update CREATE log to include full context:
+;; Note: zoom may not be available at cache call site; pass it down or use tile-dest-size as proxy
+(when *debug-render-cache*
+  (format t "~&[CACHE] CREATE zone:~A chunk:(~D,~D) layer:~A tileset:~A tile-dest:~D chunk-px:~D~%"
+          (zone-id zone)
+          chunk-x chunk-y
+          (zone-layer-id layer)
+          (zone-layer-tileset-id layer)
+          tile-dest-size      ; already available at call site
+          chunk-pixel-size))  ; derived from tile-dest-size × *render-chunk-size*
 
-(defvar *render-cache-stats-created* 0)
-(defvar *render-cache-stats-evicted* 0)
-(defvar *render-cache-stats-hits* 0)
-(defvar *render-cache-stats-misses* 0)
-
-(defun reset-render-cache-stats ()
-  "Call at start of each frame."
-  (setf *render-cache-stats-created* 0
-        *render-cache-stats-evicted* 0
-        *render-cache-stats-hits* 0
-        *render-cache-stats-misses* 0))
-
-(defun log-cache-event (event-type &rest args)
-  "Log cache events when *debug-render-cache* enabled."
-  (when *debug-render-cache*
-    (apply #'format t (concatenate 'string "~&[CACHE] " event-type "~%") args)))
+;; Update per-frame stats to show per-zone breakdown:
+(format t "~&[CACHE] STATS zone:~A visible:~D cache-size:~D | ...~%"
+        (zone-id zone)
+        visible-count
+        (hash-table-count (zone-render-cache-chunks cache))
+        ...)
 ```
 
-**Instrument existing functions:**
-- In `get-or-render-chunk`: log hits/misses, chunk coords, layer-key
-- In `evict-lru-chunk`: log evicted chunk coords
-- In `render-chunk-to-texture`: log chunk creation
+**A2.2: Log cache clears (MUST-DO)**
+
+If cache clearing happens during movement/edge previews, it explains "duplicate CREATEs with zero evicts."
+
+**Caller context values (use consistently):**
+| Value | When Used |
+|-------|-----------|
+| `"zone-change"` | Player transitions to different zone |
+| `"toggle-filter"` | User toggles tile point filter setting |
+| `"toggle-cache"` | User toggles render cache on/off |
+| `"editor-reload"` | Editor reloads zone data |
+| `"manual"` | Explicit REPL/debug call |
+
+```lisp
+;; Add to clear-zone-render-cache:
+(when *debug-render-cache*
+  (format t "~&[CACHE] CLEAR zone:~A entries:~D caller:~A~%"
+          zone-id
+          (hash-table-count chunks)
+          caller))  ; one of the values above
+
+;; Add to clear-all-zone-render-caches:
+(when *debug-render-cache*
+  (format t "~&[CACHE] CLEAR-ALL zones:~D caller:~A~%"
+          (hash-table-count *zone-render-caches*)
+          caller))
+
+;; Add to clear-other-zone-render-caches:
+(when *debug-render-cache*
+  (format t "~&[CACHE] CLEAR-OTHERS keeping:~A caller:~A~%"
+          keep-zone-id
+          caller))
+```
+
+**A2.3: One-time runtime config log (MUST-DO)**
+
+Visible count of 48-75 seems high if chunks are 1024px. Need to confirm actual values.
+
+```lisp
+;; Log once at startup or first cache use:
+(format t "~&[CACHE] CONFIG tile-dest-size:~D chunk-pixel-size:~D chunk-tiles:~D max-chunks:~D~%"
+        tile-dest-size
+        chunk-pixel-size
+        *render-chunk-size*
+        *render-cache-max-chunks*)
+```
+
+If `tile-dest-size` is 16 (scale 1.0) instead of 64 (scale 4.0), earlier math was wrong and cache may be under pressure.
+
+**Questions to answer:**
+1. Are duplicate CREATEs from same zone or different zones (main vs preview)?
+2. Is any cache clear function being called during movement?
+3. What are the actual runtime chunk dimensions?
+
+### Phase A3: Layer Iteration Audit
+
+**Goal:** Determine why WALLS has 2× more duplicates than FLOOR.
+
+```lisp
+;; Add at start of each layer iteration pass:
+(when *debug-render-cache*
+  (format t "~&[CACHE] LAYER-ITER zone:~A layer:~A pass:~A~%"
+          (zone-id zone)
+          (zone-layer-id layer)
+          pass-name))  ; "normal", "collision", "object"
+```
+
+**Check:**
+1. Is WALLS matching multiple conditions? (collision-p AND not excluded from normal pass?)
+2. Count iterations per layer per frame
 
 ### Phase B: Pre-Render Step (Core Fix for Black Flash)
 
 **Goal:** Move ALL chunk creation outside the draw pass.
+
+**IMPORTANT:** This phase should only be done AFTER Phase A2/A3 diagnose the cache lookup failure. If we move creation to pre-render but cache lookup still fails, we'll just do the same 1030 FBO allocations earlier in the frame.
+
+**Prerequisite:** Bug #1 (cache lookup failure) must be understood and fixed first.
 
 **Principle:**
 ```
@@ -391,13 +483,34 @@ In `draw-world` function, restructure to:
   (draw-world-cached-fast zone cache chunk-pixel-size))  ; Only blits, never creates
 ```
 
-### Phase C: Zone Bounds Clamping (Fix for Out-of-Bounds)
+### Phase C: Zone Bounds Clamping (Fix for Out-of-Bounds) - HIGH PRIORITY
 
-**Goal:** Never generate chunks outside zone extents. When zoomed out near edges, negative or beyond-zone chunk coords can generate empty textures and still trigger FBO allocation.
+**Goal:** Never generate chunks outside zone extents. Negative coords are a **guaranteed waste + FBO burst**.
 
-**Step C.1: Clamp chunk ranges in prepare-zone-chunks**
+**Data evidence:** 218 CREATE events with negative X coordinates in debug session.
 
-Already included in Phase B's `prepare-zone-chunks`, but explicitly:
+**Implementation: Clamp & skip BEFORE get-or-render-chunk**
+
+```lisp
+;; Add bounds check helper:
+(defun chunk-in-zone-bounds-p (zone chunk-x chunk-y)
+  "Return T if chunk coords are within zone extents."
+  (and (>= chunk-x 0)
+       (>= chunk-y 0)
+       (< chunk-x (ceiling (zone-width zone) *render-chunk-size*))
+       (< chunk-y (ceiling (zone-height zone) *render-chunk-size*))))
+
+;; In draw-world-cached, BEFORE calling get-or-render-chunk:
+(when (chunk-in-zone-bounds-p zone chunk-x chunk-y)
+  (get-or-render-chunk ...))
+;; Skip entirely if out of bounds - no cache lookup, no FBO creation
+```
+
+**Apply to BOTH main zone AND preview zones.** Preview zones also need bounds clamping against their own extents.
+
+**Step C.1: Clamp chunk ranges in iteration**
+
+In `draw-world-cached` or equivalent, clamp the iteration range:
 
 ```lisp
 (defun prepare-zone-chunks (zone cache view-left view-right view-top view-bottom
@@ -518,31 +631,45 @@ With corrected math, 64 chunks is sufficient for 3+ viewports at max zoom-out. I
 
 ---
 
-## Implementation Order
+## Implementation Order (Revised Based on Data)
 
-| Phase | Description | Risk | Effort |
-|-------|-------------|------|--------|
-| A | Instrumentation + debug logging | Low | 1h |
-| B | Pre-render step + draw-only refactor | High | 3h |
-| C | Zone bounds clamping | Low | 0.5h |
-| D | Preview zone handling | Medium | 1h |
-| - | Testing and validation | Medium | 2h |
+| Phase | Description | Risk | Effort | Status |
+|-------|-------------|------|--------|--------|
+| A | Basic instrumentation | Low | 1h | ✓ DONE |
+| A2 | Diagnostic enhancement (zone context, clear logs, config) | Low | 0.5h | **NEXT** |
+| C | Zone bounds clamping (skip negative/OOB chunks) | Low | 0.5h | **HIGH PRIORITY** |
+| A3 | Layer iteration audit (if needed after A2) | Low | 0.5h | Pending |
+| X | Fix cache lookup bug (based on A2 findings) | Medium | 1-3h | Pending |
+| B | Pre-render step + draw-only refactor | High | 3h | Pending |
+| D | Preview zone handling | Medium | 1h | Pending |
+| - | Testing and validation | Medium | 2h | Pending |
 
-**Total estimated: ~7.5 hours**
+**Order:** A ✓ → A2 → C → (collect data) → X (fix) → B → D → Testing
 
-**Order:** A → C → B → D → Testing
-
-(Instrumentation first to validate fixes, bounds clamping is quick win, then core refactor)
+**Rationale:**
+1. **A2 first:** Must add zone context to logs before we can interpret duplicate CREATEs correctly.
+2. **C immediately after A2:** Bounds clamping is a hard bug fix with guaranteed ROI. Eliminates 218+ wasted FBOs regardless of other issues.
+3. **Collect data after C:** Run another debug session to see if bounds clamping alone fixes the majority of issues.
+4. **X (fix) based on new data:** May be simple (unnecessary cache clear) or complex (architectural).
+5. **B after root cause fixed:** Pre-render refactor is high-effort. Only worth doing once cache lookup is reliable.
 
 ---
 
-## Acceptance Criteria
+## Acceptance Criteria (Updated)
 
+### Primary (Must Fix)
 - [ ] No black flash when moving
-- [ ] No burst of `load-render-texture` logs during draw phase (only during pre-render)
+- [ ] CREATE events < 200 for typical movement session (was 1030)
+- [ ] Same chunk coords created ≤ 3× max (was 27×)
 - [ ] Water/collision tiles stable during movement
 - [ ] Maximum zoom-out renders correctly
-- [ ] No FBO creation for out-of-bounds chunks (validate with logs)
+
+### Secondary (Should Fix)
+- [ ] No FBO creation during draw phase (only pre-render)
+- [ ] WALLS and FLOOR duplicate ratios similar (was 2:1)
+- [ ] No out-of-bounds chunk creation (negative coords only for preview zones)
+
+### Validation
 - [ ] Cache disabled mode works unchanged (baseline)
 - [ ] `make tests` passes
 - [ ] `make smoke` passes
@@ -558,13 +685,91 @@ With corrected math, 64 chunks is sufficient for 3+ viewports at max zoom-out. I
 
 ---
 
-## Open Questions (For Investigation)
+## Interpretation of Data Anomalies
 
-1. **Water tile glitch:** Is this a layer-specific issue? Instrumentation will reveal if collision layer chunks are being evicted/re-rendered differently.
+### Anomaly 1: Duplicate CREATEs + Zero Evicts
 
-2. **Exact cause of zoom 0.5 black screen:** With corrected math, cache overflow is ruled out. Need instrumentation to capture what's happening (likely cumulative preview zone allocation).
+**Data:** Same chunk coords created 20-27× each, but EVICT=0.
 
-3. **Remaining tile seam tearing:** The user noted horizontal seams are now rare but still present. This may be a separate rendering precision issue unrelated to caching.
+**Interpretation:** Since eviction isn't happening, the duplicates must be from:
+- **Cache clears** (not currently logged), OR
+- **Distinct zone caches** (main vs preview zones) but logged without zone context
+
+**Resolution:** Phase A2 adds zone-id to logs and logs cache clears. This will prove which.
+
+### Anomaly 2: Negative Chunk Coordinates
+
+**Data:** 218 CREATE events with negative X (e.g., `(-3,1)`).
+
+**Interpretation:** **Definite bug.** Causes needless chunk creation and FBO bursts. Chunks at negative coords are outside zone bounds and produce empty textures.
+
+**Resolution:** Phase C implements bounds clamping before any cache creation.
+
+### Anomaly 3: Cache Size (90) Exceeds Max (64) With No Evicts
+
+**Data:** `cache-size:90` but `*render-cache-max-chunks*=64` and `EVICT=0`.
+
+**Interpretation:** The `cache-size` stat is **global across all zones**, while max is **per-zone**. This is expected behavior, not a bug:
+- Main zone: ~48 chunks
+- Preview zone 1: ~21 chunks
+- Preview zone 2: ~21 chunks
+- Total: 90 (each zone under 64 individually)
+
+**Resolution:** Phase A2 adds per-zone cache size logging to confirm.
+
+### Anomaly 4: Visible Count 48-75 Seems High
+
+**Data:** `visible:75` with supposedly 1024px chunks should only show ~6-18 chunks.
+
+**Interpretation:** Either:
+- `tile-dest-size` is smaller than assumed (scale 1.0 instead of 4.0), OR
+- Multiple zones/layers counted together, OR
+- Chunk size configured differently at runtime
+
+**Resolution:** Phase A2 adds one-time config log to confirm actual values.
+
+---
+
+## Open Questions (Updated Based on Data)
+
+### Answered by Data
+
+1. ~~**Water tile glitch:**~~ → WALLS layer has 2× more duplicates. Likely layer iteration bug.
+
+2. ~~**Exact cause of black flash:**~~ → 1030 mid-frame FBO allocations.
+
+### Still Open (Will Be Answered by Phase A2/A3)
+
+3. **Are duplicate CREATEs from same zone or different zones?**
+   - Phase A2 zone-id logging will answer.
+
+4. **Is any cache clear function called during movement?**
+   - Phase A2 clear logging will answer.
+
+5. **What are actual runtime chunk dimensions?**
+   - Phase A2 config logging will answer.
+
+6. **Why does WALLS have 2× more duplicates than FLOOR?**
+   - Phase A3 layer iteration audit will answer.
+
+7. **Remaining tile seam tearing:**
+   - May be separate precision issue unrelated to caching.
+
+---
+
+---
+
+## Priority Fixes Summary (Shortlist)
+
+Based on data analysis, these are the highest-impact fixes in order:
+
+| Priority | Fix | Why | Phase |
+|----------|-----|-----|-------|
+| 1 | **Clamp/skip out-of-bounds chunks** | Eliminates 218+ wasted FBO allocations per session. Hard bug with guaranteed ROI. | C |
+| 2 | **Add zone-id to cache logs + log cache clears** | Required to diagnose duplicate CREATEs. Without this, can't fix root cause. | A2 |
+| 3 | **Move chunk creation out of draw pass** | Eliminates black flash by separating FBO allocation from screen rendering. | B |
+
+**Note:** Fix #2 is diagnostic, not a code fix. But it's required before we can properly fix the duplicate CREATE issue. Once A2 data is collected, we may discover the fix is simple (e.g., cache clear being called unnecessarily).
 
 ---
 
