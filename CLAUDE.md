@@ -625,7 +625,7 @@ If you can’t prove it, assume it violates the directive.
   - Avoid allocating closures/lambdas inside hot loops (especially capturing lambdas)
   - Avoid per-tick hash-table growth/rehash and transient key creation; pre-size tables and reuse keys/containers
   - Be cautious with generic dispatch/abstraction layers that encourage temporary allocations
-
+  - Avoid accidental symbol/keyword interning at runtime in hot paths
 
 ### Allocation & reuse policy (pools / scratch / arenas)
 - Use object pools/freelists not just for entities, but also for support churn:
@@ -638,7 +638,7 @@ If you can’t prove it, assume it violates the directive.
   - cap growth and recycle aggressively
   - avoid unbounded pools that grow at peak load and never shrink
   - watch for large pooled objects/buffers that inflate heap size and make rare full GCs expensive
-
+- Prefer specialized arrays and typed structs for pooled/scratch data to reduce boxing and improve locality
 
 ### Networking / serialization optimization (often the real hot path)
 - Treat snapshot building and serialization as a first-class hot loop
@@ -648,7 +648,7 @@ If you can’t prove it, assume it violates the directive.
 - Reuse delta-state and snapshot scratch structures; avoid per-send allocations
 - **Schedule network output intentionally:** keep simulation at 60 Hz, but consider sending snapshots/deltas at a lower
   or adaptive rate (e.g., 20–30 Hz) to reduce serialization load and allocation/spike risk while preserving sim stability
-
+- Prefer specialized byte buffers (e.g., `(simple-array (unsigned-byte 8) (*))`) and typed cursors for encoding
 
 ### Rendering optimization
 - Cull off-screen tiles and sprites; draw only what’s visible
@@ -667,14 +667,12 @@ If you have a 60Hz tick, pick deliberate moments where a pause hurts least:
 
 Even a simple “GC every N seconds” policy can prevent rare, catastrophic full collections.
 
-
 ### 2) Give the heap more headroom (reduce GC frequency spikes)
 A too-small heap makes the runtime collect constantly and unpredictably.
 - Bigger heap → fewer collections → fewer “surprise” pauses
 - You trade memory for smoothness
 
 This is one of the most common “we fixed the hitch” changes on servers.
-
 
 ### 3) Tune for *small + frequent* vs *rare + huge*
 Most modern Common Lisp implementations use generational GC. You generally want:
@@ -685,7 +683,6 @@ Most modern Common Lisp implementations use generational GC. You generally want:
 **Practical hack:** warm up the server (load maps, create common objects, run a few ticks) so long-lived data settles
 before peak load. This reduces later promotion churn.
 
-
 ### 4) Keep big buffers and OS resources out of the GC heap
 Even with good discipline, large byte arrays, strings, and foreign handles can cause:
 - increased scanning pressure
@@ -695,7 +692,6 @@ Even with good discipline, large byte arrays, strings, and foreign handles can c
 Common approaches:
 - reusable foreign buffers (or static/pinned arrays if your implementation supports them)
 - keep only small metadata objects in the Lisp heap
-
 
 ### 5) Avoid features that make GC timing messier
 Depending on the implementation, these often correlate with unpredictable pauses:
@@ -708,6 +704,10 @@ Not forbidden — just be aware they can turn GC into a wildcard.
 
 
 ## 3) SBCL Compiler Optimization Tips (For Best Code Generation)
+
+SBCL can reach performance comparable to C in hot code, but it is not the default.
+To get C-like performance, use declarations and policies that guide SBCL’s optimizing compiler,
+trading some dynamic flexibility for static efficiency.
 
 These are SBCL-specific rules for producing **maximum-performance Common Lisp**.
 
@@ -725,13 +725,15 @@ Guidelines:
 - Use `(declaim (optimize ...))` for file/package defaults.
 - Use `(declare (optimize ...))` inside the 5–20 hottest functions.
 - Be careful with `(safety 0)` in server code: it can turn bugs into silent corruption.
+- `(safety 0)` omits runtime safety checks (including type and array bounds checks); use it only in trusted hot code.
 
-
-### 3.2 Type declarations are performance features in SBCL
+### 3.2 Type declarations are performance features in SBCL (single most important step)
 SBCL generates unboxed, fast machine code when it knows types.
 
 Declare aggressively in hot code:
 - numeric types: `fixnum`, `(unsigned-byte 32)`, `single-float`, etc.
+- function argument types and return types
+- loop indices and accumulators
 - array element types: specialized arrays avoid boxing
 - struct slot types: typed `defstruct` slots are a big win
 
@@ -747,7 +749,6 @@ Preferred data patterns:
   - `(simple-array (unsigned-byte 8) (*))`
 - `defstruct` with typed slots (and keep types “obvious” for SBCL inference)
 
-
 ### 3.3 Avoid “accidental generic” operations
 If SBCL can’t infer a type (value becomes `T`), it will often fall back to generic operations:
 - arithmetic becomes generic (boxing + slower)
@@ -758,20 +759,24 @@ Hot code rule:
 - ensure loop indices, accumulators, and frequently accessed fields are type-declared
 - keep types stable across calls (don’t mix floats/integers unpredictably)
 
-
 ### 3.4 Avoid CLOS generic dispatch in the innermost loops
 - CLOS is fine at the edges.
 - In the innermost hot loops, generic function dispatch is often too expensive.
 - Use direct functions and typed structs in hot paths; keep polymorphism at system boundaries.
-
 
 ### 3.5 Use inlining selectively for tiny hot helpers
 - `(declaim (inline foo))` can remove call overhead and help SBCL optimize across function boundaries.
 - Only inline small helpers that are called extremely often.
 - Do not blanket-inline everything.
 
+### 3.6 SIMD vectorization (for heavy numeric/data-parallel hotspots)
+For heavily numerical and data-parallel work:
+- consider SIMD libraries (e.g., `sb-simd`) to leverage CPU SIMD instructions
+- this can match or exceed optimized C/C++ for certain workloads
 
-### 3.6 Profile with SBCL tooling (do not guess)
+Use SIMD only where profiling shows it matters.
+
+### 3.7 Profiling with SBCL tooling (do not guess)
 Measure:
 - time in hot functions
 - allocation rate in hot paths
@@ -781,14 +786,14 @@ Useful tools:
 - `sb-sprof` for sampling profiler
 - `sb-profile` for call-count/time profiling
 
-
-### 3.7 Serialization hot spots: use specialized byte buffers
+### 3.8 Serialization hot spots: use specialized byte buffers
 For networking/snapshots in SBCL, prefer:
 - `(simple-array (unsigned-byte 8) (*))` for byte buffers
 - typed cursor indices into those buffers
 - direct writing into buffers (avoid intermediate message objects)
 
 This reduces allocation/GC pressure and improves throughput.
+
 
 ## 4) Code Generation Checklist (LLM Must Follow)
 When generating or editing code:
