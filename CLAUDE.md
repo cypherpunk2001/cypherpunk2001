@@ -485,6 +485,23 @@ Agents MUST:
 - profile; do not guess
 
 ## SIMD / auto-vectorization (compute-bound kernels only)
+SIMD is a deliberate tradeoff: it maximizes arithmetic throughput in compute-bound kernels, but increases code complexity and offers little benefit (or harm) in memory- or branch-bound loops, so it should be applied selectively, not universally.
+SIMD should be “default” only inside isolated numeric kernels (typed arrays, low branching, batch processing), which in your codebase most naturally live in:
+spatial.lisp (broadphase/grid/partition math, AABB overlap, distance-to-cell, packed queries) — best SIMD ROI
+movement.lisp (SoA position/velocity integration, batch collision broadphase math, distance checks) — SIMD if entity data is packed/branch-light
+combat.lisp (only sub-kernels) (AoE radius filtering, LOS/distance filtering, numeric buff math) — not the rule-heavy branching parts
+rendering.lisp (only if CPU-side transforms are heavy) (world→screen transforms for many entities, building instance buffers/rects/sort keys) — only when it’s already array-ish
+Usually NOT worth SIMD (mostly memory/branch/I/O bound):
+net.lisp (serialization/copies/branchy protocol) — SIMD only for rare byte-scan/encode/checksum-style bulk loops
+ai.lisp (branchy state machines) — SIMD only if you extract packed numeric scoring across many agents
+db.lisp, save.lisp, zone.lisp, world-graph.lisp, editor.lisp, ui.lisp, data.lisp, trade.lisp, migrations.lisp, utils.lisp — mostly not SIMD territory
+Pattern to standardize (so it’s consistent and scalable):
+Put SIMD work in a small “kernel” surface area (e.g., simd-kernels.lisp or src/kernels/)
+Kernels accept typed arrays + fixnum bounds, and have:
+scalar reference implementation (correctness/tests)
+SIMD variants (SSE2 baseline + AVX/AVX2 fast paths)
+runtime dispatch via instruction-set-case for portability
+That keeps “SIMD as default” true where it pays off, without infecting the entire MMO codebase with SIMD complexity.
 Agents MUST:
 - use typed arrays + SIMD pack types (sb-simd/Loopus)
 - structure SIMD as vector loop + remainder loop
