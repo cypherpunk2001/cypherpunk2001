@@ -1039,13 +1039,14 @@ make tests
 
 ---
 
-## Phase 5: Conditional/Profiling-Gated Optimizations
+## Phase 5: Conditional/Profiling-Gated Optimizations - COMPLETE
 
 **Priority**: P3-P4 (LOW/POLISH)
 **Sources**: COMMON (both Claude and Codex)
 **Estimated Benefit**: 5-20% in specific scenarios
 **Risk**: Medium-High
 **Rationale**: Only implement after profiling confirms bottlenecks.
+**Status**: COMPLETE (Tasks 5.4-5.5 implemented; Tasks 5.1-5.3 deferred per plan)
 
 ---
 
@@ -1155,12 +1156,13 @@ make smoke  ; Visual verification
 
 ---
 
-### Task 5.4: Strategic GC Scheduling
+### Task 5.4: Strategic GC Scheduling - COMPLETE
 
-**Files**: `src/server.lisp`
+**Files**: `src/config-server.lisp`, `src/net.lisp`
 **Source**: CLAUDE
 **Est. Benefit**: 0-5% (reduces worst-case spikes)
 **Risk**: Low-Medium
+**Status**: COMPLETE - Added `*gc-scheduling-enabled*`, `*gc-interval-seconds*` config in config-server.lisp. GC triggered after snapshot broadcast in net.lisp server loop (enable via MMORPG_GC_SCHEDULING=1).
 
 **Steps**:
 1. Add GC trigger at safe points:
@@ -1185,12 +1187,13 @@ make tests
 
 ---
 
-### Task 5.5: Data Access Validation
+### Task 5.5: Data Access Validation - COMPLETE
 
-**Files**: `src/ai.lisp`, `src/combat.lisp`, `src/progression.lisp`
+**Files**: `src/zone.lisp`, `src/progression.lisp`, `src/rendering.lisp`, `src/input.lisp`, `src/main.lisp`, `src/save.lisp`, `src/net.lisp`
 **Source**: CLAUDE
 **Est. Benefit**: 2-8% (if plist lookups in hot paths)
 **Risk**: Low
+**Status**: COMPLETE - Converted zone objects from plists to typed structs (`zone-object`). All per-tick hot paths (respawn updates, pickups, rendering, serialization) now use O(1) struct accessors instead of O(n) `getf` plist lookups.
 
 **Steps**:
 1. Audit for `getf` plist lookups in hot paths
