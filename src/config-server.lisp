@@ -17,6 +17,14 @@
 (defparameter *private-state-retries* 3
   "Frames to resend private state updates to the owning client.")
 
+;;; Snapshot Rate - Phase 3 perf: decouple snapshot rate from sim rate
+(defparameter *snapshot-rate-hz* 20
+  "Snapshot send rate in Hz. Default 20Hz with client interpolation.
+   Lower than sim rate (60Hz) to reduce bandwidth and serialization load.
+   Override via MMORPG_SNAPSHOT_RATE environment variable.")
+(defparameter *snapshot-interval* (/ 1.0 20)
+  "Seconds between snapshot broadcasts. Computed from *snapshot-rate-hz*.")
+
 ;;; Delta Compression - See docs/net.md Prong 2
 (defparameter *delta-compression-enabled* t
   "Enable delta compression (Prong 2). When T, server sends only dirty entities
@@ -36,6 +44,13 @@
   "Maximum payload bytes per UDP chunk (buffer size minus header overhead).")
 (defparameter *chunk-timeout* 1.0
   "Seconds before discarding incomplete chunk sequences.")
+
+;;; Binary Snapshots - Phase 3 perf: reduce serialization overhead
+(defparameter *use-binary-snapshots* nil
+  "Enable binary snapshot encoding (Phase 3 Task 3.1).
+   When T, snapshots use compact binary format instead of plist text.
+   Reduces bandwidth and serialization CPU. Requires client/server sync.
+   Toggle via MMORPG_BINARY_SNAPSHOTS=1 environment variable.")
 
 ;;; Auth Encryption - X25519 + ChaCha20-Poly1305
 (defparameter *auth-encryption-enabled* nil

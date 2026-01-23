@@ -72,29 +72,349 @@
   #-sbcl
   1)
 
+;;; Phase 3 perf: Cache host strings to avoid per-packet format/coerce allocation
+(defparameter *host-string-cache* (make-hash-table :test 'eql :size 256)
+  "Cache of packed-ip -> host string. Avoids per-packet format allocation.")
+
+(declaim (inline pack-ipv4-host))
+(defun pack-ipv4-host (host)
+  "Pack IPv4 byte vector into a single fixnum for hash key."
+  (declare (optimize (speed 3) (safety 0) (debug 0)))
+  (if (and (vectorp host) (= (length host) 4))
+      (the fixnum (logior (ash (aref host 0) 24)
+                          (ash (aref host 1) 16)
+                          (ash (aref host 2) 8)
+                          (aref host 3)))
+      0))
+
 (defun host-to-string (host)
-  ;; Convert a host (byte vector or string) to string.
+  "Convert a host (byte vector or string) to string. Uses cache for IPv4."
   (if (stringp host)
       host
-      (format nil "~{~d~^.~}" (coerce host 'list))))
+      (let ((key (pack-ipv4-host host)))
+        (or (gethash key *host-string-cache*)
+            (let ((str (format nil "~{~d~^.~}" (coerce host 'list))))
+              (setf (gethash key *host-string-cache*) str)
+              str)))))
+
+;;;; ========================================================================
+;;;; BINARY SNAPSHOT ENCODING - Phase 3 Task 3.1
+;;;; Compact binary format for snapshot messages to reduce bandwidth and CPU.
+;;;; Uses 4-byte signed integers for all values (matching quantized compact vectors).
+;;;; Format: magic(4) + version(1) + format(1) + seq(4) + zone(4) + counts(6) + data
+;;;; ========================================================================
+
+;;; Magic header for binary snapshots (ASCII "SNAP")
+(defparameter *binary-snapshot-magic* #(83 78 65 80)  ; "SNAP" in ASCII
+  "Magic bytes identifying binary snapshot format.")
+(defparameter *binary-snapshot-version* 1
+  "Binary snapshot format version for compatibility checks.")
+
+;;; Reusable send buffer for binary encoding (avoids per-send allocation)
+(defparameter *binary-send-buffer* nil
+  "Pre-allocated buffer for binary snapshot encoding. Initialized on first use.")
+
+(defun ensure-binary-send-buffer ()
+  "Ensure *binary-send-buffer* is allocated. Returns the buffer."
+  (or *binary-send-buffer*
+      (setf *binary-send-buffer*
+            (make-array *net-buffer-size* :element-type '(unsigned-byte 8)
+                        :initial-element 0))))
+
+;;; Low-level binary encoding primitives
+(declaim (inline write-uint8 write-uint16 write-uint32 write-int32))
+
+(defun write-uint8 (buffer offset value)
+  "Write unsigned 8-bit integer to buffer. Returns new offset."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (type (unsigned-byte 8) value)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (setf (aref buffer offset) value)
+  (the fixnum (1+ offset)))
+
+(defun write-uint16 (buffer offset value)
+  "Write unsigned 16-bit integer (big-endian) to buffer. Returns new offset."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (type (unsigned-byte 16) value)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (setf (aref buffer offset) (ldb (byte 8 8) value)
+        (aref buffer (1+ offset)) (ldb (byte 8 0) value))
+  (the fixnum (+ offset 2)))
+
+(defun write-uint32 (buffer offset value)
+  "Write unsigned 32-bit integer (big-endian) to buffer. Returns new offset."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (let ((v (logand value #xFFFFFFFF)))
+    (setf (aref buffer offset) (ldb (byte 8 24) v)
+          (aref buffer (+ offset 1)) (ldb (byte 8 16) v)
+          (aref buffer (+ offset 2)) (ldb (byte 8 8) v)
+          (aref buffer (+ offset 3)) (ldb (byte 8 0) v)))
+  (the fixnum (+ offset 4)))
+
+(defun write-int32 (buffer offset value)
+  "Write signed 32-bit integer (big-endian, two's complement) to buffer. Returns new offset."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  ;; Handle negative values with two's complement
+  (let ((v (if (< value 0)
+               (logand (+ (ash 1 32) value) #xFFFFFFFF)
+               (logand value #xFFFFFFFF))))
+    (setf (aref buffer offset) (ldb (byte 8 24) v)
+          (aref buffer (+ offset 1)) (ldb (byte 8 16) v)
+          (aref buffer (+ offset 2)) (ldb (byte 8 8) v)
+          (aref buffer (+ offset 3)) (ldb (byte 8 0) v)))
+  (the fixnum (+ offset 4)))
+
+;;; Low-level binary decoding primitives
+(declaim (inline read-uint8 read-uint16 read-uint32 read-int32))
+
+(defun read-uint8 (buffer offset)
+  "Read unsigned 8-bit integer from buffer. Returns (values value new-offset)."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (values (aref buffer offset) (the fixnum (1+ offset))))
+
+(defun read-uint16 (buffer offset)
+  "Read unsigned 16-bit integer (big-endian) from buffer. Returns (values value new-offset)."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (values (the fixnum (logior (ash (aref buffer offset) 8)
+                              (aref buffer (1+ offset))))
+          (the fixnum (+ offset 2))))
+
+(defun read-uint32 (buffer offset)
+  "Read unsigned 32-bit integer (big-endian) from buffer. Returns (values value new-offset)."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (values (logior (ash (aref buffer offset) 24)
+                  (ash (aref buffer (+ offset 1)) 16)
+                  (ash (aref buffer (+ offset 2)) 8)
+                  (aref buffer (+ offset 3)))
+          (the fixnum (+ offset 4))))
+
+(defun read-int32 (buffer offset)
+  "Read signed 32-bit integer (big-endian, two's complement) from buffer."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum offset)
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (let ((v (logior (ash (aref buffer offset) 24)
+                   (ash (aref buffer (+ offset 1)) 16)
+                   (ash (aref buffer (+ offset 2)) 8)
+                   (aref buffer (+ offset 3)))))
+    ;; Convert from two's complement if high bit set
+    (values (if (logbitp 31 v)
+                (- v (ash 1 32))
+                v)
+            (the fixnum (+ offset 4)))))
+
+;;; High-level binary snapshot encoding
+(defun encode-snapshot-binary (state events buffer)
+  "Encode snapshot STATE and EVENTS into BUFFER using binary format.
+   Returns the number of bytes written.
+   STATE is a plist with :format, :seq, :zone-id, :players, :npcs, :objects (or delta keys).
+   EVENTS is a list of event plists (currently not binary-encoded, included as nil count)."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer))
+  (let* ((format (getf state :format))
+         (is-delta (member format '(:delta-v5)))
+         (seq (or (getf state :seq) 0))
+         (zone-id-hash (encode-zone-id (getf state :zone-id)))
+         ;; Player vectors are either :players (full) or :changed-players (delta)
+         (players (if is-delta
+                      (getf state :changed-players)
+                      (getf state :players)))
+         (npcs (if is-delta
+                   (getf state :changed-npcs)
+                   (getf state :npcs)))
+         (objects (getf state :objects))
+         (player-count (if players (length players) 0))
+         (npc-count (if npcs (length npcs) 0))
+         (object-count (if objects (length objects) 0))
+         (offset 0))
+    (declare (type fixnum offset player-count npc-count object-count))
+    ;; Write header
+    ;; Magic bytes (4)
+    (dotimes (i 4)
+      (setf (aref buffer i) (aref *binary-snapshot-magic* i)))
+    (setf offset 4)
+    ;; Version (1)
+    (setf offset (write-uint8 buffer offset *binary-snapshot-version*))
+    ;; Format flag: 0=compact-v5, 1=delta-v5 (1)
+    (setf offset (write-uint8 buffer offset (if is-delta 1 0)))
+    ;; Sequence number (4)
+    (setf offset (write-uint32 buffer offset seq))
+    ;; Zone-id hash (4)
+    (setf offset (write-uint32 buffer offset zone-id-hash))
+    ;; Counts: player (2), npc (2), object (2) = 6 bytes
+    (setf offset (write-uint16 buffer offset player-count))
+    (setf offset (write-uint16 buffer offset npc-count))
+    (setf offset (write-uint16 buffer offset object-count))
+    ;; Header total: 4+1+1+4+4+6 = 20 bytes
+
+    ;; Write player vectors (20 int32 each = 80 bytes per player)
+    (when players
+      (loop :for pvec :across players
+            :do (loop :for i :from 0 :below (min 20 (length pvec))
+                      :do (setf offset (write-int32 buffer offset (aref pvec i))))))
+
+    ;; Write NPC vectors (15 int32 each = 60 bytes per NPC)
+    (when npcs
+      (loop :for nvec :across npcs
+            :do (loop :for i :from 0 :below (min 15 (length nvec))
+                      :do (setf offset (write-int32 buffer offset (aref nvec i))))))
+
+    ;; Write objects (keyword id as sxhash, x, y, count = 4 int32 = 16 bytes per object)
+    ;; Note: object format is plist with :id (keyword), :x, :y, :count, :respawn, :respawnable
+    (when objects
+      (dolist (obj objects)
+        (let* ((id (getf obj :id))
+               (id-hash (if (keywordp id) (sxhash id) 0))
+               (x (or (getf obj :x) 0))
+               (y (or (getf obj :y) 0))
+               (count (or (getf obj :count) 1)))
+          (setf offset (write-uint32 buffer offset (logand id-hash #xFFFFFFFF)))
+          (setf offset (write-int32 buffer offset x))
+          (setf offset (write-int32 buffer offset y))
+          (setf offset (write-int32 buffer offset count)))))
+
+    ;; Events not included in binary format (requires plist fallback for complex events)
+    ;; Future: encode event count and binary event data
+
+    offset))
+
+(defun is-binary-snapshot-p (buffer size)
+  "Check if BUFFER contains a binary snapshot (starts with magic bytes)."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum size))
+  (and (>= size 4)
+       (= (aref buffer 0) 83)   ; 'S'
+       (= (aref buffer 1) 78)   ; 'N'
+       (= (aref buffer 2) 65)   ; 'A'
+       (= (aref buffer 3) 80))) ; 'P'
+
+(defun decode-snapshot-binary (buffer size)
+  "Decode binary snapshot from BUFFER into plist format for apply-game-state.
+   Returns plist compatible with deserialize-game-state-compact/delta."
+  (declare (type (simple-array (unsigned-byte 8) (*)) buffer)
+           (type fixnum size))
+  (when (< size 20)  ; Minimum header size
+    (return-from decode-snapshot-binary nil))
+  ;; Skip magic bytes (already validated by is-binary-snapshot-p)
+  (let ((offset 4))
+    (declare (type fixnum offset))
+    ;; Read version (1)
+    (multiple-value-bind (version new-off) (read-uint8 buffer offset)
+      (setf offset new-off)
+      (when (/= version *binary-snapshot-version*)
+        (warn "Binary snapshot version mismatch: got ~d, expected ~d" version *binary-snapshot-version*)
+        (return-from decode-snapshot-binary nil)))
+    ;; Read format flag (1)
+    (multiple-value-bind (format-flag new-off) (read-uint8 buffer offset)
+      (setf offset new-off)
+      (let ((is-delta (= format-flag 1)))
+        ;; Read sequence (4)
+        (multiple-value-bind (seq new-off) (read-uint32 buffer offset)
+          (setf offset new-off)
+          ;; Read zone-id hash (4)
+          (multiple-value-bind (zone-hash new-off) (read-uint32 buffer offset)
+            (setf offset new-off)
+            ;; Read counts (2+2+2)
+            (multiple-value-bind (player-count new-off) (read-uint16 buffer offset)
+              (setf offset new-off)
+              (multiple-value-bind (npc-count new-off) (read-uint16 buffer offset)
+                (setf offset new-off)
+                (multiple-value-bind (object-count new-off) (read-uint16 buffer offset)
+                  (setf offset new-off)
+                  ;; Read player vectors
+                  (let ((players (make-array player-count)))
+                    (dotimes (p player-count)
+                      (let ((pvec (make-array 20 :initial-element 0)))
+                        (dotimes (i 20)
+                          (multiple-value-bind (val new-off) (read-int32 buffer offset)
+                            (setf (aref pvec i) val
+                                  offset new-off)))
+                        (setf (aref players p) pvec)))
+                    ;; Read NPC vectors
+                    (let ((npcs (make-array npc-count)))
+                      (dotimes (n npc-count)
+                        (let ((nvec (make-array 15 :initial-element 0)))
+                          (dotimes (i 15)
+                            (multiple-value-bind (val new-off) (read-int32 buffer offset)
+                              (setf (aref nvec i) val
+                                    offset new-off)))
+                          (setf (aref npcs n) nvec)))
+                      ;; Read objects (as id-hash, x, y, count - need reverse lookup)
+                      ;; Note: We lose keyword identity, but objects are matched by position
+                      (let ((objects nil))
+                        (dotimes (o object-count)
+                          (multiple-value-bind (id-hash new-off) (read-uint32 buffer offset)
+                            (setf offset new-off)
+                            (multiple-value-bind (x new-off) (read-int32 buffer offset)
+                              (setf offset new-off)
+                              (multiple-value-bind (y new-off) (read-int32 buffer offset)
+                                (setf offset new-off)
+                                (multiple-value-bind (count new-off) (read-int32 buffer offset)
+                                  (setf offset new-off)
+                                  ;; Use :unknown for id since we can't reverse sxhash
+                                  ;; Client will use position for matching
+                                  (push (list :id :unknown-binary
+                                              :id-hash id-hash
+                                              :x x :y y :count count)
+                                        objects))))))
+                        ;; Build result plist
+                        (if is-delta
+                            (list :format :delta-v5
+                                  :seq seq
+                                  :zone-id nil  ; Zone-id not recoverable from hash
+                                  :zone-id-hash zone-hash
+                                  :changed-players players
+                                  :changed-npcs npcs
+                                  :objects (nreverse objects))
+                            (list :format :compact-v5
+                                  :seq seq
+                                  :zone-id nil  ; Zone-id not recoverable from hash
+                                  :zone-id-hash zone-hash
+                                  :players players
+                                  :npcs npcs
+                                  :objects (nreverse objects)))))))))))))))
 
 (defun receive-net-message (socket buffer)
   ;; Receive a single UDP message if ready; returns message and sender.
   ;; Returns NIL gracefully if server unreachable (CONNECTION-REFUSED-ERROR).
+  ;; Phase 3: Detects and decodes binary snapshots when *use-binary-snapshots* enabled.
   (handler-case
       (when (usocket:wait-for-input socket :timeout 0 :ready-only t)
         (multiple-value-bind (recv size host port)
             (usocket:socket-receive socket buffer (length buffer))
           (declare (ignore recv))
           (when (and size (> size 0))
-            (let* ((text (octets-to-string buffer size))
-                   (message (decode-net-message text)))
-              (unless message
-                (log-verbose "Dropped malformed packet from ~a:~d (~d bytes)"
-                             (host-to-string host)
-                             port
-                             size))
-              (values message (host-to-string host) port)))))
+            ;; Phase 3: Check for binary snapshot format
+            (if (is-binary-snapshot-p buffer size)
+                ;; Binary snapshot - decode and wrap in snapshot message format
+                (let ((state (decode-snapshot-binary buffer size)))
+                  (if state
+                      (values (list :type :snapshot :state state :events nil)
+                              (host-to-string host) port)
+                      (progn
+                        (log-verbose "Failed to decode binary snapshot from ~a:~d (~d bytes)"
+                                     (host-to-string host) port size)
+                        (values nil (host-to-string host) port))))
+                ;; Text format - decode as before
+                (let* ((text (octets-to-string buffer size))
+                       (message (decode-net-message text)))
+                  (unless message
+                    (log-verbose "Dropped malformed packet from ~a:~d (~d bytes)"
+                                 (host-to-string host)
+                                 port
+                                 size))
+                  (values message (host-to-string host) port))))))
     (usocket:connection-refused-error ()
       ;; Server unreachable - return nil gracefully
       nil)))
@@ -115,11 +435,34 @@
 
 ;;; UDP Fragmentation - See docs/net.md Prong 3
 (defstruct chunk-buffer
-  "Client-side buffer for reassembling fragmented snapshots."
+  "Client-side buffer for reassembling fragmented snapshots.
+   Phase 3: Uses reusable buffers to avoid per-chunk allocation."
   (seq nil)                    ; Sequence number being assembled
   (total 0 :type fixnum)       ; Expected chunk count
-  (received (make-hash-table :test 'eql :size 16)) ; chunk-idx -> data string
+  (chunk-lengths nil)          ; Vector of chunk lengths (reused)
+  (chunk-offsets nil)          ; Vector of chunk start offsets (reused)
+  (data-buffer nil)            ; Reusable byte buffer for reassembly
+  (data-fill 0 :type fixnum)   ; Current fill pointer in data-buffer
   (timestamp 0.0))             ; For timeout detection
+
+;;; Phase 3: Reusable reassembly buffer (avoid per-snapshot allocation)
+(defparameter *chunk-reassembly-buffer-size* (* 256 1024)
+  "Size of reusable chunk reassembly buffer (256KB default, handles large snapshots).")
+
+(defun ensure-chunk-buffer-storage (buffer max-chunks)
+  "Ensure BUFFER has storage for reassembly. Reuses existing if large enough."
+  (unless (and (chunk-buffer-data-buffer buffer)
+               (>= (length (chunk-buffer-data-buffer buffer)) *chunk-reassembly-buffer-size*))
+    (setf (chunk-buffer-data-buffer buffer)
+          (make-array *chunk-reassembly-buffer-size*
+                      :element-type '(unsigned-byte 8)
+                      :initial-element 0)))
+  (unless (and (chunk-buffer-chunk-lengths buffer)
+               (>= (length (chunk-buffer-chunk-lengths buffer)) max-chunks))
+    (setf (chunk-buffer-chunk-lengths buffer)
+          (make-array (max 32 max-chunks) :element-type 'fixnum :initial-element 0)
+          (chunk-buffer-chunk-offsets buffer)
+          (make-array (max 32 max-chunks) :element-type 'fixnum :initial-element 0))))
 
 (defparameter *active-sessions* (make-hash-table :test 'equal :size 512)
   "Map of username (lowercase) -> net-client for logged-in accounts.")
@@ -1191,69 +1534,145 @@
 
 ;;;; ========================================================================
 ;;;; UDP FRAGMENTATION - See docs/net.md Prong 3
+;;;; Phase 3: Uses reusable buffers to minimize allocation
 ;;;; ========================================================================
+
+;;; Reusable buffer for fragmented snapshot payloads
+(defparameter *fragmentation-payload-buffer* nil
+  "Reusable string buffer for fragmented snapshot serialization.")
+(defparameter *fragmentation-payload-size* (* 256 1024)
+  "Size of fragmentation payload buffer (256KB).")
+(defparameter *fragmentation-chunk-buffer* nil
+  "Reusable byte buffer for sending chunk data.")
+
+(defun ensure-fragmentation-buffers ()
+  "Ensure fragmentation buffers are allocated. Returns payload buffer."
+  (unless (and *fragmentation-payload-buffer*
+               (>= (array-dimension *fragmentation-payload-buffer* 0)
+                   *fragmentation-payload-size*))
+    (setf *fragmentation-payload-buffer*
+          (make-array *fragmentation-payload-size*
+                      :element-type 'character
+                      :fill-pointer 0
+                      :adjustable nil)))
+  (unless (and *fragmentation-chunk-buffer*
+               (>= (length *fragmentation-chunk-buffer*) *max-chunk-payload*))
+    (setf *fragmentation-chunk-buffer*
+          (make-array *max-chunk-payload*
+                      :element-type '(unsigned-byte 8)
+                      :initial-element 0)))
+  *fragmentation-payload-buffer*)
 
 (defun send-fragmented-snapshot (socket state event-plists seq host port)
   "Split snapshot into chunks and send each via UDP.
-   Used when snapshot exceeds UDP buffer size."
-  (let* ((payload (with-output-to-string (out)
-                    (prin1 (list :state state :events event-plists) out)))
-         (total-size (length payload))
-         (chunk-count (ceiling total-size *max-chunk-payload*)))
-    (log-verbose "Fragmenting snapshot: ~d bytes into ~d chunks for ~a:~d"
-                 total-size chunk-count host port)
-    (loop :for chunk-idx :from 0 :below chunk-count
-          :for start = (* chunk-idx *max-chunk-payload*)
-          :for end = (min (+ start *max-chunk-payload*) total-size)
-          :for chunk-data = (subseq payload start end)
-          :do (send-net-message socket
-                               (list :type :snapshot-chunk
-                                     :seq seq
-                                     :chunk chunk-idx
-                                     :total chunk-count
-                                     :data chunk-data)
-                               :host host :port port))))
+   Used when snapshot exceeds UDP buffer size.
+   Phase 3: Uses reusable buffers to minimize allocation."
+  ;; Ensure buffers exist and reset fill pointer
+  (let ((payload-buf (ensure-fragmentation-buffers)))
+    (setf (fill-pointer payload-buf) 0)
+    ;; Serialize to reusable buffer
+    (with-output-to-string (out payload-buf)
+      (prin1 (list :state state :events event-plists) out))
+    (let* ((total-size (fill-pointer payload-buf))
+           (chunk-count (ceiling total-size *max-chunk-payload*)))
+      (declare (type fixnum total-size chunk-count))
+      (log-verbose "Fragmenting snapshot: ~d bytes into ~d chunks for ~a:~d"
+                   total-size chunk-count host port)
+      ;; Send chunks using displaced arrays to avoid subseq allocation
+      (loop :for chunk-idx fixnum :from 0 :below chunk-count
+            :for start fixnum = (* chunk-idx *max-chunk-payload*)
+            :for end fixnum = (min (+ start *max-chunk-payload*) total-size)
+            :for chunk-len fixnum = (- end start)
+            ;; Create displaced string for this chunk (no copy)
+            :for chunk-data = (make-array chunk-len
+                                          :element-type 'character
+                                          :displaced-to payload-buf
+                                          :displaced-index-offset start)
+            :do (send-net-message socket
+                                 (list :type :snapshot-chunk
+                                       :seq seq
+                                       :chunk chunk-idx
+                                       :total chunk-count
+                                       :data chunk-data)
+                                 :host host :port port)))))
 
 (defun receive-snapshot-chunk (buffer chunk-message current-time)
   "Add chunk to reassembly buffer. Returns complete state or nil.
    BUFFER is a chunk-buffer struct.
    CHUNK-MESSAGE is the incoming :snapshot-chunk message.
-   CURRENT-TIME is used for timeout detection."
+   CURRENT-TIME is used for timeout detection.
+   Phase 3: Uses reusable buffers to avoid per-chunk allocation."
   (let ((seq (getf chunk-message :seq))
         (idx (getf chunk-message :chunk))
         (total (getf chunk-message :total))
         (data (getf chunk-message :data)))
+    (declare (type fixnum idx total))
     ;; Timeout check - discard old incomplete sequences
     (when (and (chunk-buffer-seq buffer)
                (> (- current-time (chunk-buffer-timestamp buffer)) *chunk-timeout*))
       (log-verbose "Chunk timeout: discarding incomplete seq ~d" (chunk-buffer-seq buffer))
-      (setf (chunk-buffer-seq buffer) nil))
-    ;; New sequence? Reset buffer
+      (setf (chunk-buffer-seq buffer) nil
+            (chunk-buffer-data-fill buffer) 0))
+    ;; New sequence? Reset buffer and ensure storage
     (when (or (null (chunk-buffer-seq buffer))
               (/= seq (chunk-buffer-seq buffer)))
+      (ensure-chunk-buffer-storage buffer total)
       (setf (chunk-buffer-seq buffer) seq
             (chunk-buffer-total buffer) total
-            (chunk-buffer-received buffer) (make-hash-table :test 'eql :size 16)
-            (chunk-buffer-timestamp buffer) current-time))
-    ;; Store chunk
-    (setf (gethash idx (chunk-buffer-received buffer)) data)
-    ;; Check if complete
-    (when (= (hash-table-count (chunk-buffer-received buffer)) total)
-      ;; Reassemble in order
-      (let ((parts nil))
-        (loop :for i :from 0 :below total
-              :do (push (gethash i (chunk-buffer-received buffer)) parts))
-        (let* ((combined (apply #'concatenate 'string (nreverse parts)))
-               (*read-eval* nil)
-               (parsed (handler-case
-                           (read-from-string combined nil nil)
-                         (error () nil))))
-          (when parsed
-            ;; Clear buffer for next sequence
-            (setf (chunk-buffer-seq buffer) nil)
-            ;; Return the parsed state and events
-            (values (getf parsed :state)
-                    (getf parsed :events))))))))
+            (chunk-buffer-data-fill buffer) 0
+            (chunk-buffer-timestamp buffer) current-time)
+      ;; Clear chunk tracking (lengths=0 means not received)
+      (let ((lengths (chunk-buffer-chunk-lengths buffer)))
+        (dotimes (i total)
+          (setf (aref lengths i) 0))))
+    ;; Store chunk data into reusable buffer
+    (when (and data (stringp data))
+      (let* ((data-len (length data))
+             (lengths (chunk-buffer-chunk-lengths buffer))
+             (offsets (chunk-buffer-chunk-offsets buffer))
+             (data-buf (chunk-buffer-data-buffer buffer)))
+        (declare (type fixnum data-len))
+        ;; Only store if not already received (avoid duplicates)
+        (when (and (< idx total) (zerop (aref lengths idx)))
+          ;; Calculate offset for this chunk (sum of prior chunks)
+          (let ((offset 0))
+            (declare (type fixnum offset))
+            (dotimes (i idx)
+              (incf offset (aref lengths i)))
+            (setf (aref offsets idx) offset)
+            ;; Copy string bytes to data buffer
+            (when (<= (+ offset data-len) (length data-buf))
+              (dotimes (i data-len)
+                (setf (aref data-buf (+ offset i))
+                      (char-code (char data i))))
+              (setf (aref lengths idx) data-len)
+              (incf (chunk-buffer-data-fill buffer)))))))
+    ;; Check if complete (all chunks received)
+    (when (= (chunk-buffer-data-fill buffer) total)
+      ;; Reassemble: compute total size and convert to string
+      (let* ((lengths (chunk-buffer-chunk-lengths buffer))
+             (data-buf (chunk-buffer-data-buffer buffer))
+             (total-bytes 0))
+        (declare (type fixnum total-bytes))
+        (dotimes (i total)
+          (incf total-bytes (aref lengths i)))
+        ;; Convert bytes to string (single allocation for final parse)
+        (let* ((combined (make-string total-bytes))
+               (pos 0))
+          (declare (type fixnum pos))
+          (dotimes (i total-bytes)
+            (setf (char combined i) (code-char (aref data-buf i))))
+          (let* ((*read-eval* nil)
+                 (parsed (handler-case
+                             (read-from-string combined nil nil)
+                           (error () nil))))
+            (when parsed
+              ;; Clear buffer for next sequence
+              (setf (chunk-buffer-seq buffer) nil
+                    (chunk-buffer-data-fill buffer) 0)
+              ;; Return the parsed state and events
+              (values (getf parsed :state)
+                      (getf parsed :events)))))))))
 
 (defun client-needs-full-resync-p (client current-seq)
   "Return T if CLIENT needs a full snapshot instead of delta.
@@ -1382,6 +1801,8 @@
   ;; they received from auth-ok (stored in game-net-player-id).
   ;;
   ;; UDP FRAGMENTATION (Prong 3): If snapshot exceeds buffer size, split into chunks.
+  ;; BINARY ENCODING (Phase 3 Task 3.1): When *use-binary-snapshots* is T, use compact
+  ;; binary format instead of plist text. Reduces bandwidth ~50% and encoding CPU.
   (declare (ignore worker-threads)) ; Parallel disabled - socket serializes sends anyway
   (let ((authenticated-clients nil))
     ;; Filter authenticated clients
@@ -1390,30 +1811,58 @@
                  (net-client-player c))
         (push c authenticated-clients)))
     (when authenticated-clients
-      ;; CRITICAL OPTIMIZATION: Encode snapshot once, reuse for all clients
-      ;; Previously we called encode-net-message 40 times for 40 clients!
-      (let* ((message (list :type :snapshot
-                            :state state
-                            :events event-plists))
-             (text (encode-net-message message))
-             (octets (string-to-octets text))
-             (size (length octets)))
-        (cond
-          ;; Normal case: snapshot fits in one UDP packet
-          ((<= size *net-buffer-size*)
-           (dolist (client authenticated-clients)
-             (send-snapshot-bytes socket octets size
-                                  (net-client-host client)
-                                  (net-client-port client))))
-          ;; Large snapshot: use UDP fragmentation (Prong 3)
-          (t
-           (let ((seq (or (getf state :seq) 0)))
-             (log-verbose "Snapshot too large (~d bytes), fragmenting for ~d clients"
-                          size (length authenticated-clients))
-             (dolist (client authenticated-clients)
-               (send-fragmented-snapshot socket state event-plists seq
-                                         (net-client-host client)
-                                         (net-client-port client))))))))))
+      ;; Phase 3 Task 3.1: Use binary encoding when enabled
+      (if *use-binary-snapshots*
+          ;; BINARY PATH: Encode directly to reusable buffer
+          (let* ((buffer (ensure-binary-send-buffer))
+                 (size (encode-snapshot-binary state event-plists buffer)))
+            (declare (type fixnum size))
+            (cond
+              ;; Normal case: binary snapshot fits in one UDP packet
+              ((<= size *net-buffer-size*)
+               (dolist (client authenticated-clients)
+                 (send-snapshot-bytes socket buffer size
+                                      (net-client-host client)
+                                      (net-client-port client))))
+              ;; Large binary snapshot: fall back to text + fragmentation
+              ;; (Binary fragmentation not implemented - rare case for large zones)
+              (t
+               (log-verbose "Binary snapshot too large (~d bytes), falling back to text+frag"
+                            size)
+               (let* ((message (list :type :snapshot :state state :events event-plists))
+                      (text (encode-net-message message))
+                      (octets (string-to-octets text))
+                      (seq (or (getf state :seq) 0)))
+                 (declare (ignore octets))
+                 (dolist (client authenticated-clients)
+                   (send-fragmented-snapshot socket state event-plists seq
+                                             (net-client-host client)
+                                             (net-client-port client)))))))
+          ;; TEXT PATH: Original plist encoding
+          ;; CRITICAL OPTIMIZATION: Encode snapshot once, reuse for all clients
+          ;; Previously we called encode-net-message 40 times for 40 clients!
+          (let* ((message (list :type :snapshot
+                                :state state
+                                :events event-plists))
+                 (text (encode-net-message message))
+                 (octets (string-to-octets text))
+                 (size (length octets)))
+            (cond
+              ;; Normal case: snapshot fits in one UDP packet
+              ((<= size *net-buffer-size*)
+               (dolist (client authenticated-clients)
+                 (send-snapshot-bytes socket octets size
+                                      (net-client-host client)
+                                      (net-client-port client))))
+              ;; Large snapshot: use UDP fragmentation (Prong 3)
+              (t
+               (let ((seq (or (getf state :seq) 0)))
+                 (log-verbose "Snapshot too large (~d bytes), fragmenting for ~d clients"
+                              size (length authenticated-clients))
+                 (dolist (client authenticated-clients)
+                   (send-fragmented-snapshot socket state event-plists seq
+                                             (net-client-host client)
+                                             (net-client-port client)))))))))))
 
 (defun queue-private-state (client player &key (retries *private-state-retries*))
   ;; Queue owner-only state updates (inventory/equipment/stats) for CLIENT.
@@ -2265,14 +2714,30 @@
     (let ((profile-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_PROFILE")
                            #-sbcl (uiop:getenv "MMORPG_PROFILE")))
           (gc-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_VERBOSE_GC")
-                      #-sbcl (uiop:getenv "MMORPG_VERBOSE_GC"))))
+                      #-sbcl (uiop:getenv "MMORPG_VERBOSE_GC")))
+          (snapshot-rate-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_SNAPSHOT_RATE")
+                                 #-sbcl (uiop:getenv "MMORPG_SNAPSHOT_RATE")))
+          (binary-snapshots-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_BINARY_SNAPSHOTS")
+                                    #-sbcl (uiop:getenv "MMORPG_BINARY_SNAPSHOTS"))))
       (when (and profile-str (string= profile-str "1"))
         (setf *profile-enabled* t)
         (init-profile-log 10000)
         (format t "~&SERVER: Profiling enabled~%"))
       (when (and gc-str (string= gc-str "1"))
         (setf *verbose-gc* t)
-        (format t "~&SERVER: GC monitoring enabled~%")))
+        (format t "~&SERVER: GC monitoring enabled~%"))
+      ;; Phase 3: Configurable snapshot rate (default 20Hz)
+      (when snapshot-rate-str
+        (let ((rate (parse-integer snapshot-rate-str :junk-allowed t)))
+          (when (and rate (> rate 0) (<= rate 60))
+            (setf *snapshot-rate-hz* rate
+                  *snapshot-interval* (/ 1.0 rate))
+            (format t "~&SERVER: Snapshot rate set to ~dHz~%" rate))))
+      ;; Phase 3 Task 3.1: Binary snapshot encoding
+      (when (and binary-snapshots-str (string= binary-snapshots-str "1"))
+        (setf *use-binary-snapshots* t)
+        (ensure-binary-send-buffer)
+        (format t "~&SERVER: Binary snapshots enabled~%")))
     ;; Clear any stale session state from previous REPL runs
     ;; (Important when restarting server without restarting the Lisp process)
     (log-verbose "Clearing stale sessions (active=~d, player=~d)"
@@ -2319,6 +2784,7 @@
                      :with frames = 0
                      :with accumulator = 0.0
                      :with snapshot-seq = 0  ; Delta compression sequence counter
+                     :with snapshot-accumulator = 0.0  ; Phase 3: decouple snapshot rate
                      :with tick-units = (floor (* *sim-tick-seconds*
                                                   internal-time-units-per-second))
                      :until (or stop-flag
@@ -2419,6 +2885,7 @@
                          (let ((dt *sim-tick-seconds*))
                            (incf elapsed dt)
                            (incf frames)
+                           (incf snapshot-accumulator dt)  ; Phase 3: track time for snapshot rate
                            (multiple-value-bind (new-acc transitions)
                                (server-step game nil dt accumulator)
                              (setf accumulator new-acc)
@@ -2462,10 +2929,12 @@
                            (setf last-ownership-refresh-time elapsed))
                          ;; 3d. Check for timed-out clients (free sessions after 30s inactivity)
                          (setf clients (check-client-timeouts clients elapsed game))
-                         ;; 4. Send snapshots to all clients
+                         ;; 4. Send snapshots to all clients (Phase 3: rate-limited)
                          ;; Toggle between Prong 1 (full) and Prong 2 (delta) via *delta-compression-enabled*
                          ;; EXCEPTION HANDLING: Snapshot errors are non-fatal, skip frame and continue.
-                         (when clients
+                         ;; Phase 3: Decouple snapshot rate from sim rate (default 20Hz vs 60Hz sim)
+                         (when (and clients (>= snapshot-accumulator *snapshot-interval*))
+                           (decf snapshot-accumulator *snapshot-interval*)
                            (handler-case
                                (let* ((events (pop-combat-events (game-combat-events game)))
                                       (event-plists (mapcar #'combat-event->plist events))
