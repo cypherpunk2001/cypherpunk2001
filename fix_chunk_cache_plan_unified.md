@@ -1105,3 +1105,76 @@ Per-zone counts are stable during steady state. Each zone is under 64 limit indi
 ### Data Location
 
 Full A2 debug output: `/tmp/claude/-home-telecommuter-repos-mmorpg/tasks/bbed7d0.output`
+
+---
+
+## Appendix Part 3: X2 Validation Session (2026-01-23)
+
+### Test Protocol
+- Phases C, X1, X2 implemented
+- Walk around zone, cross zone boundaries, return
+- Validate zone-id normalization and cache identity stability
+
+### Key Results
+
+#### Result 1: Zone-ID Normalization Working ✓
+
+All 3505 LOOKUP events show `type:KEYWORD`:
+```
+[CACHE] LOOKUP zone-id::ZONE-2 normalized::ZONE-2 type:KEYWORD cache-id:2581417454128658221 hit:Y
+```
+
+**Conclusion:** `normalize-zone-id` correctly converts all zone-ids to keywords.
+
+#### Result 2: Cache Identity Stable ✓
+
+Each zone has exactly ONE cache instance (consistent cache-id across all operations):
+```
+zone:ZONE-1 → cache-id consistent
+zone:ZONE-2 → cache-id:2581417454128658221 (all 3505 lookups)
+zone:ZONE-3 → cache-id consistent
+zone:ZONE-4 → cache-id consistent
+```
+
+**Conclusion:** No cache fragmentation. The A2 bug (duplicate CREATEs without CLEAR) is fixed.
+
+#### Result 3: Dramatic Reduction in CREATE Events ✓
+
+| Metric | A2 Session | X2 Session | Improvement |
+|--------|------------|------------|-------------|
+| Total CREATEs | 1030 | 174 | **83% reduction** |
+| Duplicate CREATEs | 27× max | 0 | **Eliminated** |
+| Negative coord chunks | 218 | 0 | **Eliminated** |
+
+#### Result 4: Near-Perfect Hit Rate ✓
+
+- LOOKUP events: 3505
+- Cache hits: 3498
+- Cache misses: 7
+- **Hit rate: 99.8%**
+
+#### Result 5: X1 Fix Verified ✓
+
+Zone change now uses `CLEAR-OTHERS` (not `CLEAR-ALL`):
+```
+[CACHE] CLEAR-OTHERS keeping:ZONE-2 caller:zone-change
+[CACHE] CLEAR-OTHERS keeping:ZONE-1 caller:zone-change
+```
+
+Destination zone cache preserved on transition.
+
+### Validation Status
+
+| Phase | Validation |
+|-------|------------|
+| C (bounds clamping) | ✓ Zero negative coord chunks |
+| X1 (clear-others) | ✓ Destination zone kept warm |
+| X2 (zone-id normalization) | ✓ All types KEYWORD, cache-id stable |
+
+### Conclusion
+
+**X2 VALIDATED.** The cache lookup bug from A2 (same key created twice without CLEAR) is fixed. Root causes were:
+1. Aggressive CLEAR-ALL on zone change (fixed by X1)
+2. Potential zone-id type inconsistency (fixed by X2 normalization)
+
+Ready to proceed with Phase B (pre-render step).

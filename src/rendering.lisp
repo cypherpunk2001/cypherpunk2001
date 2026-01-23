@@ -647,6 +647,32 @@
          (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
     (raylib:draw-texture-pro tileset src-rect dest-rect origin 0.0 raylib:+white+)))
 
+(defun draw-chunk-tiles-direct (zone layer chunk-x chunk-y tile-dest-size
+                                world-offset-x world-offset-y editor assets)
+  "Phase B fallback: Draw chunk tiles directly to screen without caching.
+   Used when a chunk isn't cached yet to avoid blank tiles for a frame.
+   WORLD-OFFSET-X/Y: additional offset for preview zones (0,0 for main zone)."
+  (let* ((chunk-tiles *render-chunk-size*)
+         (chunk-pixel-size (* chunk-tiles tile-dest-size))
+         (chunk-world-x (+ (* chunk-x chunk-pixel-size) world-offset-x))
+         (chunk-world-y (+ (* chunk-y chunk-pixel-size) world-offset-y))
+         (chunk-size (zone-chunk-size zone))
+         (tile-src-size (float *tile-size*)))
+    (multiple-value-bind (layer-tileset layer-columns)
+        (layer-tileset-context layer editor assets)
+      (when layer-tileset
+        (loop :for local-y :from 0 :below chunk-tiles
+              :for tile-y = (+ (* chunk-y chunk-tiles) local-y)
+              :for dest-y = (+ chunk-world-y (* local-y tile-dest-size))
+              :do (loop :for local-x :from 0 :below chunk-tiles
+                        :for tile-x = (+ (* chunk-x chunk-tiles) local-x)
+                        :for dest-x = (+ chunk-world-x (* local-x tile-dest-size))
+                        :for tile-index = (zone-layer-tile-at layer chunk-size tile-x tile-y)
+                        :when (and tile-index (> tile-index 0))
+                        :do (draw-tile-to-render-texture layer-tileset layer-columns tile-index
+                                                         dest-x dest-y
+                                                         tile-src-size tile-dest-size)))))))
+
 (defun get-or-render-chunk (cache zone layer chunk-x chunk-y tile-dest-size editor assets)
   "Get a cached chunk texture, rendering it if needed."
   ;; Phase C: Defense-in-depth bounds check - skip out-of-bounds chunks entirely
@@ -714,29 +740,53 @@
     (setf (render-chunk-cache-last-access entry) frame)
     (render-chunk-cache-texture entry)))
 
+;;; Phase B: Draw-only chunk retrieval (no FBO creation during draw pass)
+(defun get-cached-chunk-texture (cache layer chunk-x chunk-y)
+  "Get an existing cached chunk texture WITHOUT creating it.
+   Returns the render-texture if cached and ready, NIL otherwise.
+   Used during draw pass to ensure no FBO allocation mid-frame."
+  (let* ((key (chunk-cache-key layer chunk-x chunk-y))
+         (chunks (zone-render-cache-chunks cache))
+         (entry (gethash key chunks)))
+    (when (and entry
+               (not (render-chunk-cache-dirty entry))
+               (render-chunk-cache-texture entry))
+      ;; Update LRU and return texture
+      (setf (render-chunk-cache-last-access entry)
+            (zone-render-cache-frame-counter cache))
+      (incf *render-cache-stats-hits*)
+      (render-chunk-cache-texture entry))))
+
 (defun draw-cached-chunk (cache zone layer chunk-x chunk-y
                           chunk-pixel-size tile-dest-size
                           editor assets zoom)
-  "Draw a single cached chunk at its world position."
-  (let ((texture (get-or-render-chunk cache zone layer chunk-x chunk-y
-                                      tile-dest-size editor assets)))
-    (when texture
-      (let* ((world-x (* chunk-x chunk-pixel-size))
-             (world-y (* chunk-y chunk-pixel-size))
-             ;; Render textures are flipped vertically in raylib
-             (tex (raylib:render-texture-2d-texture texture))
-             (tex-width (float (raylib:texture-2d-width tex)))
-             (tex-height (float (raylib:texture-2d-height tex)))
-             ;; Source rect: flip Y by using negative height
-             (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
-                                              :width tex-width :height (- tex-height)))
-             ;; Dest rect: world position, scaled by zoom (camera handles transform)
-             (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
-                                               :width (float chunk-pixel-size)
-                                               :height (float chunk-pixel-size)))
-             (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
-        (declare (ignore zoom)) ; Camera mode handles zoom
-        (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+)))))
+  "Draw a single cached chunk at its world position.
+   Phase B: Only uses existing cached textures - never creates FBOs during draw.
+   Falls back to per-tile drawing if chunk not cached (avoids blank frames)."
+  (declare (ignore zoom)) ; Camera mode handles zoom
+  (let ((texture (get-cached-chunk-texture cache layer chunk-x chunk-y)))
+    (if texture
+        ;; Draw cached texture
+        (let* ((world-x (* chunk-x chunk-pixel-size))
+               (world-y (* chunk-y chunk-pixel-size))
+               ;; Render textures are flipped vertically in raylib
+               (tex (raylib:render-texture-2d-texture texture))
+               (tex-width (float (raylib:texture-2d-width tex)))
+               (tex-height (float (raylib:texture-2d-height tex)))
+               ;; Source rect: flip Y by using negative height
+               (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
+                                                :width tex-width :height (- tex-height)))
+               ;; Dest rect: world position, scaled by zoom (camera handles transform)
+               (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
+                                                 :width (float chunk-pixel-size)
+                                                 :height (float chunk-pixel-size)))
+               (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+          (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+))
+        ;; Fallback: chunk not cached - draw tiles directly (no blank frames)
+        (progn
+          (incf *render-cache-stats-misses*)
+          (draw-chunk-tiles-direct zone layer chunk-x chunk-y tile-dest-size
+                                   0 0 editor assets)))))
 
 (defun draw-world-cached (zone cache tile-dest-size zoom
                           view-left view-right view-top view-bottom
@@ -781,26 +831,33 @@
                                       offset-x offset-y
                                       editor assets zoom)
   "Draw a single cached chunk at its world position plus offset.
-   Used for preview zones rendered at map edges."
-  (let ((texture (get-or-render-chunk cache zone layer chunk-x chunk-y
-                                      tile-dest-size editor assets)))
-    (when texture
-      (let* ((world-x (+ (* chunk-x chunk-pixel-size) offset-x))
-             (world-y (+ (* chunk-y chunk-pixel-size) offset-y))
-             ;; Render textures are flipped vertically in raylib
-             (tex (raylib:render-texture-2d-texture texture))
-             (tex-width (float (raylib:texture-2d-width tex)))
-             (tex-height (float (raylib:texture-2d-height tex)))
-             ;; Source rect: flip Y by using negative height
-             (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
-                                              :width tex-width :height (- tex-height)))
-             ;; Dest rect: world position with offset, camera handles transform
-             (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
-                                               :width (float chunk-pixel-size)
-                                               :height (float chunk-pixel-size)))
-             (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
-        (declare (ignore zoom)) ; Camera mode handles zoom
-        (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+)))))
+   Used for preview zones rendered at map edges.
+   Phase B: Only uses existing cached textures - never creates FBOs during draw.
+   Falls back to per-tile drawing if chunk not cached (avoids blank frames)."
+  (declare (ignore zoom)) ; Camera mode handles zoom
+  (let ((texture (get-cached-chunk-texture cache layer chunk-x chunk-y)))
+    (if texture
+        ;; Draw cached texture with offset
+        (let* ((world-x (+ (* chunk-x chunk-pixel-size) offset-x))
+               (world-y (+ (* chunk-y chunk-pixel-size) offset-y))
+               ;; Render textures are flipped vertically in raylib
+               (tex (raylib:render-texture-2d-texture texture))
+               (tex-width (float (raylib:texture-2d-width tex)))
+               (tex-height (float (raylib:texture-2d-height tex)))
+               ;; Source rect: flip Y by using negative height
+               (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
+                                                :width tex-width :height (- tex-height)))
+               ;; Dest rect: world position with offset, camera handles transform
+               (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
+                                                 :width (float chunk-pixel-size)
+                                                 :height (float chunk-pixel-size)))
+               (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+          (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+))
+        ;; Fallback: chunk not cached - draw tiles directly with offset (no blank frames)
+        (progn
+          (incf *render-cache-stats-misses*)
+          (draw-chunk-tiles-direct zone layer chunk-x chunk-y tile-dest-size
+                                   offset-x offset-y editor assets)))))
 
 (defun draw-zone-preview-cached (zone tile-dest-size
                                  view-left view-right view-top view-bottom
@@ -849,6 +906,90 @@
                 :when (and (not (zone-layer-collision-p layer))
                            (eql (zone-layer-id layer) *editor-object-layer-id*))
                 :do (draw-layer-cached layer)))))))
+
+;;;; ========================================================================
+;;;; Phase B: Pre-Render Chunk Preparation
+;;;; Call BEFORE raylib:begin-drawing to move FBO allocation outside draw pass.
+;;;; ========================================================================
+
+(defun prepare-zone-chunks (zone tile-dest-size
+                            view-left view-right view-top view-bottom
+                            editor assets)
+  "Pre-render all visible chunks for ZONE. Call BEFORE begin-drawing.
+   This ensures FBO allocation happens outside the draw pass, eliminating
+   black flash artifacts from mid-frame render target switches."
+  (when (and *render-cache-enabled* zone)
+    (let* ((zone-id (zone-id zone))
+           (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
+           (zone-layers (zone-layers zone))
+           (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+           (max-chunk-x (zone-max-chunk-x zone))
+           (max-chunk-y (zone-max-chunk-y zone))
+           ;; Calculate visible chunk bounds, CLAMPED to zone extents
+           (start-chunk-x (max 0 (floor view-left chunk-pixel-size)))
+           (end-chunk-x (min (1- max-chunk-x) (ceiling view-right chunk-pixel-size)))
+           (start-chunk-y (max 0 (floor view-top chunk-pixel-size)))
+           (end-chunk-y (min (1- max-chunk-y) (ceiling view-bottom chunk-pixel-size))))
+      ;; Skip if entirely out of bounds
+      (when (and (<= start-chunk-x end-chunk-x) (<= start-chunk-y end-chunk-y))
+        ;; Pre-create chunks for all layers (same order as draw)
+        (flet ((prepare-layer (layer)
+                 (loop :for cy :from start-chunk-y :to end-chunk-y
+                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                 :do (get-or-render-chunk cache zone layer cx cy
+                                                          tile-dest-size editor assets)))))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+                :do (prepare-layer layer))
+          (loop :for layer :across zone-layers
+                :when (zone-layer-collision-p layer)
+                :do (prepare-layer layer))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (eql (zone-layer-id layer) *editor-object-layer-id*))
+                :do (prepare-layer layer)))))))
+
+(defun prepare-preview-zone-chunks (preview-zone tile-dest-size
+                                    view-left view-right view-top view-bottom
+                                    offset-x offset-y
+                                    editor assets)
+  "Pre-render visible chunks for a preview zone with offset. Call BEFORE begin-drawing."
+  (when (and *render-cache-enabled* preview-zone)
+    (let* ((zone-id (zone-id preview-zone))
+           (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
+           (zone-layers (zone-layers preview-zone))
+           (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+           (max-chunk-x (zone-max-chunk-x preview-zone))
+           (max-chunk-y (zone-max-chunk-y preview-zone))
+           ;; Adjust view bounds by offset to get preview-local coordinates
+           (preview-left (- view-left offset-x))
+           (preview-right (- view-right offset-x))
+           (preview-top (- view-top offset-y))
+           (preview-bottom (- view-bottom offset-y))
+           ;; Calculate visible chunk bounds, CLAMPED
+           (start-chunk-x (max 0 (floor preview-left chunk-pixel-size)))
+           (end-chunk-x (min (1- max-chunk-x) (ceiling preview-right chunk-pixel-size)))
+           (start-chunk-y (max 0 (floor preview-top chunk-pixel-size)))
+           (end-chunk-y (min (1- max-chunk-y) (ceiling preview-bottom chunk-pixel-size))))
+      ;; Skip if entirely out of bounds
+      (when (and (<= start-chunk-x end-chunk-x) (<= start-chunk-y end-chunk-y))
+        (flet ((prepare-layer (layer)
+                 (loop :for cy :from start-chunk-y :to end-chunk-y
+                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                 :do (get-or-render-chunk cache preview-zone layer cx cy
+                                                          tile-dest-size editor assets)))))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+                :do (prepare-layer layer))
+          (loop :for layer :across zone-layers
+                :when (zone-layer-collision-p layer)
+                :do (prepare-layer layer))
+          (loop :for layer :across zone-layers
+                :when (and (not (zone-layer-collision-p layer))
+                           (eql (zone-layer-id layer) *editor-object-layer-id*))
+                :do (prepare-layer layer)))))))
 
 ;;;; ========================================================================
 ;;;; END RENDER CHUNK CACHE
@@ -2229,50 +2370,110 @@
           (dolist (action actions)
             (draw-option action)))))))
 
+(defun prepare-game-render-caches (game)
+  "Phase B: Pre-render all visible chunk textures BEFORE begin-drawing.
+   This moves FBO allocation outside the draw pass to eliminate black flash."
+  (when *render-cache-enabled*
+    (let* ((player (game-player game))
+           (world (game-world game))
+           (assets (game-assets game))
+           (camera (game-camera game))
+           (editor (game-editor game))
+           (zone (world-zone world))
+           (tile-dest-size (world-tile-dest-size world)))
+      (when zone
+        (multiple-value-bind (camera-x camera-y)
+            (editor-camera-target editor player)
+          (let* ((zoom (camera-zoom camera))
+                 (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+                 (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
+                 (view-left (- camera-x half-view-width))
+                 (view-right (+ camera-x half-view-width))
+                 (view-top (- camera-y half-view-height))
+                 (view-bottom (+ camera-y half-view-height)))
+            ;; Prepare main zone chunks
+            (prepare-zone-chunks zone tile-dest-size
+                                 view-left view-right view-top view-bottom
+                                 editor assets)
+            ;; Prepare preview zone chunks (edges and corners)
+            (labels ((prepare-edge (edge)
+                       (let ((preview-zone (world-preview-zone-for-edge world edge)))
+                         (when preview-zone
+                           (multiple-value-bind (offset-x offset-y)
+                               (preview-zone-offset preview-zone tile-dest-size edge)
+                             (prepare-preview-zone-chunks preview-zone tile-dest-size
+                                                          view-left view-right view-top view-bottom
+                                                          offset-x offset-y
+                                                          editor assets)))))
+                     (prepare-corner (edge-a edge-b)
+                       (let ((preview-zone (world-preview-zone-for-corner world edge-a edge-b)))
+                         (when preview-zone
+                           (multiple-value-bind (offset-x offset-y)
+                               (preview-zone-corner-offset preview-zone tile-dest-size edge-a edge-b)
+                             (prepare-preview-zone-chunks preview-zone tile-dest-size
+                                                          view-left view-right view-top view-bottom
+                                                          offset-x offset-y
+                                                          editor assets))))))
+              ;; Check which edges/corners need preview zones
+              (let ((ex-west (view-exceeds-edge-p world view-left view-right view-top view-bottom :west))
+                    (ex-east (view-exceeds-edge-p world view-left view-right view-top view-bottom :east))
+                    (ex-north (view-exceeds-edge-p world view-left view-right view-top view-bottom :north))
+                    (ex-south (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)))
+                (when ex-west (prepare-edge :west))
+                (when ex-east (prepare-edge :east))
+                (when ex-north (prepare-edge :north))
+                (when ex-south (prepare-edge :south))
+                (when (and ex-west ex-north) (prepare-corner :west :north))
+                (when (and ex-east ex-north) (prepare-corner :east :north))
+                (when (and ex-west ex-south) (prepare-corner :west :south))
+                (when (and ex-east ex-south) (prepare-corner :east :south))))))))))
+
 (defun draw-game (game)
   ;; Render a full frame: world, entities, HUD, and menu.
   ;; Reset cache stats at start of frame (Phase A instrumentation)
   (reset-render-cache-stats)
   (with-timing (:draw-game)
     (let* ((player (game-player game))
-         (npcs (game-npcs game))
-         (world (game-world game))
-         (audio (game-audio game))
-         (ui (game-ui game))
-         (render (game-render game))
-         (assets (game-assets game))
-         (camera (game-camera game))
-         (editor (game-editor game)))
-    (raylib:with-drawing
-      (raylib:clear-background raylib:+black+)
-      (multiple-value-bind (camera-x camera-y)
-          (editor-camera-target editor player)
-        (let* ((zoom (camera-zoom camera))
-               (margin-x (assets-half-sprite-width assets))
-               (margin-y (assets-half-sprite-height assets))
-               (camera-2d (raylib:make-camera-2d
-                           :target (raylib:make-vector2 :x camera-x :y camera-y)
-                           :offset (camera-offset camera)
-                           :rotation 0.0
-                           :zoom zoom)))
-          (raylib:with-mode-2d camera-2d
-            (draw-world world render assets camera player npcs ui editor)
-            (draw-zone-objects world render assets camera player editor)
-            ;; Use spatial culling for entity rendering (Phase 3 optimization)
-            (draw-entities-with-spatial-culling game player camera-x camera-y zoom
-                                                 margin-x margin-y assets render)
-            (draw-click-marker player world)
-            (draw-editor-world-overlay editor world camera))))
-      (draw-hud player ui world)
-      (draw-minimap world player npcs ui)
-      (draw-inventory player ui render assets)
-      (draw-context-menu ui)
-      (draw-loading-overlay ui)
-      (draw-editor-ui-overlay editor ui)
-      (draw-editor-tileset-preview editor render)
-      ;; Cache debug overlay (Phase A instrumentation)
-      (draw-cache-debug-overlay)
-      (when (ui-menu-open ui)
-        (draw-menu ui audio editor)))
+           (npcs (game-npcs game))
+           (world (game-world game))
+           (audio (game-audio game))
+           (ui (game-ui game))
+           (render (game-render game))
+           (assets (game-assets game))
+           (camera (game-camera game))
+           (editor (game-editor game)))
+      ;; Phase B: Pre-render chunk textures BEFORE begin-drawing
+      (prepare-game-render-caches game)
+      (raylib:with-drawing
+        (raylib:clear-background raylib:+black+)
+        (multiple-value-bind (camera-x camera-y)
+            (editor-camera-target editor player)
+          (let* ((zoom (camera-zoom camera))
+                 (margin-x (assets-half-sprite-width assets))
+                 (margin-y (assets-half-sprite-height assets))
+                 (camera-2d (raylib:make-camera-2d
+                             :target (raylib:make-vector2 :x camera-x :y camera-y)
+                             :offset (camera-offset camera)
+                             :rotation 0.0
+                             :zoom zoom)))
+            (raylib:with-mode-2d camera-2d
+              (draw-world world render assets camera player npcs ui editor)
+              (draw-zone-objects world render assets camera player editor)
+              ;; Use spatial culling for entity rendering (Phase 3 optimization)
+              (draw-entities-with-spatial-culling game player camera-x camera-y zoom
+                                                   margin-x margin-y assets render)
+              (draw-click-marker player world)
+              (draw-editor-world-overlay editor world camera))))
+        (draw-hud player ui world)
+        (draw-minimap world player npcs ui)
+        (draw-inventory player ui render assets)
+        (draw-context-menu ui)
+        (draw-loading-overlay ui)
+        (draw-editor-ui-overlay editor ui)
+        (draw-editor-tileset-preview editor render)
+        ;; Cache debug overlay (Phase A instrumentation)
+        (draw-cache-debug-overlay)
+        (when (ui-menu-open ui)
+          (draw-menu ui audio editor)))
     ;; Log cache stats at end of frame (Phase A instrumentation)
     (log-render-cache-stats))))
