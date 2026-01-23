@@ -137,7 +137,7 @@
 (defparameter *render-cache-max-chunks* 64
   "Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth.")
 
-(defparameter *debug-render-cache* t  ; TEMPORARY: enabled for debugging
+(defparameter *debug-render-cache* nil
   "When T, log cache statistics and chunk creation/eviction events to stdout.
    Useful for diagnosing black flashes and cache thrash issues.")
 
