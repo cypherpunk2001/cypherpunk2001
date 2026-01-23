@@ -607,58 +607,167 @@ If you can’t prove it, assume it violates the directive.
 
 ---
 
-## 1) Performance Matters
+# AGENTS.md — SBCL Common Lisp Performance Rules (MMORPG / 60Hz)
+**Target runtime:** SBCL
+**Target goals:** stable **60Hz** simulation + rendering + networking with **predictable GC** and **low allocation**.
 
-### Tick budget discipline (60 Hz)
-- At 60 Hz, every tick/frame has a fixed budget (~16.67ms).
+This document is written for LLM agents generating or modifying code.
+**Follow it literally. Do not “simplify” away details.**
+
+---
+
+## 0) Prime Directive (Non‑Negotiable)
+Any code that runs:
+- every tick/frame
+- per packet
+- per entity
+- per client
+
+**MUST be allocation-free, type-stable, and bounded-time.**
+If you can’t prove it, assume it violates the directive.
+
+---
+
+## 1) Performance Matters (60 Hz Discipline)
+
+### 1.1 Tick budget discipline (60 Hz)
+- At 60 Hz, every tick/frame has a fixed budget (**~16.67ms**).
 - Any periodic pause (GC, serialization spikes) will surface as jitter/stutter.
-- Therefore: any work that runs every tick must be strictly bounded in time and allocation behavior.
+- Therefore: **any work that runs every tick must be strictly bounded in time and allocation behavior.**
 
-### Hot loop optimization
+### 1.2 Hot loop optimization (the “no surprises” rules)
+**Agents MUST default to these rules in any per-tick/per-packet loop:**
 - Avoid per-frame/tick consing in hot loops: reuse rectangles, vectors, strings, and animation state
 - Keep entity/component data in arrays/structs (SoA-style when useful), not lists
 - Separate update/draw; keep animation state lightweight
-- **Hot path rule:** if it runs every tick or per-packet, it must be allocation-free and bounded-time
+- **Hot path rule:** if it runs every tick or per-packet, it MUST be allocation-free and bounded-time
   (prove with allocation profiling)
-- Avoid hidden allocations in hot code paths:
-  - No `format`, string concatenation, or ad-hoc string building in-frame/in-tick (UI/debug/logging)
-  - Avoid allocating closures/lambdas inside hot loops (especially capturing lambdas)
-  - Avoid per-tick hash-table growth/rehash and transient key creation; pre-size tables and reuse keys/containers
-  - Be cautious with generic dispatch/abstraction layers that encourage temporary allocations
-  - Avoid accidental symbol/keyword interning at runtime in hot paths
 
-### Allocation & reuse policy (pools / scratch / arenas)
-- Use object pools/freelists not just for entities, but also for support churn:
-  - intents/events (combat, movement, AI)
-  - query result containers (nearby entities, visibility sets)
-  - pathfinding nodes and temporary spatial data
-- Prefer per-thread/per-system scratch buffers (arrays with fill-pointers)
-- Use arena-style “dies-together” allocation for tick-local or snapshot-local work
+**Agents MUST reject hidden allocations in hot code paths:**
+- No `format`, string concatenation, or ad-hoc string building in-frame/in-tick (UI/debug/logging)
+- Avoid allocating closures/lambdas inside hot loops (especially capturing lambdas)
+- Avoid per-tick hash-table growth/rehash and transient key creation
+  → pre-size tables and reuse keys/containers
+- Be cautious with generic dispatch/abstraction layers that encourage temporary allocations
+- Avoid accidental symbol/keyword interning at runtime in hot paths
+
+### 1.3 Data layout directives (what SBCL optimizes best)
+**Hot-path data MUST default to C-like layouts:**
+- Prefer **`defstruct`** with typed slots for hot data (when CLOS is not required)
+- Prefer `simple-array` with explicit `:element-type` over general vectors/lists
+
+**Required default array types for engine work:**
+- Numeric vectors: `(simple-array single-float (*))` (or project-chosen float type)
+- Indices/IDs: `(simple-array fixnum (*))`
+- Byte buffers / networking: `(simple-array (unsigned-byte 8) (*))`
+
+**Do NOT build hot data flows using:**
+- list pipelines / `mapcar` / `remove-if` / sequence-heavy combinators in inner loops
+- generic sequences when you need raw throughput
+
+### 1.4 SBCL instantiation rules (critical “free win”)
+**Agents MUST obey this in any frequently-instantiating code path:**
+- **Do NOT** call `(make-instance some-var)` in hot code (class known only at runtime).
+  SBCL can’t fully optimize it.
+- **Prefer constant-class construction**: `(make-instance 'my-class)`
+  or a wrapper function that hardcodes the class, so SBCL can optimize heavily.
+- This “inline class” pattern can make instantiation **~15× to ~100× faster** in SBCL.
+
+**AGENT rule (constructor pattern):**
+If code spawns objects frequently, generate dedicated constructors:
+- `make-foo` → `(make-instance 'foo)`
+- `make-bar` → `(make-instance 'bar)`
+…and call those instead of passing around a variable class symbol.
+
+**Slot initforms & initialization logic:**
+- User-level slot initialization can dominate instantiation cost for large objects.
+- When the class is compile-time known (“inline mode”), SBCL can optimize slot init heavily and the penalty can largely disappear.
+- **Directive:** if initforms are needed, instantiate through constant-class constructors (or move instantiation out of hot paths).
+
+### 1.5 Numeric hot-path directives (stop generic arithmetic)
+If you want C-like numeric performance, **types are the single biggest lever**.
+
+**Agents MUST:**
+- Declare numeric types aggressively in hot paths:
+  - `fixnum` for indices, counters, ids
+  - `single-float` (or chosen float type) for continuous values
+- Keep arithmetic type-stable (do NOT mix integer + float unpredictably)
+- Keep math in one numeric “lane”:
+  - fixnum lane (integer)
+  - float lane (single-float)
+
+**Agents MUST NOT rely on inference:**
+- Assume type inference can lie — declare loop vars explicitly:
+  - loop indices (`i`, `j`, etc.) as `fixnum`
+  - accumulators (`sum`, `count`, etc.) as the correct numeric type
+  - array element types and function argument types
+- If performance is unclear, profile and/or disassemble — do not guess.
+
+**Use `THE` when result typing matters:**
+- If SBCL might widen a result (e.g., `fixnum * fixnum` → bignum), force the result type:
+  - `(the fixnum (* a b))`
+- Only do this when value ranges are proven safe.
+
+**Avoid integer division in tight loops unless proven safe:**
+- Integer division can compile to slow hardware division in hot paths.
+- Prefer:
+  - precomputed reciprocals where valid
+  - shifting/multiplication when denominators are powers of two
+  - restructure math to avoid per-iteration division
+- Only keep integer division inside hot loops if profiling shows it is not a bottleneck.
+
+---
+
+## 2) Allocation & Reuse Policy (Pools / Scratch / Arenas)
+
+### 2.1 Pools and scratch are mandatory for MMO churn
+**Agents MUST use object pools/freelists** not just for entities, but also for support churn:
+- intents/events (combat, movement, AI)
+- query result containers (nearby entities, visibility sets)
+- pathfinding nodes and temporary spatial data
+
+**Agents MUST prefer scratch buffers:**
+- per-thread/per-system scratch buffers (arrays with fill-pointers)
+- arena-style “dies-together” allocation for tick-local or snapshot-local work
+
+**Pool discipline:**
 - Pools must be bounded and actively managed:
   - cap growth and recycle aggressively
   - avoid unbounded pools that grow at peak load and never shrink
   - watch for large pooled objects/buffers that inflate heap size and make rare full GCs expensive
-- Prefer specialized arrays and typed structs for pooled/scratch data to reduce boxing and improve locality
 
-### Networking / serialization optimization (often the real hot path)
-- Treat snapshot building and serialization as a first-class hot loop
+---
+
+## 3) Networking / Serialization Optimization (Often the Real Hot Path)
+
+**Agents MUST treat snapshot building and serialization as a first-class hot loop:**
 - Avoid constructing intermediate “message objects” that are later serialized
 - Write directly into reusable byte buffers when possible
 - Maintain reusable per-connection or per-worker buffers with explicit write cursors
 - Reuse delta-state and snapshot scratch structures; avoid per-send allocations
-- **Schedule network output intentionally:** keep simulation at 60 Hz, but consider sending snapshots/deltas at a lower
-  or adaptive rate (e.g., 20–30 Hz) to reduce serialization load and allocation/spike risk while preserving sim stability
-- Prefer specialized byte buffers (e.g., `(simple-array (unsigned-byte 8) (*))`) and typed cursors for encoding
+- Prefer specialized byte buffers and typed cursors for encoding:
+  - `(simple-array (unsigned-byte 8) (*))`
+  - typed fixnum cursors/indexes
 
-### Rendering optimization
+**Schedule network output intentionally:**
+- Keep simulation at **60 Hz**
+- Consider sending snapshots/deltas at a lower or adaptive rate (e.g., **20–30 Hz**)
+  to reduce serialization load and allocation/spike risk while preserving sim stability
+
+---
+
+## 4) Rendering Optimization (Client-Side)
+
+**Agents MUST implement:**
 - Cull off-screen tiles and sprites; draw only what’s visible
-- Chunk the map (e.g., 32×32 tiles) and cache static chunks in render textures
+- Chunk the map (e.g., **32×32 tiles**) and cache static chunks in render textures
 - Batch draw calls whenever possible
 
+---
 
-## 2) Hacks that Actually Improve GC Predictability
+## 5) Hacks that Actually Improve GC Predictability
 
-### 1) Schedule GC at safe points (make it your decision)
+### 5.1 Schedule GC at safe points (make it your decision)
 If you have a 60Hz tick, pick deliberate moments where a pause hurts least:
 - right after you finish a snapshot send
 - right after zone handoff / shard transfer
@@ -667,14 +776,14 @@ If you have a 60Hz tick, pick deliberate moments where a pause hurts least:
 
 Even a simple “GC every N seconds” policy can prevent rare, catastrophic full collections.
 
-### 2) Give the heap more headroom (reduce GC frequency spikes)
+### 5.2 Give the heap more headroom (reduce GC frequency spikes)
 A too-small heap makes the runtime collect constantly and unpredictably.
 - Bigger heap → fewer collections → fewer “surprise” pauses
 - You trade memory for smoothness
 
 This is one of the most common “we fixed the hitch” changes on servers.
 
-### 3) Tune for *small + frequent* vs *rare + huge*
+### 5.3 Tune for *small + frequent* vs *rare + huge*
 Most modern Common Lisp implementations use generational GC. You generally want:
 - young-generation collections to be cheap and frequent
 - avoid accidental promotion of short-lived garbage into old generations
@@ -683,7 +792,7 @@ Most modern Common Lisp implementations use generational GC. You generally want:
 **Practical hack:** warm up the server (load maps, create common objects, run a few ticks) so long-lived data settles
 before peak load. This reduces later promotion churn.
 
-### 4) Keep big buffers and OS resources out of the GC heap
+### 5.4 Keep big buffers and OS resources out of the GC heap
 Even with good discipline, large byte arrays, strings, and foreign handles can cause:
 - increased scanning pressure
 - larger old generations
@@ -693,7 +802,7 @@ Common approaches:
 - reusable foreign buffers (or static/pinned arrays if your implementation supports them)
 - keep only small metadata objects in the Lisp heap
 
-### 5) Avoid features that make GC timing messier
+### 5.5 Avoid features that make GC timing messier
 Depending on the implementation, these often correlate with unpredictable pauses:
 - lots of finalizers (cleanup hooks)
 - weak hash tables / ephemeron-heavy caches
@@ -702,16 +811,15 @@ Depending on the implementation, these often correlate with unpredictable pauses
 
 Not forbidden — just be aware they can turn GC into a wildcard.
 
+---
 
-## 3) SBCL Compiler Optimization Tips (For Best Code Generation)
+## 6) SBCL Compiler Optimization Tips (For Best Code Generation)
 
 SBCL can reach performance comparable to C in hot code, but it is not the default.
 To get C-like performance, use declarations and policies that guide SBCL’s optimizing compiler,
 trading some dynamic flexibility for static efficiency.
 
-These are SBCL-specific rules for producing **maximum-performance Common Lisp**.
-
-### 3.1 Use optimization policy deliberately (and locally)
+### 6.1 Use optimization policy deliberately (and locally)
 - SBCL honors `(optimize ...)` strongly.
 - Prefer localized policies:
   - package/file level: balanced defaults
@@ -723,11 +831,11 @@ Typical patterns (adjust per project):
 
 Guidelines:
 - Use `(declaim (optimize ...))` for file/package defaults.
-- Use `(declare (optimize ...))` inside the 5–20 hottest functions.
+- Use `(declare (optimize ...))` inside the **5–20 hottest functions**.
 - Be careful with `(safety 0)` in server code: it can turn bugs into silent corruption.
 - `(safety 0)` omits runtime safety checks (including type and array bounds checks); use it only in trusted hot code.
 
-### 3.2 Type declarations are performance features in SBCL (single most important step)
+### 6.2 Type declarations are performance features in SBCL (single most important step)
 SBCL generates unboxed, fast machine code when it knows types.
 
 Declare aggressively in hot code:
@@ -742,14 +850,7 @@ Why it matters:
 - enables specialized array access (fast element access)
 - reduces dispatch and runtime checks
 
-Preferred data patterns:
-- `simple-array` / `simple-vector` where possible
-- specialized arrays like:
-  - `(simple-array single-float (*))`
-  - `(simple-array (unsigned-byte 8) (*))`
-- `defstruct` with typed slots (and keep types “obvious” for SBCL inference)
-
-### 3.3 Avoid “accidental generic” operations
+### 6.3 Avoid “accidental generic” operations
 If SBCL can’t infer a type (value becomes `T`), it will often fall back to generic operations:
 - arithmetic becomes generic (boxing + slower)
 - comparisons become generic
@@ -759,24 +860,17 @@ Hot code rule:
 - ensure loop indices, accumulators, and frequently accessed fields are type-declared
 - keep types stable across calls (don’t mix floats/integers unpredictably)
 
-### 3.4 Avoid CLOS generic dispatch in the innermost loops
+### 6.4 Avoid CLOS generic dispatch in the innermost loops
 - CLOS is fine at the edges.
 - In the innermost hot loops, generic function dispatch is often too expensive.
 - Use direct functions and typed structs in hot paths; keep polymorphism at system boundaries.
 
-### 3.5 Use inlining selectively for tiny hot helpers
+### 6.5 Use inlining selectively for tiny hot helpers
 - `(declaim (inline foo))` can remove call overhead and help SBCL optimize across function boundaries.
 - Only inline small helpers that are called extremely often.
 - Do not blanket-inline everything.
 
-### 3.6 SIMD vectorization (for heavy numeric/data-parallel hotspots)
-For heavily numerical and data-parallel work:
-- consider SIMD libraries (e.g., `sb-simd`) to leverage CPU SIMD instructions
-- this can match or exceed optimized C/C++ for certain workloads
-
-Use SIMD only where profiling shows it matters.
-
-### 3.7 Profiling with SBCL tooling (do not guess)
+### 6.6 Profile with SBCL tooling (do not guess)
 Measure:
 - time in hot functions
 - allocation rate in hot paths
@@ -786,23 +880,83 @@ Useful tools:
 - `sb-sprof` for sampling profiler
 - `sb-profile` for call-count/time profiling
 
-### 3.8 Serialization hot spots: use specialized byte buffers
-For networking/snapshots in SBCL, prefer:
-- `(simple-array (unsigned-byte 8) (*))` for byte buffers
-- typed cursor indices into those buffers
-- direct writing into buffers (avoid intermediate message objects)
+---
 
-This reduces allocation/GC pressure and improves throughput.
+## 7) SIMD / Auto-Vectorization Directives (Compute-Bound Hotspots)
 
+These directives are mandatory for agents generating **high-performance numeric kernels** in SBCL/Common Lisp.
 
-## 4) Code Generation Checklist (LLM Must Follow)
+### 7.1 If you want C-like throughput, use SIMD (when compute-bound)
+- Modern C compilers routinely exploit SIMD automatically.
+- To close the gap in SBCL/Common Lisp, compute-heavy loops should be written to enable SIMD:
+  - explicit intrinsics (`sb-simd`)
+  - or macro-level auto-vectorization (`Loopus`)
+- Assume “plain scalar Lisp” will lose on compute-heavy loops.
+
+### 7.2 SIMD requires typed data: specialized arrays + typed packs
+- SIMD code MUST use specialized numeric arrays with explicit element types:
+  - e.g. `(simple-array f64 (*))`, `(simple-array single-float (*))`
+- SIMD accumulators and temporaries MUST use SIMD pack types:
+  - e.g. `f64.4` (vector pack types vary by backend)
+- Do NOT feed generic vectors or boxed numbers into SIMD kernels.
+
+### 7.3 Use the standard SIMD loop structure
+Hot SIMD kernels SHOULD follow this structure:
+- **Vectorized loop** stepping by SIMD width
+- **Scalar remainder loop** handling the tail
+
+Agents MUST generate this pattern unless the tool/framework automates it.
+
+### 7.4 Keep scalar implementations alongside SIMD versions
+- Provide scalar versions of operations and/or kernels:
+  - for correctness reference and tests
+  - for portability / fallback
+  - to help automatic vectorizers match semantics
+- Treat scalar code as the ground truth; SIMD code is the optimized form.
+
+### 7.5 Use instruction-set dispatch for portable shipped images
+When deploying SBCL images to unknown CPUs:
+- assume SIMD features vary (e.g., dev machine AVX2, target machine SSE2)
+- generate multiple optimized versions and dispatch at runtime using:
+  - `instruction-set-case`
+
+**Shipping rule of thumb:**
+- provide an SSE2 baseline
+- add AVX/AVX2 fast paths
+- dispatch using `instruction-set-case`
+
+### 7.6 Use package ergonomics for SIMD backends
+- Prefer local package nicknames for instruction-set backends:
+  - `#:sse2`, `#:avx`, etc.
+- Keep backend-specific calls readable and maintainable in hot kernels.
+
+### 7.7 Write “optimizer-friendly loops” for auto-vectorizers (Loopus-style)
+When targeting auto-vectorization/loop optimizers:
+- write tight loops in a restricted, analyzable subset of CL
+- avoid abstraction-heavy sequence pipelines in numeric kernels
+- prefer patterns that allow:
+  - row-major index lowering
+  - loop-invariant hoisting
+  - simplified/polynomial index arithmetic
+  - pointer-arithmetic-style lowering
+
+Goal: make the loop easy to lower into straight-line loads/stores and SIMD ops.
+
+### 7.8 Assume best-case SBCL can approach GCC when written correctly
+- SBCL + the right loop form + SIMD tooling can generate inner loops very close to optimized C.
+- Therefore, treat SIMD enablement + typed arrays + predictable loops as first-class performance requirements.
+
+---
+
+## 8) Code Generation Checklist (LLM MUST FOLLOW)
+
 When generating or editing code:
 
 1) **Identify the hot path**
 - Does it run every tick, per packet, per entity, or per client?
   - If yes: it must not allocate and must be bounded-time.
 
-2) **Choose data layout that SBCL optimizes well**
+2) **Choose data layout SBCL optimizes well**
 - arrays/structs, typed slots, specialized arrays
 - avoid list pipelines in tight loops
 
@@ -817,12 +971,27 @@ When generating or editing code:
 - avoid hash-table growth/rehash in hot loops
 - avoid CLOS dispatch in inner loops
 
-5) **Networking is a hot loop**
+5) **Numeric rules**
+- keep numeric lanes stable (`fixnum` vs `single-float`)
+- use `THE` when result typing matters and ranges are proven
+- avoid integer division in tight loops unless proven safe
+
+6) **Networking is a hot loop**
 - no intermediate message objects
 - reuse byte buffers
 - typed cursors and specialized arrays
 
-6) **Verify**
+7) **Instantiation rules (SBCL-specific)**
+- No `(make-instance var)` in hot paths.
+- Prefer constant-class constructors: `(make-instance 'my-class)` via dedicated `make-…` functions.
+- This can unlock **~15×–100×** instantiation speedups.
+
+8) **SIMD (if compute-bound)**
+- use typed arrays + SIMD pack types
+- vector loop + remainder loop
+- runtime dispatch via `instruction-set-case`
+
+9) **Verify**
 - use SBCL profiling tools to validate time and allocation behavior
 
 ---
