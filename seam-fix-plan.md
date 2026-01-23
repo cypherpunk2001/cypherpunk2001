@@ -29,6 +29,8 @@
 
 **Goal:** Prove whether seams correlate with cached/uncached mixing or fractional camera movement.
 
+**Note:** All diagnostics gated by `*debug-render-cache*` per CLAUDE.md logging discipline.
+
 **1a. Per-frame cached vs fallback counters:**
 ```lisp
 (defvar *frame-cached-draws* 0)
@@ -40,31 +42,37 @@
 ;; In draw-cached-chunk, when fallback triggered:
 (incf *frame-fallback-draws*)
 
-;; At frame end, log if mixed:
-(when (and (> *frame-cached-draws* 0) (> *frame-fallback-draws* 0))
-  (format t "~&[SEAM-DIAG] MIXED FRAME cached:~D fallback:~D~%"
-          *frame-cached-draws* *frame-fallback-draws*))
+;; At frame end (in log-cache-stats or draw-game), log if mixed:
+(when *debug-render-cache*
+  (when (and (> *frame-cached-draws* 0) (> *frame-fallback-draws* 0))
+    (log-verbose "[SEAM-DIAG] MIXED FRAME cached:~D fallback:~D"
+                 *frame-cached-draws* *frame-fallback-draws*)))
 ```
 
 **1b. Camera fractional position logging:**
 ```lisp
-;; Log when camera has sub-pixel position:
-(let ((cam-x (raylib:camera-2d-target-x camera))
-      (cam-y (raylib:camera-2d-target-y camera)))
-  (when (or (/= cam-x (round cam-x))
-            (/= cam-y (round cam-y)))
-    (format t "~&[SEAM-DIAG] FRACTIONAL-CAM x:~,3F y:~,3F~%"
-            cam-x cam-y)))
+;; Log when camera has sub-pixel screen position (zoom-aware):
+(when *debug-render-cache*
+  (let* ((cam-x (camera-target-x camera))  ; Use correct accessor for your camera struct
+         (cam-y (camera-target-y camera))
+         (zoom (camera-zoom camera))
+         (screen-x (* cam-x zoom))
+         (screen-y (* cam-y zoom)))
+    (when (or (/= screen-x (round screen-x))
+              (/= screen-y (round screen-y)))
+      (log-verbose "[SEAM-DIAG] FRACTIONAL-SCREEN x:~,3F y:~,3F (world ~,3F,~,3F)"
+                   screen-x screen-y cam-x cam-y))))
 ```
 
 **1c. Video capture + log timestamps:**
+- Enable `*debug-render-cache*`
 - Run client with diagnostics enabled
 - Record screen while moving rapidly
 - Correlate seam events in video with log timestamps
 
 **Verification:** Do seams appear ONLY when:
 - Mixed cached/fallback frames occur? → Fix Phase 4
-- Camera has fractional position? → Fix Phase 2
+- Camera has fractional screen position? → Fix Phase 2
 - Both? → Fix both
 
 ---
@@ -73,18 +81,32 @@
 
 **Goal:** Enforce integer alignment for camera and all chunk draw positions.
 
-**2a. Camera pixel snapping:**
+**2a. Camera screen-pixel snapping:**
+
+**Important:** Rounding to integer world coords can still produce sub-pixel screen alignment at non-1.0 zoom. Use screen-pixel snapping:
 
 **Location:** `src/rendering.lisp` - before any world drawing
 
 ```lisp
-(defun snap-camera-to-pixels (camera)
-  "Round camera target to integer pixels to prevent sub-pixel seams."
-  (setf (raylib:camera-2d-target-x camera)
-        (fround (raylib:camera-2d-target-x camera)))
-  (setf (raylib:camera-2d-target-y camera)
-        (fround (raylib:camera-2d-target-y camera))))
+(defun snap-camera-to-screen-pixels (camera)
+  "Round camera target to screen-pixel alignment at current zoom.
+   Formula: cam' = (round (* cam zoom)) / zoom
+   This preserves pixel alignment at any zoom level."
+  ;; NOTE: Verify camera is mutable raylib camera or use correct accessors
+  ;; for your wrapper struct. Direct setf on raylib accessors may be no-op
+  ;; if camera is wrapped/cached.
+  (let ((zoom (raylib:camera-2d-zoom camera)))
+    (when (> zoom 0.0)
+      (setf (raylib:camera-2d-target-x camera)
+            (/ (fround (* (raylib:camera-2d-target-x camera) zoom)) zoom))
+      (setf (raylib:camera-2d-target-y camera)
+            (/ (fround (* (raylib:camera-2d-target-y camera) zoom)) zoom)))))
 ```
+
+**Accessor verification checklist:**
+- [ ] Confirm `raylib:camera-2d-target-x` is setf-able on your camera object
+- [ ] If camera is wrapped in a game struct, use the wrapper's accessors
+- [ ] Test with `(setf ... ) (assert (= ... ))` to verify mutation works
 
 **Call site:** In `draw-game` or `prepare-game-render-caches`, before any world drawing.
 
@@ -114,17 +136,26 @@
 
 **Goal:** Explicitly force point filtering on render textures to rule out sampler defaults.
 
-**Location:** `src/config-client.lisp`
+**Location:** `src/rendering.lisp:render-chunk-to-texture`
 
-**Check:** Ensure `*tile-point-filter*` is `t`.
-
-**Code verification in `render-chunk-to-texture`:**
+**Current code:**
 ```lisp
 (raylib:set-texture-filter (raylib:render-texture-2d-texture texture)
-                           0)  ; 0 = TEXTURE_FILTER_POINT (always)
+                           (if *tile-point-filter* 0 1))
 ```
 
-Consider hardcoding `0` instead of checking `*tile-point-filter*` to guarantee point filtering for chunk textures regardless of config.
+**Fix:** Use named constant, not magic number:
+```lisp
+(raylib:set-texture-filter (raylib:render-texture-2d-texture texture)
+                           raylib:+texture-filter-point+)  ; Always point filter for chunks
+```
+
+**Rationale:** Hardcode point filtering for chunk textures regardless of `*tile-point-filter*` config. Chunk boundaries must never blend. The config can still control other texture filtering if needed.
+
+**Verification:** Check that `raylib:+texture-filter-point+` exists in your claw-raylib bindings. If not, define locally:
+```lisp
+(defconstant +texture-filter-point+ 0 "Point filtering (nearest neighbor)")
+```
 
 ---
 
@@ -132,36 +163,57 @@ Consider hardcoding `0` instead of checking `*tile-point-filter*` to guarantee p
 
 **Goal:** Never mix cached and uncached draws in the same frame.
 
-**Option A - Skip uncached chunks:**
+**Option A - Skip uncached chunks (NOT RECOMMENDED):**
 ```lisp
 ;; In draw-cached-chunk, if no texture:
 (unless texture
   (incf *render-cache-stats-misses*)
   (return-from draw-cached-chunk))  ; Skip entirely, don't fallback
 ```
-Trade-off: May show blank areas briefly, but no seams.
+**WARNING:** This causes black holes where chunks are missing. Only use if you implement a placeholder fill (solid color rectangle) or are certain pre-render always succeeds.
 
-**Option B - Pre-render larger viewport buffer:**
+**Option B - Pre-render larger viewport buffer (RECOMMENDED):**
 ```lisp
-;; In prepare-zone-chunks, expand view bounds:
-(let ((buffer-pixels (* 2 chunk-pixel-size)))  ; 2 chunks extra
-  (prepare-zone-chunks zone tile-dest-size
-                       (- view-left buffer-pixels)
-                       (+ view-right buffer-pixels)
-                       (- view-top buffer-pixels)
-                       (+ view-bottom buffer-pixels)
-                       editor assets))
+;; In prepare-game-render-caches, expand view bounds before calling prepare-zone-chunks:
+(let* ((chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+       (buffer-pixels (* 2 chunk-pixel-size)))  ; 2 chunks extra in each direction
+  ;; Expand bounds
+  (let ((buffered-left (- view-left buffer-pixels))
+        (buffered-right (+ view-right buffer-pixels))
+        (buffered-top (- view-top buffer-pixels))
+        (buffered-bottom (+ view-bottom buffer-pixels)))
+    ;; IMPORTANT: Re-apply Phase C bounds clamping after expansion
+    ;; to avoid negative/OOB chunk creation
+    (prepare-zone-chunks zone cache
+                         (max 0.0 buffered-left)    ; Clamp to zone bounds
+                         buffered-right              ; Will be clamped inside prepare-zone-chunks
+                         (max 0.0 buffered-top)
+                         buffered-bottom
+                         tile-dest-size editor assets)))
 ```
-Trade-off: More pre-render work, but chunks always ready.
+**Trade-off:** More pre-render work per frame, but chunks always ready. The Phase C clamping inside `prepare-zone-chunks` handles upper bounds.
 
 **Option C - Movement-predictive pre-render:**
 ```lisp
-;; Pre-render in direction of movement
-(when (> player-dx 0) (incf view-right (* 2 chunk-pixel-size)))
-(when (< player-dx 0) (decf view-left (* 2 chunk-pixel-size)))
-(when (> player-dy 0) (incf view-bottom (* 2 chunk-pixel-size)))
-(when (< player-dy 0) (decf view-top (* 2 chunk-pixel-size)))
+;; Pre-render extra chunks in direction of movement only
+(let ((player-dx (player-dx player))
+      (player-dy (player-dy player))
+      (buffer (* 2 chunk-pixel-size)))
+  (let ((pred-left (if (< player-dx 0) (- view-left buffer) view-left))
+        (pred-right (if (> player-dx 0) (+ view-right buffer) view-right))
+        (pred-top (if (< player-dy 0) (- view-top buffer) view-top))
+        (pred-bottom (if (> player-dy 0) (+ view-bottom buffer) view-bottom)))
+    ;; IMPORTANT: Re-apply Phase C bounds clamping
+    (prepare-zone-chunks zone cache
+                         (max 0.0 pred-left)
+                         pred-right
+                         (max 0.0 pred-top)
+                         pred-bottom
+                         tile-dest-size editor assets)))
 ```
+**Trade-off:** Less pre-render than Option B, but only helps if movement is sustained in one direction.
+
+**Recommendation:** Start with Option B (simple, robust). If performance is a concern, switch to Option C.
 
 ---
 
@@ -169,22 +221,22 @@ Trade-off: More pre-render work, but chunks always ready.
 
 ```
 1. DIAGNOSE FIRST
-   └─ Phase 1: Add counters + logging
+   └─ Phase 1: Add counters + logging (gated by *debug-render-cache*)
    └─ Capture video + correlate with logs
    └─ DETERMINE: Is it mixed paths? Fractional camera? Both?
 
 2. FIX BASED ON DIAGNOSIS
-   └─ If fractional camera: Phase 2a (camera snap)
-   └─ If mixed paths: Phase 4 (eliminate mixing)
+   └─ If fractional camera: Phase 2a (screen-pixel camera snap)
+   └─ If mixed paths: Phase 4 Option B (pre-render buffer)
    └─ If both: Phase 2 + Phase 4
 
 3. BELT AND SUSPENDERS
    └─ Phase 2b/2c: Integer chunk positions
-   └─ Phase 3: Force point filtering
+   └─ Phase 3: Force point filtering (use named constant)
 
 4. VERIFY
-   └─ Re-run diagnostics
-   └─ Confirm zero seam events in logs
+   └─ Re-run diagnostics with *debug-render-cache* enabled
+   └─ Confirm zero MIXED FRAME / FRACTIONAL-SCREEN logs
    └─ Visual verification with video
 ```
 
@@ -194,10 +246,11 @@ Trade-off: More pre-render work, but chunks always ready.
 
 If confident in the analysis and want to just fix it:
 
-1. **Camera snap** (Phase 2a) - 5 min, likely fixes 90%
-2. **Force point filtering** (Phase 3) - 2 min, verify config
-3. **Integer chunk positions** (Phase 2b/2c) - 10 min
-4. **Test** - If seams persist, then add diagnostics
+1. **Screen-pixel camera snap** (Phase 2a) - likely fixes 90%
+2. **Pre-render buffer** (Phase 4 Option B) - eliminates mixed paths
+3. **Force point filtering** (Phase 3) - use `raylib:+texture-filter-point+`
+4. **Integer chunk positions** (Phase 2b/2c) - belt and suspenders
+5. **Test** - If seams persist, enable diagnostics
 
 ---
 
@@ -209,9 +262,29 @@ If confident in the analysis and want to just fix it:
 | `rendering.lisp` | `draw-cached-chunk-with-offset` | 2b |
 | `rendering.lisp` | `draw-chunk-tiles-direct` | 2c |
 | `rendering.lisp` | `draw-game` / camera setup | 1b, 2a |
-| `rendering.lisp` | `prepare-zone-chunks` | 4 (Option B/C) |
+| `rendering.lisp` | `prepare-game-render-caches` | 4 (Option B/C) |
+| `rendering.lisp` | `prepare-zone-chunks` | bounds clamping |
 | `rendering.lisp` | `render-chunk-to-texture` | 3 |
-| `config-client.lisp` | `*tile-point-filter*` | 3 |
+| `config-client.lisp` | `*debug-render-cache*` | 1 (logging gate) |
+
+---
+
+## Implementation Notes
+
+### Logging Discipline (per CLAUDE.md)
+- All diagnostic output gated by `*debug-render-cache*`
+- Use `log-verbose` not raw `format t`
+- Keep diagnostics useful for future debugging sessions
+
+### Bounds Clamping (per Phase C)
+- Any view bounds expansion (Phase 4) must respect zone boundaries
+- `prepare-zone-chunks` already clamps internally, but pre-clamp negatives
+- Never create chunks at negative or out-of-bounds coordinates
+
+### Camera Accessor Verification
+- Before implementing Phase 2a, verify `setf` works on your camera object
+- If using a wrapper struct, update the wrapper's accessors
+- Test mutation with assert to catch silent failures
 
 ---
 
@@ -219,7 +292,8 @@ If confident in the analysis and want to just fix it:
 
 After full implementation:
 - Zero seam tearing during normal gameplay
-- Pixel-perfect chunk boundaries
+- Pixel-perfect chunk boundaries at any zoom level
 - Consistent rendering between cached and fallback paths
 - No sub-pixel bleeding or sampling artifacts
 - Diagnostic data to prove the fix worked
+- No regression on Phase C bounds clamping
