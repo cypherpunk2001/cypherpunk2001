@@ -323,7 +323,9 @@
 ;;;; ========================================================================
 
 ;;; Global zone render cache storage (zone-id -> zone-render-cache)
-(defparameter *zone-render-caches* (make-hash-table :test 'eq)
+;;; Phase X2: Changed from :test 'eq to :test 'eql for safer symbol comparison.
+;;; Keywords are always eql to themselves; eq can fail for non-interned symbols.
+(defparameter *zone-render-caches* (make-hash-table :test 'eql)
   "Hash table mapping zone-id to zone-render-cache structs.")
 
 ;;; Render cache instrumentation (Phase A - Diagnostics)
@@ -427,21 +429,42 @@
 (defvar *render-cache-config-logged* nil
   "T once we've logged the cache config. Reset on cache clear-all.")
 
+;;; X2.4: Zone-id normalization for consistent hash table lookup
+(defun normalize-zone-id (zone-id)
+  "Ensure zone-id is always a keyword for consistent hash table lookup.
+   Handles symbols from any package and strings."
+  (etypecase zone-id
+    (keyword zone-id)
+    (symbol (intern (symbol-name zone-id) :keyword))
+    (string (intern zone-id :keyword))))
+
 (defun get-or-create-zone-render-cache (zone-id tile-dest-size)
-  "Get or create a render cache for ZONE-ID."
-  (or (gethash zone-id *zone-render-caches*)
-      (let ((new-cache (%make-zone-render-cache
-                        :zone-id zone-id
-                        :chunk-pixel-size (* *render-chunk-size* tile-dest-size))))
-        ;; A2.3: Log config once on first cache creation
-        (when (and *debug-render-cache* (not *render-cache-config-logged*))
-          (format t "~&[CACHE] CONFIG tile-dest:~D chunk-px:~D chunk-tiles:~D max-chunks:~D~%"
-                  (truncate tile-dest-size)
-                  (truncate (* *render-chunk-size* tile-dest-size))
-                  *render-chunk-size*
-                  *render-cache-max-chunks*)
-          (setf *render-cache-config-logged* t))
-        (setf (gethash zone-id *zone-render-caches*) new-cache))))
+  "Get or create a render cache for ZONE-ID.
+   Zone-id is normalized to keyword for consistent lookup."
+  (let* ((normalized-id (normalize-zone-id zone-id))
+         (existing (gethash normalized-id *zone-render-caches*))
+         (cache (or existing
+                    (let ((new-cache (%make-zone-render-cache
+                                      :zone-id normalized-id
+                                      :chunk-pixel-size (* *render-chunk-size* tile-dest-size))))
+                      ;; A2.3: Log config once on first cache creation
+                      (when (and *debug-render-cache* (not *render-cache-config-logged*))
+                        (format t "~&[CACHE] CONFIG tile-dest:~D chunk-px:~D chunk-tiles:~D max-chunks:~D~%"
+                                (truncate tile-dest-size)
+                                (truncate (* *render-chunk-size* tile-dest-size))
+                                *render-chunk-size*
+                                *render-cache-max-chunks*)
+                        (setf *render-cache-config-logged* t))
+                      (setf (gethash normalized-id *zone-render-caches*) new-cache)))))
+    ;; X2.1: Log EVERY lookup for diagnostic analysis (detect zone-id instability)
+    (when *debug-render-cache*
+      (format t "~&[CACHE] LOOKUP zone-id:~S normalized:~S type:~A cache-id:~D hit:~A~%"
+              zone-id
+              normalized-id
+              (type-of zone-id)
+              (sxhash cache)
+              (if existing "Y" "N")))
+    cache))
 
 (defun unload-chunk-texture (cache-entry)
   "Unload the render texture from a cache entry to free VRAM."
@@ -478,12 +501,14 @@
   "Unload all cached textures for ZONE-ID and remove from global cache.
    Call on zone transition to prevent stale textures and VRAM leaks.
    CALLER is a string identifying the call site for diagnostic logging."
-  (let ((cache (gethash zone-id *zone-render-caches*)))
+  ;; X2.4: Normalize zone-id for consistent lookup
+  (let* ((normalized-id (normalize-zone-id zone-id))
+         (cache (gethash normalized-id *zone-render-caches*)))
     (when cache
       ;; A2.2: Log cache clear with caller context
       (when *debug-render-cache*
         (format t "~&[CACHE] CLEAR zone:~A entries:~D caller:~A~%"
-                zone-id
+                normalized-id
                 (hash-table-count (zone-render-cache-chunks cache))
                 caller))
       (maphash (lambda (_key entry)
@@ -491,7 +516,7 @@
                  (unload-chunk-texture entry))
                (zone-render-cache-chunks cache))
       (clrhash (zone-render-cache-chunks cache))
-      (remhash zone-id *zone-render-caches*))))
+      (remhash normalized-id *zone-render-caches*))))
 
 (defun clear-all-zone-render-caches (&optional (caller "unknown"))
   "Unload all cached textures across all zones. Call on shutdown or filter toggle.
@@ -520,19 +545,21 @@
   "Clear all zone render caches except KEEP-ZONE-ID.
    Call on zone transition to free preview zone caches while keeping current zone warm.
    CALLER is a string identifying the call site for diagnostic logging."
-  ;; A2.2: Log clear-others with caller context
-  (when *debug-render-cache*
-    (format t "~&[CACHE] CLEAR-OTHERS keeping:~A caller:~A~%"
-            keep-zone-id
-            caller))
-  (let ((zone-ids nil))
-    (maphash (lambda (zone-id _cache)
-               (declare (ignore _cache))
-               (unless (eql zone-id keep-zone-id)
-                 (push zone-id zone-ids)))
-             *zone-render-caches*)
-    (dolist (zone-id zone-ids)
-      (clear-zone-render-cache zone-id caller))))
+  ;; X2.4: Normalize keep-zone-id for consistent comparison
+  (let ((normalized-keep (normalize-zone-id keep-zone-id)))
+    ;; A2.2: Log clear-others with caller context
+    (when *debug-render-cache*
+      (format t "~&[CACHE] CLEAR-OTHERS keeping:~A caller:~A~%"
+              normalized-keep
+              caller))
+    (let ((zone-ids nil))
+      (maphash (lambda (zone-id _cache)
+                 (declare (ignore _cache))
+                 (unless (eql zone-id normalized-keep)
+                   (push zone-id zone-ids)))
+               *zone-render-caches*)
+      (dolist (zone-id zone-ids)
+        (clear-zone-render-cache zone-id caller)))))
 
 ;; Register zone change hook to clear stale render caches on zone transition.
 ;; This keeps game logic (movement.lisp) decoupled from rendering.
@@ -560,7 +587,9 @@
 (defun invalidate-chunk-at-tile (zone-id layer world-tx world-ty)
   "Mark the chunk containing tile (WORLD-TX, WORLD-TY) as dirty for re-render.
    Call when editor modifies a tile."
-  (let ((cache (gethash zone-id *zone-render-caches*)))
+  ;; X2.4: Normalize zone-id for consistent lookup
+  (let* ((normalized-id (normalize-zone-id zone-id))
+         (cache (gethash normalized-id *zone-render-caches*)))
     (when cache
       (let* ((chunk-x (floor world-tx *render-chunk-size*))
              (chunk-y (floor world-ty *render-chunk-size*))
@@ -657,22 +686,23 @@
       (setf (render-chunk-cache-dirty entry) nil)
       ;; Instrumentation: distinguish new creation vs dirty re-render
       ;; A2.1: Include zone context for diagnostic analysis
+      ;; X2.2: Include cache-id (sxhash) to detect multiple cache instances
       (if is-new-entry
           (progn
             (incf *render-cache-stats-created*)
             (when *debug-render-cache*
-              (format t "~&[CACHE] CREATE zone:~A chunk:(~D,~D) layer:~A tileset:~A tile-dest:~D chunk-px:~D~%"
+              (format t "~&[CACHE] CREATE zone:~A cache-id:~D chunk:(~D,~D) layer:~A tileset:~A~%"
                       (zone-id zone)
+                      (sxhash cache)
                       chunk-x chunk-y
                       (zone-layer-id layer)
-                      (zone-layer-tileset-id layer)
-                      (truncate tile-dest-size)
-                      (truncate (* *render-chunk-size* tile-dest-size)))))
+                      (zone-layer-tileset-id layer))))
           (when is-dirty
             (incf *render-cache-stats-rerendered*)
             (when *debug-render-cache*
-              (format t "~&[CACHE] RERENDER zone:~A chunk:(~D,~D) layer:~A tileset:~A~%"
+              (format t "~&[CACHE] RERENDER zone:~A cache-id:~D chunk:(~D,~D) layer:~A tileset:~A~%"
                       (zone-id zone)
+                      (sxhash cache)
                       chunk-x chunk-y
                       (zone-layer-id layer)
                       (zone-layer-tileset-id layer))))))
