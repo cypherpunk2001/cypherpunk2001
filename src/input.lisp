@@ -245,14 +245,15 @@
       (let* ((tile-size (world-tile-dest-size world))
              (tx (floor world-x tile-size))
              (ty (floor world-y tile-size)))
+        ;; Task 5.5: Use zone-object struct accessors for O(1) field access
         (loop :for object :in objects
-              :for count = (and object (getf object :count nil))
-              :for respawn = (and object (getf object :respawn nil))
+              :for count = (and object (zone-object-count object))
+              :for respawn = (and object (zone-object-respawn object))
               :for active = (and (or (null count) (> count 0))
                                  (or (null respawn) (<= respawn 0.0)))
               :when (and active
-                         (eql (getf object :x) tx)
-                         (eql (getf object :y) ty))
+                         (eql (zone-object-x object) tx)
+                         (eql (zone-object-y object) ty))
                 :do (return object))))))
 
 (defun find-object-at-screen (world player camera screen-x screen-y)
@@ -287,7 +288,8 @@
 
 (defun object-examine-description (object)
   ;; Return an examine description for OBJECT.
-  (let* ((object-id (and object (getf object :id)))
+  ;; Task 5.5: Use zone-object struct accessor for O(1) field access
+  (let* ((object-id (and object (zone-object-id object)))
          (archetype (and object-id (find-object-archetype object-id)))
          (desc (and archetype (object-archetype-description archetype)))
          (name (or (and archetype (object-archetype-name archetype))

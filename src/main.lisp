@@ -304,14 +304,15 @@
           (multiple-value-bind (object object-world-x object-world-y)
               (find-object-at-screen world player camera mouse-x mouse-y)
             (declare (ignore object-world-x object-world-y))
+            ;; Task 5.5: Use zone-object struct accessors for O(1) field access
             (if object
                 (multiple-value-bind (cx cy)
                     (tile-center-position (world-tile-dest-size world)
-                                          (getf object :x)
-                                          (getf object :y))
+                                          (zone-object-x object)
+                                          (zone-object-y object))
                   (open-context-menu ui mouse-x mouse-y cx cy
                                      :target-type :object
-                                     :object-id (getf object :id)))
+                                     :object-id (zone-object-id object)))
                 (multiple-value-bind (npc world-x world-y)
                     (find-npc-at-screen npcs world player camera mouse-x mouse-y)
                   (open-context-menu ui mouse-x mouse-y world-x world-y
@@ -339,10 +340,11 @@
                         (mouse-npc
                          (set-player-attack-target player client-intent mouse-npc t))
                         (mouse-object
+                         ;; Task 5.5: Use zone-object struct accessors
                          (set-player-pickup-target player client-intent world
-                                                   (getf mouse-object :id)
-                                                   (getf mouse-object :x)
-                                                   (getf mouse-object :y)
+                                                   (zone-object-id mouse-object)
+                                                   (zone-object-x mouse-object)
+                                                   (zone-object-y mouse-object)
                                                    t))
                         (t
                          (update-target-from-mouse player client-intent camera dt

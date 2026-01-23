@@ -13,6 +13,38 @@
   ;; Zone metadata with layered chunked tiles.
   id chunk-size width height layers collision-tiles objects spawns)
 
+;;;; ========================================================================
+;;;; Zone Object Struct (Task 5.5)
+;;;; Replaces plist representation for O(1) field access in hot paths.
+;;;; ========================================================================
+
+(defstruct (zone-object (:constructor %make-zone-object))
+  "Ground object (pickup item) in a zone. Struct for fast field access."
+  (id nil :type (or null keyword))       ; Object archetype ID (e.g., :coins, :bones)
+  (x 0 :type fixnum)                     ; Tile X coordinate
+  (y 0 :type fixnum)                     ; Tile Y coordinate
+  (count 1 :type fixnum)                 ; Current pickup count
+  (base-count 1 :type fixnum)            ; Original count (for respawn reset)
+  (respawn 0.0 :type single-float)       ; Respawn timer (0 = ready)
+  (respawnable t :type boolean)          ; Whether object respawns
+  (snapshot-dirty nil :type boolean))    ; Needs delta sync
+
+(defun make-zone-object-from-plist (plist)
+  "Convert object plist to zone-object struct (Task 5.5)."
+  (let* ((raw-count (getf plist :count nil))
+         (base-count (if (and raw-count (numberp raw-count) (>= raw-count 0))
+                         (truncate raw-count)
+                         1)))
+    (%make-zone-object
+     :id (getf plist :id)
+     :x (or (getf plist :x) 0)
+     :y (or (getf plist :y) 0)
+     :count (or raw-count base-count)
+     :base-count base-count
+     :respawn 0.0
+     :respawnable (not (eq (getf plist :respawnable t) nil))
+     :snapshot-dirty nil)))
+
 (defun zone-label (zone)
   ;; Return a display label for ZONE.
   (let ((id (and zone (zone-id zone))))
@@ -255,15 +287,17 @@
 
 (defun zone-remove-object-at (zone tx ty)
   ;; Remove any object at TX/TY from the zone.
+  ;; Task 5.5: Use zone-object struct accessors for O(1) field access
   (setf (zone-objects zone)
         (remove-if (lambda (obj)
-                     (and (eql (getf obj :x) tx)
-                          (eql (getf obj :y) ty)))
+                     (and (eql (zone-object-x obj) tx)
+                          (eql (zone-object-y obj) ty)))
                    (zone-objects zone))))
 
 (defun zone-add-object (zone object)
   ;; Add OBJECT to the zone, replacing any at the same tile.
-  (zone-remove-object-at zone (getf object :x) (getf object :y))
+  ;; Task 5.5: Use zone-object struct accessors for O(1) field access
+  (zone-remove-object-at zone (zone-object-x object) (zone-object-y object))
   (push object (zone-objects zone)))
 
 (defun zone-remove-spawn-at (zone tx ty)
@@ -316,11 +350,12 @@
   (let* ((chunk-size (zone-chunk-size zone))
          (layers (loop :for layer :across (zone-layers zone)
                        :collect (zone-layer-spec layer chunk-size)))
+         ;; Task 5.5: Use zone-object struct accessors for O(1) field access
          (objects (loop :for obj :in (zone-objects zone)
-                        :for id = (getf obj :id)
-                        :for tx = (getf obj :x)
-                        :for ty = (getf obj :y)
-                        :for count = (getf obj :count nil)
+                        :for id = (zone-object-id obj)
+                        :for tx = (zone-object-x obj)
+                        :for ty = (zone-object-y obj)
+                        :for count = (zone-object-count obj)
                         :when (and id (numberp tx) (numberp ty))
                           :collect (if (and count (numberp count) (> count 0))
                                        (list :id id :x tx :y ty :count count)
@@ -357,18 +392,19 @@
                                   :do (zone-layer-set-tile new-layer chunk-size
                                                            local-x local-y tile)))
                 (setf (aref new-layers idx) new-layer)))
+    ;; Task 5.5: Use zone-object struct accessors for O(1) field access
     (dolist (obj (zone-objects zone))
-      (let ((tx (getf obj :x))
-            (ty (getf obj :y))
-            (count (getf obj :count nil)))
+      (let ((tx (zone-object-x obj))
+            (ty (zone-object-y obj))
+            (count (zone-object-count obj)))
         (when (and (<= min-x tx) (<= tx max-x)
                    (<= min-y ty) (<= ty max-y))
           (push (if (and count (numberp count) (> count 0))
-                    (list :id (getf obj :id)
+                    (list :id (zone-object-id obj)
                           :x (- tx min-x)
                           :y (- ty min-y)
                           :count count)
-                    (list :id (getf obj :id)
+                    (list :id (zone-object-id obj)
                           :x (- tx min-x)
                           :y (- ty min-y)))
                 objects))))
@@ -451,23 +487,8 @@
                                    (zone-layer-from-spec spec chunk-size))
                                  layer-specs))
                  (raw-objects (getf plist :objects nil))
-                 ;; Initialize objects with all keys so setf getf works properly
-                 (objects (mapcar (lambda (obj)
-                                    (let* ((raw-count (getf obj :count nil))
-                                           (base-count (if (and raw-count
-                                                                (numberp raw-count)
-                                                                (>= raw-count 0))
-                                                           (truncate raw-count)
-                                                           1)))
-                                      (list :id (getf obj :id)
-                                            :x (getf obj :x)
-                                            :y (getf obj :y)
-                                            :count raw-count
-                                            :base-count base-count
-                                            :respawn 0.0
-                                            :respawnable (getf obj :respawnable t)
-                                            :snapshot-dirty nil)))
-                                  raw-objects))
+                 ;; Task 5.5: Convert object plists to zone-object structs for O(1) access
+                 (objects (mapcar #'make-zone-object-from-plist raw-objects))
                  (spawns (getf plist :spawns nil))
                  (collision-tiles (build-zone-collision-tiles layers chunk-size)))
             (unless (and (numberp width) (numberp height))

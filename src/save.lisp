@@ -1352,15 +1352,10 @@
         (when zone
           ;; Replace client zone objects with server state
           ;; This ensures dropped items appear and picked up items disappear
+          ;; Task 5.5: Convert server plists to zone-object structs
           (setf (zone-objects zone)
                 (loop :for server-obj :in object-plists
-                      :collect (list :id (getf server-obj :id)
-                                     :x (getf server-obj :x)
-                                     :y (getf server-obj :y)
-                                     :count (getf server-obj :count 0)
-                                     :respawn (getf server-obj :respawn 0.0)
-                                     :respawnable (getf server-obj :respawnable)
-                                     :snapshot-dirty nil))))))))
+                      :collect (make-zone-object-from-plist server-obj))))))))
 
 ;;;; ========================================================================
 ;;;; DELTA COMPRESSION - See docs/net.md Prong 2
@@ -1469,9 +1464,10 @@
             :when npc
             :do (setf (npc-snapshot-dirty npc) nil)))
     ;; Clear object dirty flags
+    ;; Task 5.5: Use zone-object struct accessor
     (when objects
       (dolist (object objects)
-        (setf (getf object :snapshot-dirty) nil)))))
+        (setf (zone-object-snapshot-dirty object) nil)))))
 
 (defun deserialize-game-state-delta (delta game)
   "Apply delta snapshot to GAME, updating changed entities and adding new ones.
@@ -1567,15 +1563,10 @@
                (zone (and world (world-zone world))))
           (when zone
             ;; Replace client zone objects with server state
+            ;; Task 5.5: Convert server plists to zone-object structs
             (setf (zone-objects zone)
                   (loop :for server-obj :in object-plists
-                        :collect (list :id (getf server-obj :id)
-                                       :x (getf server-obj :x)
-                                       :y (getf server-obj :y)
-                                       :count (getf server-obj :count 0)
-                                       :respawn (getf server-obj :respawn 0.0)
-                                       :respawnable (getf server-obj :respawnable)
-                                       :snapshot-dirty nil)))))))
+                        :collect (make-zone-object-from-plist server-obj)))))))
     ;; Return updated positions for interpolation buffer
     updated-positions)))
 
@@ -1584,23 +1575,19 @@
 ;;;; ========================================================================
 
 (defun serialize-object (object)
-  ;; Convert zone object to plist (ID, position, count, respawn timer).
-  (list :id (getf object :id)
-        :x (getf object :x)
-        :y (getf object :y)
-        :count (getf object :count 1)
-        :respawn (getf object :respawn 0.0)
-        :respawnable (getf object :respawnable t)))
+  ;; Convert zone object struct to plist (ID, position, count, respawn timer).
+  ;; Task 5.5: Use zone-object struct accessors for O(1) field access.
+  (list :id (zone-object-id object)
+        :x (zone-object-x object)
+        :y (zone-object-y object)
+        :count (zone-object-count object)
+        :respawn (zone-object-respawn object)
+        :respawnable (zone-object-respawnable object)))
 
 (defun deserialize-object (plist)
-  ;; Restore zone object from plist.
-  (list :id (getf plist :id)
-        :x (getf plist :x)
-        :y (getf plist :y)
-        :count (getf plist :count 1)
-        :respawn (getf plist :respawn 0.0)
-        :respawnable (getf plist :respawnable t)
-        :snapshot-dirty nil))
+  ;; Restore zone object from plist to struct.
+  ;; Task 5.5: Use make-zone-object-from-plist for proper struct creation.
+  (make-zone-object-from-plist plist))
 
 (defun serialize-game-state (game &key (include-visuals nil) (network-only nil))
   ;; Serialize authoritative game state to plist (server snapshot).

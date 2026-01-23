@@ -271,14 +271,14 @@
                       :do (setf offset (write-int32 buffer offset (aref nvec i))))))
 
     ;; Write objects (keyword id as sxhash, x, y, count = 4 int32 = 16 bytes per object)
-    ;; Note: object format is plist with :id (keyword), :x, :y, :count, :respawn, :respawnable
+    ;; Task 5.5: Use zone-object struct accessors (objects are now structs, not plists)
     (when objects
       (dolist (obj objects)
-        (let* ((id (getf obj :id))
+        (let* ((id (zone-object-id obj))
                (id-hash (if (keywordp id) (sxhash id) 0))
-               (x (or (getf obj :x) 0))
-               (y (or (getf obj :y) 0))
-               (count (or (getf obj :count) 1)))
+               (x (zone-object-x obj))
+               (y (zone-object-y obj))
+               (count (zone-object-count obj)))
           (setf offset (write-uint32 buffer offset (logand id-hash #xFFFFFFFF)))
           (setf offset (write-int32 buffer offset x))
           (setf offset (write-int32 buffer offset y))

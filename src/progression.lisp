@@ -638,39 +638,38 @@
             (floor (player-y player) tile-size))))
 
 (defun object-entry-count (object archetype)
-  ;; Return the pickup count for OBJECT and ARCHETYPE.
-  (let ((raw (getf object :count nil)))
+  "Return the pickup count for OBJECT and ARCHETYPE.
+   Task 5.5: Updated to use zone-object struct accessors."
+  (let ((raw (and object (zone-object-count object))))
     (cond
       ((and raw (numberp raw) (>= raw 0)) (truncate raw))
       (archetype (max 1 (object-archetype-count archetype)))
       (t 1))))
 
 (defun object-respawn-seconds (archetype)
-  ;; Return the respawn cooldown for ARCHETYPE.
+  "Return the respawn cooldown for ARCHETYPE."
   (let ((seconds (and archetype (object-archetype-respawn-seconds archetype))))
     (if (and seconds (> seconds 0.0))
         (max 0.0 seconds)
         0.0)))
 
 (defun object-respawnable-p (object)
-  ;; Return true when OBJECT should use respawn cooldowns.
-  (not (eq (getf object :respawnable t) nil)))
+  "Return true when OBJECT should use respawn cooldowns.
+   Task 5.5: Updated to use zone-object struct accessor."
+  (and object (zone-object-respawnable object)))
 
 (defun object-entry-respawn-seconds (object archetype)
-  ;; Return the respawn cooldown for a specific OBJECT entry.
+  "Return the respawn cooldown for a specific OBJECT entry."
   (if (and object (not (object-respawnable-p object)))
       0.0
-      (let ((override (getf object :respawn-seconds nil)))
-        (if (and override (numberp override))
-            (max 0.0 (float override 1.0))
-            (object-respawn-seconds archetype)))))
+      (object-respawn-seconds archetype)))
 
 (defun object-respawn-timer (object)
-  ;; Return the active respawn timer for OBJECT, if any.
-  (let ((timer (getf object :respawn nil)))
-    (if (and timer (numberp timer))
-        (max 0.0 (float timer 1.0))
-        0.0)))
+  "Return the active respawn timer for OBJECT, if any.
+   Task 5.5: Updated to use zone-object struct accessor."
+  (if object
+      (max 0.0 (zone-object-respawn object))
+      0.0))
 
 (defun object-respawning-p (object)
   ;; Return true when OBJECT is waiting to respawn.
@@ -678,32 +677,32 @@
 
 (defun update-zone-objects-respawns (objects dt)
   "Tick down respawn timers for a list of zone objects.
-   Thread-safe: protects zone-objects modification from concurrent pickup."
+   Thread-safe: protects zone-objects modification from concurrent pickup.
+   Task 5.5: Updated to use zone-object struct accessors for O(1) access."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
   (with-zone-objects-lock
     (when objects
-      (loop :for cell :on objects
-            :for object = (car cell)
-            :do (when (object-respawnable-p object)
-                  (let* ((timer (object-respawn-timer object)))
-                    (when (> timer 0.0)
-                      (setf timer (max 0.0 (- timer dt))
-                            object (plist-put object :respawn timer))
-                      (when (<= timer 0.0)
-                        (let* ((object-id (getf object :id))
-                               (archetype (and object-id (find-object-archetype object-id)))
-                               (base-count (getf object :base-count nil)))
-                          (cond
-                            (archetype
-                             (setf object (plist-put object :count (object-archetype-count archetype))
-                                   object (plist-put object :respawn 0.0)
-                                   ;; Mark dirty so delta snapshot includes respawn
-                                   object (plist-put object :snapshot-dirty t)))
-                            ((and base-count (numberp base-count) (> base-count 0))
-                             (setf object (plist-put object :count (truncate base-count))
-                                   object (plist-put object :respawn 0.0)
-                                   ;; Mark dirty so delta snapshot includes respawn
-                                   object (plist-put object :snapshot-dirty t))))))))
-                  (setf (car cell) object))))))
+      (dolist (object objects)
+        (when (and object (zone-object-respawnable object))
+          (let ((timer (zone-object-respawn object)))
+            (declare (type single-float timer))
+            (when (> timer 0.0)
+              (setf timer (max 0.0 (- timer dt)))
+              (setf (zone-object-respawn object) timer)
+              (when (<= timer 0.0)
+                ;; Respawn complete - reset count
+                (let* ((object-id (zone-object-id object))
+                       (archetype (and object-id (find-object-archetype object-id)))
+                       (base-count (zone-object-base-count object)))
+                  (cond
+                    (archetype
+                     (setf (zone-object-count object) (object-archetype-count archetype)
+                           (zone-object-respawn object) 0.0
+                           (zone-object-snapshot-dirty object) t))
+                    ((and base-count (> base-count 0))
+                     (setf (zone-object-count object) base-count
+                           (zone-object-respawn object) 0.0
+                           (zone-object-snapshot-dirty object) t))))))))))))
 
 (defun update-object-respawns (world dt)
   ;; Tick down respawn timers for world's current zone.
@@ -713,9 +712,10 @@
     (update-zone-objects-respawns objects dt)))
 
 (defun pickup-object-at-tile (player world tx ty object-id &optional zone-id)
-  ;; Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
-  ;; Thread-safe: protects zone-objects modification from concurrent respawn updates.
-  ;; Uses ZONE-ID if provided, otherwise falls back to player's zone or world-zone.
+  "Attempt to pick up OBJECT-ID at TX/TY; returns true on success.
+   Thread-safe: protects zone-objects modification from concurrent respawn updates.
+   Uses ZONE-ID if provided, otherwise falls back to player's zone or world-zone.
+   Task 5.5: Updated to use zone-object struct accessors."
   (with-zone-objects-lock
     (let* ((effective-zone-id (or zone-id
                                    (player-zone-id player)
@@ -731,9 +731,9 @@
         (let ((remaining nil)
               (picked nil))
           (dolist (object objects)
-            (let ((ox (getf object :x))
-                  (oy (getf object :y))
-                  (id (getf object :id)))
+            (let ((ox (zone-object-x object))
+                  (oy (zone-object-y object))
+                  (id (zone-object-id object)))
               (log-verbose "PICKUP-TILE: checking obj ox=~a oy=~a id=~a" ox oy id)
               (if (and (eql ox tx)
                        (eql oy ty)
@@ -758,13 +758,13 @@
                             ((zerop leftover)
                              (if (> respawn 0.0)
                                  (progn
-                                   (setf object (plist-put object :count 0)
-                                         object (plist-put object :respawn respawn))
-                                   (log-verbose "PICKUP-TILE: set respawn timer to ~a on object ~a" respawn (getf object :id))
+                                   (setf (zone-object-count object) 0
+                                         (zone-object-respawn object) (float respawn 1.0))
+                                   (log-verbose "PICKUP-TILE: set respawn timer to ~a on object ~a" respawn id)
                                    (push object remaining))
                                  nil))
                             (t
-                             (setf object (plist-put object :count leftover))
+                             (setf (zone-object-count object) leftover)
                              (push object remaining))))
                         (push object remaining)))
                   (push object remaining))))
@@ -776,7 +776,7 @@
                 (setf (zone-state-objects zone-state) new-objects))
               (log-verbose "PICKUP-TILE: zone now has ~a objects, first respawn=~a"
                            (length new-objects)
-                           (and new-objects (getf (first new-objects) :respawn)))))
+                           (and new-objects (zone-object-respawn (first new-objects))))))
           picked)))))
 
 (defun player-adjacent-to-tile-p (player-tx player-ty target-tx target-ty)
@@ -832,15 +832,16 @@
                                 (object-archetype-id obj-archetype)
                                 item-id)))
             (log-verbose "DROP-INV: obj-archetype=~a object-id=~a" (not (null obj-archetype)) object-id)
+            ;; Task 5.5: Use zone-object struct accessors throughout
             (multiple-value-bind (tx ty)
                 (player-tile-coords player world)
               (let* ((objects (zone-objects zone))
                      (existing (and objects
                                     (find-if (lambda (obj)
-                                               (and (eql (getf obj :x) tx)
-                                                    (eql (getf obj :y) ty)))
+                                               (and (eql (zone-object-x obj) tx)
+                                                    (eql (zone-object-y obj) ty)))
                                              objects)))
-                     (existing-id (and existing (getf existing :id)))
+                     (existing-id (and existing (zone-object-id existing)))
                      (existing-respawnable (and existing (object-respawnable-p existing))))
                 (log-verbose "DROP-INV: tile=~d,~d existing=~a existing-id=~a object-id=~a"
                              tx ty (not (null existing)) existing-id object-id)
@@ -852,31 +853,35 @@
                       (when (> dropped 0)
                         (cond
                           ((and existing (not existing-respawnable))
+                           ;; Add to existing non-respawnable pile
                            (log-verbose "DROP-INV: adding to existing non-respawnable")
                            (let ((base-count (object-entry-count existing obj-archetype)))
-                             (let ((pos (and objects (position existing objects :test #'eq))))
-                               (setf existing (plist-put existing :count (+ base-count dropped)))
-                               ;; If plist-put returned a new list, update the zone objects list.
-                               (when pos
-                                (setf (nth pos objects) existing)))))
+                             (setf (zone-object-count existing) (+ base-count dropped)
+                                   (zone-object-snapshot-dirty existing) t)))
                           ((and existing existing-respawnable)
+                           ;; Create new dropped object (existing is respawnable)
                            (log-verbose "DROP-INV: creating new object (existing is respawnable)")
-                           (zone-add-object zone (list :id object-id
-                                                       :x tx
-                                                       :y ty
-                                                       :count dropped
-                                                       :respawn 0.0
-                                                       :respawnable nil
-                                                       :snapshot-dirty nil)))
+                           (zone-add-object zone (%make-zone-object
+                                                  :id object-id
+                                                  :x tx
+                                                  :y ty
+                                                  :count dropped
+                                                  :base-count dropped
+                                                  :respawn 0.0
+                                                  :respawnable nil
+                                                  :snapshot-dirty t)))
                           (t
+                           ;; Create new dropped object at empty tile
                            (log-verbose "DROP-INV: creating new object at ~d,~d" tx ty)
-                           (zone-add-object zone (list :id object-id
-                                                       :x tx
-                                                       :y ty
-                                                       :count dropped
-                                                       :respawn 0.0
-                                                       :respawnable nil
-                                                       :snapshot-dirty nil))))
+                           (zone-add-object zone (%make-zone-object
+                                                  :id object-id
+                                                  :x tx
+                                                  :y ty
+                                                  :count dropped
+                                                  :base-count dropped
+                                                  :respawn 0.0
+                                                  :respawnable nil
+                                                  :snapshot-dirty t))))
                         dropped))))))))))))
 
 (defun swap-inventory-slots (player slot-a slot-b)

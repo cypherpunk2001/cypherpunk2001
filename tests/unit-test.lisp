@@ -1534,27 +1534,31 @@ hello
     (assert (= seconds 0.0) () "respawn-seconds: nil -> 0")))
 
 (defun test-object-respawnable-p ()
-  "Test object respawnable check."
-  ;; Default is respawnable
-  (let ((obj '(:id :test :x 0 :y 0)))
-    (assert (object-respawnable-p obj) () "respawnable: default true"))
-  ;; Explicitly respawnable
-  (let ((obj '(:id :test :x 0 :y 0 :respawnable t)))
+  "Test object respawnable check.
+   Task 5.5: Updated to use zone-object structs."
+  ;; Default (respawnable t)
+  (let ((obj (%make-zone-object :id :test :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (assert (object-respawnable-p obj) () "respawnable: explicit true"))
   ;; Not respawnable
-  (let ((obj '(:id :test :x 0 :y 0 :respawnable nil)))
+  (let ((obj (%make-zone-object :id :test :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 0.0 :respawnable nil :snapshot-dirty nil)))
     (assert (not (object-respawnable-p obj)) () "respawnable: explicit false")))
 
 (defun test-object-respawn-timer ()
-  "Test object respawn timer extraction."
-  ;; No timer
-  (let ((obj '(:id :test :x 0 :y 0)))
+  "Test object respawn timer extraction.
+   Task 5.5: Updated to use zone-object structs."
+  ;; No timer (0.0)
+  (let ((obj (%make-zone-object :id :test :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (assert (= (object-respawn-timer obj) 0.0) () "respawn-timer: no timer -> 0"))
   ;; With timer
-  (let ((obj '(:id :test :x 0 :y 0 :respawn 5.5)))
+  (let ((obj (%make-zone-object :id :test :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 5.5 :respawnable t :snapshot-dirty nil)))
     (assert (= (object-respawn-timer obj) 5.5) () "respawn-timer: has timer"))
   ;; Timer at 0
-  (let ((obj '(:id :test :x 0 :y 0 :respawn 0.0)))
+  (let ((obj (%make-zone-object :id :test :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (assert (= (object-respawn-timer obj) 0.0) () "respawn-timer: zero")))
 
 ;;; ============================================================
@@ -2158,18 +2162,22 @@ hello
     (assert (search "5" line) () "skill-hud: contains level")))
 
 (defun test-object-entry-count ()
-  "Test object entry count extraction."
+  "Test object entry count extraction.
+   Task 5.5: Updated to use zone-object structs."
   ;; Object with explicit count
-  (let ((obj '(:id :coins :x 0 :y 0 :count 50)))
+  (let ((obj (%make-zone-object :id :coins :x 0 :y 0 :count 50 :base-count 50
+                                :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (assert (= (object-entry-count obj nil) 50) () "entry-count: explicit count"))
-  ;; Object without count - falls back to archetype or 1
-  (let ((obj '(:id :coins :x 0 :y 0)))
+  ;; Object with count 1 - falls back to archetype or 1
+  (let ((obj (%make-zone-object :id :coins :x 0 :y 0 :count 1 :base-count 1
+                                :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (let ((count (object-entry-count obj nil)))
-      (assert (= count 1) () "entry-count: no count, no arch -> 1")))
+      (assert (= count 1) () "entry-count: count 1, no arch -> 1")))
   ;; With archetype
   (ensure-test-game-data)
   (let* ((archetype (find-object-archetype :health-potion-drop))
-         (obj '(:id :health-potion-drop :x 0 :y 0)))
+         (obj (%make-zone-object :id :health-potion-drop :x 0 :y 0 :count 1 :base-count 1
+                                 :respawn 0.0 :respawnable t :snapshot-dirty nil)))
     (when archetype
       (let ((count (object-entry-count obj archetype)))
         (assert (>= count 1) () "entry-count: archetype count")))))
@@ -2293,10 +2301,13 @@ hello
     (assert (null (zone-layer-by-id zone :nonexistent)) () "layer-by-id: not found")))
 
 (defun test-zone-to-plist ()
-  "Test zone serialization to plist."
+  "Test zone serialization to plist.
+   Task 5.5: Updated to use zone-object structs."
   (let* ((zone (make-empty-zone :test-zone 20 15 :chunk-size 8)))
-    ;; Add an object
-    (push '(:id :coins :x 5 :y 5 :count 10) (zone-objects zone))
+    ;; Add an object (using zone-object struct)
+    (push (%make-zone-object :id :coins :x 5 :y 5 :count 10 :base-count 10
+                             :respawn 0.0 :respawnable t :snapshot-dirty nil)
+          (zone-objects zone))
     (let ((plist (zone-to-plist zone)))
       (assert (listp plist) () "zone-to-plist: returns list")
       (assert (eq (getf plist :id) :test-zone) () "zone-to-plist: id")
@@ -2467,12 +2478,15 @@ hello
 ;;; ============================================================
 
 (defun test-load-write-zone-roundtrip ()
-  "Test zone save and load roundtrip."
+  "Test zone save and load roundtrip.
+   Task 5.5: Updated to use zone-object structs."
   (let* ((temp-path (merge-pathnames "test-zone-roundtrip.lisp"
                                       (uiop:temporary-directory)))
          (zone (make-empty-zone :test-roundtrip 25 20 :chunk-size 8)))
-    ;; Add some content
-    (push '(:id :coins :x 5 :y 5 :count 10) (zone-objects zone))
+    ;; Add some content (zone objects now use structs)
+    (push (%make-zone-object :id :coins :x 5 :y 5 :count 10 :base-count 10
+                             :respawn 0.0 :respawnable t :snapshot-dirty nil)
+          (zone-objects zone))
     (push '(:id :spawn :x 10 :y 10) (zone-spawns zone))
     ;; Write
     (unwind-protect
@@ -6955,11 +6969,15 @@ hello
 (define-security-test test-concurrent-zone-object-modification
   ;; Test that concurrent zone object access doesn't corrupt state
   ;; This verifies *zone-objects-lock* protection
+  ;; Task 5.5: Updated to use zone-object structs
   (let* ((world (%make-world))
          (zone (%make-zone))
-         (initial-objects (list (list :id :chest :x 5 :y 5 :count 10 :respawn 0.0)
-                                (list :id :chest :x 6 :y 6 :count 10 :respawn 0.0)
-                                (list :id :chest :x 7 :y 7 :count 10 :respawn 0.0)))
+         (initial-objects (list (%make-zone-object :id :chest :x 5 :y 5 :count 10 :base-count 10
+                                                   :respawn 0.0 :respawnable t :snapshot-dirty nil)
+                                (%make-zone-object :id :chest :x 6 :y 6 :count 10 :base-count 10
+                                                   :respawn 0.0 :respawnable t :snapshot-dirty nil)
+                                (%make-zone-object :id :chest :x 7 :y 7 :count 10 :base-count 10
+                                                   :respawn 0.0 :respawnable t :snapshot-dirty nil)))
          (iterations 50)
          (threads nil))
     ;; Setup world with zone objects
@@ -6994,9 +7012,9 @@ hello
     (let ((objects (zone-objects zone)))
       (unless (listp objects)
         (error "Zone objects corrupted - not a list"))
-      ;; Each object should still have valid structure
+      ;; Each object should still have valid zone-object struct
       (dolist (obj objects)
-        (unless (and (listp obj) (getf obj :id))
+        (unless (and (zone-object-p obj) (zone-object-id obj))
           (error "Zone object corrupted: ~a" obj))))))
 
 ;;;; ==========================================================================
