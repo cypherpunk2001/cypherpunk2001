@@ -128,6 +128,12 @@
 (defparameter *render-cache-max-chunks* 64
   "Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth.")
 
+(defparameter *entity-render-max-distance* nil
+  "Maximum distance from player to render NPCs. NIL = unlimited (default).
+   Set to ~3000.0 for very large zones with many NPCs to reduce draw calls.
+   Distance is measured in world pixels from player center to NPC center.
+   Note: Only affects NPCs; other players always render if in viewport.")
+
 ;;; Camera - Read every frame for view calculations
 (defparameter *camera-zoom-default* 1.0
   "Default camera zoom level.")

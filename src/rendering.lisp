@@ -39,11 +39,23 @@
            (>= ey view-top)
            (<= ey view-bottom)))))
 
+(defun entity-in-render-distance-p (entity player)
+  "Return T if entity is within render distance, or if distance check disabled.
+   Uses *entity-render-max-distance* (nil = unlimited, default)."
+  (or (null *entity-render-max-distance*)
+      (null player)
+      (multiple-value-bind (ex ey) (combatant-position entity)
+        (let ((dx (- ex (player-x player)))
+              (dy (- ey (player-y player))))
+          (<= (+ (* dx dx) (* dy dy))
+              (* *entity-render-max-distance* *entity-render-max-distance*))))))
+
 (defun draw-entities-with-spatial-culling (game player camera-x camera-y zoom
                                             margin-x margin-y assets render)
   "Draw entities using spatial grid for NPC viewport culling.
    NPCs are drawn first, then players (so players render on top).
-   NPCs use spatial-grid-query-rect when grid is available."
+   NPCs use spatial-grid-query-rect when grid is available.
+   Optional distance filter via *entity-render-max-distance*."
   (let* ((half-view-w (/ *window-width* (* 2.0 zoom)))
          (half-view-h (/ *window-height* (* 2.0 zoom)))
          (view-left (- camera-x half-view-w margin-x))
@@ -66,14 +78,17 @@
             (dolist (npc-id candidate-ids)
               (let ((npc (find-npc-by-id-fast zone-state npc-id)))
                 (when (and npc
-                           (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y))
+                           (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                           (entity-in-render-distance-p npc player))
                   (draw-entity npc assets render)))))
           ;; Fallback: iterate all NPCs with viewport check
           (when npcs
             (loop :for npc :across npcs
-                  :when (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                  :when (and (entity-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                             (entity-in-render-distance-p npc player))
                   :do (draw-entity npc assets render)))))
     ;; Draw players last (so they render on top of NPCs)
+    ;; Note: distance filter not applied to players (always render other players in view)
     (when players
       (loop :for p :across players
             :when (entity-in-viewport-p p camera-x camera-y zoom margin-x margin-y)

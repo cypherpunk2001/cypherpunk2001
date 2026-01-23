@@ -48,6 +48,10 @@ Design note
   spatial grid for viewport culling via `spatial-grid-query-rect`. This queries only cells
   overlapping the viewport instead of iterating all NPCs. Players use simple array iteration
   (player count is typically small). Falls back to linear iteration if no spatial grid.
+- **Optional distance filter** (`*entity-render-max-distance*`): When set to a number (e.g.,
+  3000.0), NPCs beyond this distance from the player are not rendered even if in viewport.
+  Default is `nil` (unlimited). Useful for very large zones with many NPCs where max zoom-out
+  would otherwise draw distant entities that are barely visible.
 - Culling bounds are zoom-aware: `half-view = window-size / (2 * zoom)`. Zooming out
   expands the visible area as expected (area scales as `1/zoom^2`), so more tiles/entities
   are drawn when players zoom out. This is correct behavior, but increases draw workload.

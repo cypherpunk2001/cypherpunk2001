@@ -105,6 +105,7 @@ How it connects
 | `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. **Use `toggle-render-cache-enabled` to change** (clears caches) |
 | `*render-cache-max-chunks*` | `64` | Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth |
 | `*render-chunk-size*` | `16` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
+| `*entity-render-max-distance*` | `nil` | Maximum distance (world pixels) from player to render NPCs. `nil` = unlimited. Only affects NPCs; players always render if in viewport |
 
 **Important:** Use `toggle-tile-point-filter` and `toggle-render-cache-enabled` instead of raw `setf` - direct assignment leaves stale cached textures.
 

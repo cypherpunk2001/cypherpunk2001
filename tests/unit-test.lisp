@@ -294,7 +294,9 @@
                 test-preview-zone-cache-separation
                 test-clear-other-zone-render-caches
                 ;; Spatial Grid Query Tests (Phase 3)
-                test-spatial-grid-query-rect)))
+                test-spatial-grid-query-rect
+                ;; Distance Filter Tests (Phase 4)
+                test-entity-in-render-distance-p)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -8133,3 +8135,38 @@ hello
     (let ((result (spatial-grid-query-rect nil 0.0 0.0 100.0 100.0)))
       (assert (null result)
               () "query-rect: nil grid should return nil"))))
+
+(defun test-entity-in-render-distance-p ()
+  "Test entity-in-render-distance-p distance filtering."
+  (ensure-test-game-data)
+  (let ((original-max-distance *entity-render-max-distance*)
+        (archetype (gethash :goblin *npc-archetypes*)))
+    (unwind-protect
+        (let* ((player (make-player 100.0 100.0 :id 1))
+               (near-npc (make-npc 150.0 100.0 :archetype archetype :id 2))   ; 50 pixels away
+               (far-npc (make-npc 600.0 100.0 :archetype archetype :id 3)))   ; 500 pixels away
+          ;; Test with nil (unlimited) - all should pass
+          (setf *entity-render-max-distance* nil)
+          (assert (entity-in-render-distance-p near-npc player)
+                  () "distance: near NPC should pass with nil limit")
+          (assert (entity-in-render-distance-p far-npc player)
+                  () "distance: far NPC should pass with nil limit")
+
+          ;; Test with distance limit of 200 pixels
+          (setf *entity-render-max-distance* 200.0)
+          (assert (entity-in-render-distance-p near-npc player)
+                  () "distance: near NPC (50px) should pass with 200px limit")
+          (assert (not (entity-in-render-distance-p far-npc player))
+                  () "distance: far NPC (500px) should fail with 200px limit")
+
+          ;; Test with exact boundary (50px away, 50px limit)
+          (setf *entity-render-max-distance* 50.0)
+          (assert (entity-in-render-distance-p near-npc player)
+                  () "distance: NPC at exactly max distance should pass")
+
+          ;; Test with nil player - should pass (graceful handling)
+          (setf *entity-render-max-distance* 100.0)
+          (assert (entity-in-render-distance-p near-npc nil)
+                  () "distance: nil player should pass"))
+      ;; Restore original value
+      (setf *entity-render-max-distance* original-max-distance))))
