@@ -302,7 +302,7 @@
   (raylib:unload-texture (assets-blood-up assets))
   (raylib:unload-texture (assets-blood-side assets))
   ;; Clear all render chunk caches to free VRAM
-  (clear-all-zone-render-caches))
+  (clear-all-zone-render-caches "shutdown"))
 
 (defun layer-tileset-context (layer editor assets)
   ;; Resolve the tileset texture and columns for a layer.
@@ -361,6 +361,7 @@
 (defun log-render-cache-stats ()
   "Log cache stats summary when *debug-render-cache* enabled."
   (when *debug-render-cache*
+    ;; Main stats line
     (format t "~&[CACHE] visible:~D cache-size:~D | new:~D rerender:~D evict:~D | hits:~D misses:~D~%"
             *render-cache-stats-visible*
             (get-total-cache-size)
@@ -368,7 +369,16 @@
             *render-cache-stats-rerendered*
             *render-cache-stats-evicted*
             *render-cache-stats-hits*
-            *render-cache-stats-misses*)))
+            *render-cache-stats-misses*)
+    ;; A2: Per-zone breakdown (only when multiple zones or creates/evicts happening)
+    (when (or (> *render-cache-stats-created* 0)
+              (> *render-cache-stats-evicted* 0)
+              (> (hash-table-count *zone-render-caches*) 1))
+      (maphash (lambda (zone-id cache)
+                 (format t "~&[CACHE]   zone:~A entries:~D~%"
+                         zone-id
+                         (hash-table-count (zone-render-cache-chunks cache))))
+               *zone-render-caches*))))
 
 (defun draw-cache-debug-overlay ()
   "Draw cache stats HUD overlay when *debug-render-cache* enabled.
@@ -397,13 +407,25 @@
   (list (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
         chunk-x chunk-y))
 
+;; A2.3: One-time config log flag
+(defvar *render-cache-config-logged* nil
+  "T once we've logged the cache config. Reset on cache clear-all.")
+
 (defun get-or-create-zone-render-cache (zone-id tile-dest-size)
   "Get or create a render cache for ZONE-ID."
   (or (gethash zone-id *zone-render-caches*)
-      (setf (gethash zone-id *zone-render-caches*)
-            (%make-zone-render-cache
-             :zone-id zone-id
-             :chunk-pixel-size (* *render-chunk-size* tile-dest-size)))))
+      (let ((new-cache (%make-zone-render-cache
+                        :zone-id zone-id
+                        :chunk-pixel-size (* *render-chunk-size* tile-dest-size))))
+        ;; A2.3: Log config once on first cache creation
+        (when (and *debug-render-cache* (not *render-cache-config-logged*))
+          (format t "~&[CACHE] CONFIG tile-dest:~D chunk-px:~D chunk-tiles:~D max-chunks:~D~%"
+                  (truncate tile-dest-size)
+                  (truncate (* *render-chunk-size* tile-dest-size))
+                  *render-chunk-size*
+                  *render-cache-max-chunks*)
+          (setf *render-cache-config-logged* t))
+        (setf (gethash zone-id *zone-render-caches*) new-cache))))
 
 (defun unload-chunk-texture (cache-entry)
   "Unload the render texture from a cache entry to free VRAM."
@@ -424,10 +446,11 @@
              chunks)
     (when lru-key
       (let ((entry (gethash lru-key chunks)))
-        ;; Instrumentation: log eviction
+        ;; Instrumentation: log eviction with zone context (A2.1)
         (incf *render-cache-stats-evicted*)
         (when *debug-render-cache*
-          (format t "~&[CACHE] EVICT chunk (~D,~D) layer-key:~A age:~D~%"
+          (format t "~&[CACHE] EVICT zone:~A chunk:(~D,~D) layer-key:~A age:~D~%"
+                  (zone-render-cache-zone-id cache)
                   (render-chunk-cache-chunk-x entry)
                   (render-chunk-cache-chunk-y entry)
                   (render-chunk-cache-layer-key entry)
@@ -435,11 +458,18 @@
         (unload-chunk-texture entry)
         (remhash lru-key chunks)))))
 
-(defun clear-zone-render-cache (zone-id)
+(defun clear-zone-render-cache (zone-id &optional (caller "unknown"))
   "Unload all cached textures for ZONE-ID and remove from global cache.
-   Call on zone transition to prevent stale textures and VRAM leaks."
+   Call on zone transition to prevent stale textures and VRAM leaks.
+   CALLER is a string identifying the call site for diagnostic logging."
   (let ((cache (gethash zone-id *zone-render-caches*)))
     (when cache
+      ;; A2.2: Log cache clear with caller context
+      (when *debug-render-cache*
+        (format t "~&[CACHE] CLEAR zone:~A entries:~D caller:~A~%"
+                zone-id
+                (hash-table-count (zone-render-cache-chunks cache))
+                caller))
       (maphash (lambda (_key entry)
                  (declare (ignore _key))
                  (unload-chunk-texture entry))
@@ -447,24 +477,38 @@
       (clrhash (zone-render-cache-chunks cache))
       (remhash zone-id *zone-render-caches*))))
 
-(defun clear-all-zone-render-caches ()
+(defun clear-all-zone-render-caches (&optional (caller "unknown"))
   "Unload all cached textures across all zones. Call on shutdown or filter toggle.
-   Collects keys first to avoid mutating hash table during iteration."
+   Collects keys first to avoid mutating hash table during iteration.
+   CALLER is a string identifying the call site for diagnostic logging."
+  ;; A2.2: Log clear-all with caller context
+  (when *debug-render-cache*
+    (format t "~&[CACHE] CLEAR-ALL zones:~D caller:~A~%"
+            (hash-table-count *zone-render-caches*)
+            caller))
   (let ((zone-ids nil))
     ;; Collect all zone-ids first
     (maphash (lambda (zone-id _cache)
                (declare (ignore _cache))
                (push zone-id zone-ids))
              *zone-render-caches*)
-    ;; Now safely clear each zone's cache
+    ;; Now safely clear each zone's cache (pass caller for individual logging)
     (dolist (zone-id zone-ids)
-      (clear-zone-render-cache zone-id)))
+      (clear-zone-render-cache zone-id caller)))
   ;; Final clear in case any were missed
-  (clrhash *zone-render-caches*))
+  (clrhash *zone-render-caches*)
+  ;; Reset config logged flag so next session logs config again
+  (setf *render-cache-config-logged* nil))
 
-(defun clear-other-zone-render-caches (keep-zone-id)
+(defun clear-other-zone-render-caches (keep-zone-id &optional (caller "unknown"))
   "Clear all zone render caches except KEEP-ZONE-ID.
-   Call on zone transition to free preview zone caches while keeping current zone warm."
+   Call on zone transition to free preview zone caches while keeping current zone warm.
+   CALLER is a string identifying the call site for diagnostic logging."
+  ;; A2.2: Log clear-others with caller context
+  (when *debug-render-cache*
+    (format t "~&[CACHE] CLEAR-OTHERS keeping:~A caller:~A~%"
+            keep-zone-id
+            caller))
   (let ((zone-ids nil))
     (maphash (lambda (zone-id _cache)
                (declare (ignore _cache))
@@ -472,7 +516,7 @@
                  (push zone-id zone-ids)))
              *zone-render-caches*)
     (dolist (zone-id zone-ids)
-      (clear-zone-render-cache zone-id))))
+      (clear-zone-render-cache zone-id caller))))
 
 ;; Register zone change hook to clear stale render caches on zone transition.
 ;; This keeps game logic (movement.lisp) decoupled from rendering.
@@ -480,20 +524,20 @@
 (defun on-zone-change (new-zone-id)
   "Clear all render caches on zone transition. Cache rebuilds on first draw."
   (declare (ignore new-zone-id))
-  (clear-all-zone-render-caches))
+  (clear-all-zone-render-caches "zone-change"))
 
 (setf *client-zone-change-hook* #'on-zone-change)
 
 (defun toggle-render-cache-enabled ()
   "Toggle *render-cache-enabled* and clear caches for consistency."
   (setf *render-cache-enabled* (not *render-cache-enabled*))
-  (clear-all-zone-render-caches)
+  (clear-all-zone-render-caches "toggle-cache")
   *render-cache-enabled*)
 
 (defun toggle-tile-point-filter ()
   "Toggle *tile-point-filter* and clear caches so new filter applies to all chunks."
   (setf *tile-point-filter* (not *tile-point-filter*))
-  (clear-all-zone-render-caches)
+  (clear-all-zone-render-caches "toggle-filter")
   *tile-point-filter*)
 
 (defun invalidate-chunk-at-tile (zone-id layer world-tx world-ty)
@@ -592,17 +636,26 @@
             (render-chunk-to-texture zone layer chunk-x chunk-y tile-dest-size editor assets))
       (setf (render-chunk-cache-dirty entry) nil)
       ;; Instrumentation: distinguish new creation vs dirty re-render
+      ;; A2.1: Include zone context for diagnostic analysis
       (if is-new-entry
           (progn
             (incf *render-cache-stats-created*)
             (when *debug-render-cache*
-              (format t "~&[CACHE] CREATE chunk (~D,~D) layer:~A~%"
-                      chunk-x chunk-y (zone-layer-id layer))))
+              (format t "~&[CACHE] CREATE zone:~A chunk:(~D,~D) layer:~A tileset:~A tile-dest:~D chunk-px:~D~%"
+                      (zone-id zone)
+                      chunk-x chunk-y
+                      (zone-layer-id layer)
+                      (zone-layer-tileset-id layer)
+                      (truncate tile-dest-size)
+                      (truncate (* *render-chunk-size* tile-dest-size)))))
           (when is-dirty
             (incf *render-cache-stats-rerendered*)
             (when *debug-render-cache*
-              (format t "~&[CACHE] RERENDER chunk (~D,~D) layer:~A~%"
-                      chunk-x chunk-y (zone-layer-id layer))))))
+              (format t "~&[CACHE] RERENDER zone:~A chunk:(~D,~D) layer:~A tileset:~A~%"
+                      (zone-id zone)
+                      chunk-x chunk-y
+                      (zone-layer-id layer)
+                      (zone-layer-tileset-id layer))))))
     ;; Instrumentation: track hits vs misses
     (if was-cached
         (incf *render-cache-stats-hits*)
