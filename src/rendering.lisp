@@ -470,11 +470,59 @@
       (raylib:draw-rectangle x y width height bg-color)
       (raylib:draw-text text (+ x padding) (+ y padding) text-size raylib:+yellow+))))
 
+;;;; ========================================================================
+;;;; Chunk Cache Key Packing (Task 4.2)
+;;;; Avoid per-lookup list/cons allocation by packing keys into fixnums.
+;;;; Uses nested eq hash tables: layer-id -> tileset-id -> numeric-id.
+;;;; ========================================================================
+
+(defparameter *layer-key-ids* (make-hash-table :test 'eq :size 64)
+  "Nested map: layer-id -> (tileset-id -> numeric-id).
+   Outer and inner tables use eq on keywords - no consing on lookup.
+   Reset when zone render caches are cleared.")
+
+(defvar *next-layer-key-id* 0
+  "Next numeric ID to assign to a new layer-key combination.")
+
+(defun reset-layer-key-ids ()
+  "Reset the layer-key-id mapping. Called when clearing all render caches."
+  (clrhash *layer-key-ids*)
+  (setf *next-layer-key-id* 0))
+
+(defun get-layer-key-id (layer-id tileset-id)
+  "Get or create numeric ID for a (layer-id, tileset-id) combination.
+   No per-call allocation - uses nested eq hash tables on keywords.
+   Inner tables are created lazily (once per unique layer-id)."
+  (let ((inner (gethash layer-id *layer-key-ids*)))
+    (unless inner
+      ;; First time seeing this layer-id - create inner table (one-time alloc)
+      (setf inner (make-hash-table :test 'eq :size 8))
+      (setf (gethash layer-id *layer-key-ids*) inner))
+    (or (gethash tileset-id inner)
+        (setf (gethash tileset-id inner) (incf *next-layer-key-id*)))))
+
+(declaim (inline pack-chunk-cache-key))
+(defun pack-chunk-cache-key (layer-key-id chunk-x chunk-y)
+  "Pack chunk cache key into a single fixnum (Task 4.2).
+   Format: 10 bits layer-key-id | 22 bits chunk-x | 22 bits chunk-y
+   Supports up to 1024 layer/tileset combos, +-2M chunk coordinates."
+  (declare (optimize (speed 3) (safety 0) (debug 0))
+           (type fixnum layer-key-id chunk-x chunk-y))
+  ;; Add offset to make chunk coords positive (signed -> unsigned)
+  (let ((cx (the fixnum (+ chunk-x #x200000)))  ; Add 2^21 to handle negatives
+        (cy (the fixnum (+ chunk-y #x200000))))
+    (declare (type fixnum cx cy))
+    (the fixnum (logior (the fixnum (ash (logand layer-key-id #x3FF) 44))   ; Top 10 bits
+                        (the fixnum (ash (logand cx #x3FFFFF) 22))           ; Middle 22 bits
+                        (the fixnum (logand cy #x3FFFFF))))))                ; Bottom 22 bits
+
 (defun chunk-cache-key (layer chunk-x chunk-y)
   "Generate a unique cache key for a layer chunk.
+   Returns a packed fixnum instead of list (Task 4.2).
    Key includes both layer-id and tileset-id to handle per-layer tilesets."
-  (list (cons (zone-layer-id layer) (zone-layer-tileset-id layer))
-        chunk-x chunk-y))
+  (let ((layer-key-id (get-layer-key-id (zone-layer-id layer)
+                                        (zone-layer-tileset-id layer))))
+    (pack-chunk-cache-key layer-key-id chunk-x chunk-y)))
 
 ;;; Phase C: Zone bounds helpers for chunk clamping
 (defun zone-max-chunk-x (zone)
@@ -605,6 +653,8 @@
       (clear-zone-render-cache zone-id caller)))
   ;; Final clear in case any were missed
   (clrhash *zone-render-caches*)
+  ;; Task 4.2: Reset layer-key-id mapping when clearing all caches
+  (reset-layer-key-ids)
   ;; Reset config logged flag so next session logs config again
   (setf *render-cache-config-logged* nil))
 

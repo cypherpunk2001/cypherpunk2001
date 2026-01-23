@@ -2738,6 +2738,13 @@
         (setf *use-binary-snapshots* t)
         (ensure-binary-send-buffer)
         (format t "~&SERVER: Binary snapshots enabled~%")))
+    ;; Phase 4 Task 4.4: NPC object pooling
+    (let ((npc-pool-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_NPC_POOL")
+                            #-sbcl (uiop:getenv "MMORPG_NPC_POOL"))))
+      (when (and npc-pool-str (string= npc-pool-str "1"))
+        (setf *use-npc-pool* t)
+        (prewarm-npc-pool 256)
+        (format t "~&SERVER: NPC object pooling enabled (256 pre-warmed)~%")))
     ;; Clear any stale session state from previous REPL runs
     ;; (Important when restarting server without restarting the Lisp process)
     (log-verbose "Clearing stale sessions (active=~d, player=~d)"

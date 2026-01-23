@@ -11,6 +11,22 @@
   "Cache of zone-id -> zone-state for all loaded zones.
    Zones stay loaded once any player enters them.")
 
+;;;; ========================================================================
+;;;; Zone Tracking Cache (Task 4.1)
+;;;; Cached occupied zone-ids to avoid per-tick list allocation.
+;;;; Call refresh-occupied-zones-cache once per tick, then iterate
+;;;; *occupied-zones-cache* instead of calling occupied-zone-ids.
+;;;; ========================================================================
+
+(defparameter *occupied-zones-cache*
+  (make-array 64 :element-type t :fill-pointer 0 :adjustable nil)
+  "Reusable vector of zone-ids that have at least one player.
+   Populated by refresh-occupied-zones-cache, avoids per-tick allocation.")
+
+(defparameter *occupied-zones-seen*
+  (make-hash-table :test 'eq :size 64)
+  "Dedup helper for refresh-occupied-zones-cache. Reused each tick.")
+
 (defun get-zone-state (zone-id)
   "Get the zone-state for ZONE-ID, or NIL if not loaded."
   (gethash zone-id *zone-states*))
@@ -40,8 +56,15 @@
             state)))))
 
 (defun zone-state-player-count (zone-id players)
-  "Count how many players are in ZONE-ID."
-  (count-if (lambda (p) (eq (player-zone-id p) zone-id)) players))
+  "Count how many players are in ZONE-ID.
+   Uses tight loop instead of count-if to avoid lambda allocation (Task 4.1)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (let ((count 0))
+    (declare (type fixnum count))
+    (loop :for p :across players
+          :when (and p (eq (player-zone-id p) zone-id))
+            :do (incf count))
+    count))
 
 (defun players-in-zone (zone-id players)
   "Return vector of players in ZONE-ID. Returns nil if zone-id is nil."
@@ -53,7 +76,9 @@
       (coerce (nreverse result) 'vector))))
 
 (defun occupied-zone-ids (players)
-  "Return list of zone-ids that have at least one player."
+  "Return list of zone-ids that have at least one player.
+   DEPRECATED: Use refresh-occupied-zones-cache + *occupied-zones-cache* instead
+   to avoid per-tick list allocation (Task 4.1)."
   (let ((ids nil))
     (loop for p across players
           for zid = (player-zone-id p)
@@ -61,8 +86,43 @@
             do (push zid ids))
     ids))
 
+(defun refresh-occupied-zones-cache (players)
+  "Rebuild *occupied-zones-cache* from actual player presence.
+   Call once per tick. Only includes zones with players.
+   Avoids per-tick list allocation by reusing the cache vector (Task 4.1)."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (setf (fill-pointer *occupied-zones-cache*) 0)
+  (clrhash *occupied-zones-seen*)
+  ;; Iterate players to find actually-occupied zones
+  (loop :for player :across players
+        :when player
+          :do (let ((zone-id (player-zone-id player)))
+                (when (and zone-id (not (gethash zone-id *occupied-zones-seen*)))
+                  (setf (gethash zone-id *occupied-zones-seen*) t)
+                  (when (< (fill-pointer *occupied-zones-cache*)
+                           (array-dimension *occupied-zones-cache* 0))
+                    (vector-push zone-id *occupied-zones-cache*)))))
+  *occupied-zones-cache*)
+
+(defun release-zone-npcs (zone-state)
+  "Release all NPCs in ZONE-STATE back to the pool (Task 4.4).
+   Only effective when *use-npc-pool* is enabled."
+  (when (and *use-npc-pool* zone-state)
+    (let ((npcs (zone-state-npcs zone-state)))
+      (when npcs
+        (loop :for npc :across npcs
+              :when npc
+              :do (release-npc npc))))))
+
 (defun clear-zone-states ()
-  "Clear all cached zone states. Used for testing or server restart."
+  "Clear all cached zone states. Used for testing or server restart.
+   Task 4.4: Releases pooled NPCs before clearing."
+  ;; Release NPCs back to pool before clearing
+  (when *use-npc-pool*
+    (maphash (lambda (_zone-id zone-state)
+               (declare (ignore _zone-id))
+               (release-zone-npcs zone-state))
+             *zone-states*))
   (clrhash *zone-states*))
 
 (defun get-zone-wall-map (zone-id)

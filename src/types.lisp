@@ -303,14 +303,30 @@
 
 (defstruct (zone-render-cache (:constructor %make-zone-render-cache))
   "Per-zone render cache state."
-  (chunks (make-hash-table :test 'equal :size 1024)) ; key: (layer-key chunk-x chunk-y) -> render-chunk-cache
+  ;; Task 4.2: Changed from :test 'equal to :test 'eql for packed fixnum keys
+  (chunks (make-hash-table :test 'eql :size 1024)) ; key: packed-fixnum -> render-chunk-cache
   (chunk-pixel-size 0)       ; *render-chunk-size* * tile-dest-size (computed once)
   (zone-id nil)              ; Track which zone this cache belongs to
   (frame-counter 0 :type fixnum)) ; Frame counter for LRU tracking
 
-(defstruct (combat-event-queue (:constructor make-combat-event-queue ()))
-  ;; Queue of combat events for the UI to process.
-  (events nil))
+;;;; ========================================================================
+;;;; Event Ring Buffer (Task 4.3)
+;;;; Fixed-size ring buffer to avoid per-event list allocation.
+;;;; ========================================================================
+
+(defconstant +event-ring-size+ 256
+  "Maximum events in ring buffer. Oldest events dropped if exceeded.")
+
+(defstruct (combat-event-queue
+            (:constructor %make-combat-event-queue)
+            (:constructor make-combat-event-queue
+                (&aux (buffer (make-array +event-ring-size+ :initial-element nil)))))
+  "Ring buffer of combat events for the UI to process.
+   Task 4.3: Replaces list-based queue to avoid nconc allocation."
+  (buffer nil :type (or null simple-vector))  ; Fixed-size array of events
+  (head 0 :type fixnum)   ; Next write position
+  (tail 0 :type fixnum)   ; Next read position
+  (count 0 :type fixnum)) ; Number of valid events
 
 (defstruct (interpolation-snapshot (:constructor %make-interpolation-snapshot))
   ;; Cached entity positions at a specific timestamp for interpolation.
@@ -352,6 +368,39 @@
   (predicted-x 0.0 :type single-float)   ; Client's predicted position
   (predicted-y 0.0 :type single-float)
   (misprediction-count 0 :type fixnum))  ; Debug counter
+
+;;;; ========================================================================
+;;;; Object Pooling Infrastructure (Task 4.4)
+;;;; Generic pool for reusing allocated objects to avoid GC pressure.
+;;;; ========================================================================
+
+(defstruct (object-pool
+            (:constructor %make-object-pool (constructor &key (initial-size 64))))
+  "Pool of reusable objects to avoid per-use allocation."
+  (free-list nil :type list)       ; Stack of available objects
+  (constructor nil :type function) ; Function to create new objects
+  (allocated 0 :type fixnum)       ; Total objects ever allocated
+  (peak 0 :type fixnum))           ; Peak concurrent usage
+
+(defun pool-acquire (pool)
+  "Acquire an object from POOL, creating new if necessary.
+   Returns the object (caller should reset it before use)."
+  (if (object-pool-free-list pool)
+      (pop (object-pool-free-list pool))
+      (progn
+        (incf (object-pool-allocated pool))
+        (setf (object-pool-peak pool)
+              (max (object-pool-peak pool) (object-pool-allocated pool)))
+        (funcall (object-pool-constructor pool)))))
+
+(defun pool-release (pool object)
+  "Return OBJECT to POOL for reuse."
+  (push object (object-pool-free-list pool)))
+
+(defun pool-prewarm (pool count)
+  "Pre-allocate COUNT objects into POOL."
+  (dotimes (i count)
+    (pool-release pool (funcall (object-pool-constructor pool)))))
 
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
@@ -537,8 +586,88 @@
                   :last-sequence 0
                   :snapshot-dirty t)))
 
-(defun make-npc (start-x start-y &key archetype id)
-  ;; Construct an NPC state struct at the given start position.
+;;;; ========================================================================
+;;;; NPC Pooling (Task 4.4)
+;;;; Reuse NPC structs to avoid allocation during zone transitions and respawns.
+;;;; ========================================================================
+
+(defparameter *npc-pool* nil
+  "Global NPC object pool. Initialized lazily on first use.")
+
+(defparameter *use-npc-pool* nil
+  "When T, acquire-npc uses pool instead of allocating fresh NPCs.
+   Toggle via MMORPG_NPC_POOL=1 environment variable.")
+
+(defun get-npc-pool ()
+  "Get or create the global NPC pool."
+  (unless *npc-pool*
+    (setf *npc-pool*
+          (%make-object-pool (lambda () (%make-npc :intent (make-intent)))
+                             :initial-size 256)))
+  *npc-pool*)
+
+(defun reset-npc (npc x y archetype id)
+  "Reset NPC state for reuse from pool. Returns NPC."
+  (let* ((sx (float x 1.0f0))
+         (sy (float y 1.0f0))
+         (arch (or archetype (default-npc-archetype)))
+         (stats (make-npc-stats arch))
+         (max-hp (stat-block-base-level stats :hitpoints)))
+    ;; Reset all fields to fresh state
+    (setf (npc-id npc) (or id 0)
+          (npc-x npc) sx
+          (npc-y npc) sy
+          (npc-stats npc) stats
+          (npc-anim-state npc) :idle
+          (npc-facing npc) :down
+          (npc-archetype npc) arch
+          (npc-behavior-state npc) :idle
+          (npc-provoked npc) nil
+          (npc-home-x npc) sx
+          (npc-home-y npc) sy
+          (npc-wander-x npc) sx
+          (npc-wander-y npc) sy
+          (npc-wander-timer npc) 0.0
+          (npc-attack-timer npc) 0.0
+          (npc-frame-index npc) 0
+          (npc-frame-timer npc) 0.0
+          (npc-hits-left npc) max-hp
+          (npc-alive npc) t
+          (npc-respawn-timer npc) 0.0
+          (npc-hit-active npc) nil
+          (npc-hit-timer npc) 0.0
+          (npc-hit-frame npc) 0
+          (npc-hit-facing npc) :down
+          (npc-hit-facing-sign npc) 1.0
+          (npc-snapshot-dirty npc) t
+          (npc-grid-cell-x npc) nil
+          (npc-grid-cell-y npc) nil)
+    ;; Reset intent
+    (let ((intent (npc-intent npc)))
+      (when intent
+        (reset-frame-intent intent)))
+    npc))
+
+(defun acquire-npc (x y &key archetype id)
+  "Acquire an NPC from pool or create new. Reset for use at (X, Y)."
+  (if *use-npc-pool*
+      (let ((npc (pool-acquire (get-npc-pool))))
+        (reset-npc npc x y archetype id))
+      ;; Fallback to direct allocation
+      (make-npc-direct x y :archetype archetype :id id)))
+
+(defun release-npc (npc)
+  "Return NPC to pool for reuse."
+  (when (and *use-npc-pool* npc)
+    (pool-release (get-npc-pool) npc)))
+
+(defun prewarm-npc-pool (&optional (count 256))
+  "Pre-allocate NPCs into the pool for faster zone loading."
+  (when *use-npc-pool*
+    (pool-prewarm (get-npc-pool) count)))
+
+(defun make-npc-direct (start-x start-y &key archetype id)
+  "Construct an NPC state struct directly (no pool). Internal use."
   (let ((sx (float start-x 1.0f0))
         (sy (float start-y 1.0f0))
         (archetype (or archetype (default-npc-archetype)))
@@ -572,6 +701,13 @@
                :hit-facing :down
                :hit-facing-sign 1.0
                :snapshot-dirty t))))
+
+(defun make-npc (start-x start-y &key archetype id)
+  "Construct an NPC state struct at the given start position.
+   Uses pool if *use-npc-pool* is enabled."
+  (if *use-npc-pool*
+      (acquire-npc start-x start-y :archetype archetype :id id)
+      (make-npc-direct start-x start-y :archetype archetype :id id)))
 
 (defun make-npcs (player world &key id-source)
   ;; Construct NPCs from zone spawn data (or none if no spawns are defined).
@@ -769,24 +905,55 @@
   (:documentation "Render ENTITY using ASSETS and RENDER helpers."))
 
 (defun push-combat-event (queue event)
-  ;; Add EVENT to the combat event queue.
+  "Add EVENT to the combat event ring buffer.
+   Task 4.3: O(1) insertion with no allocation."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
   (when (and queue event)
-    (setf (combat-event-queue-events queue)
-          (nconc (combat-event-queue-events queue) (list event)))))
+    (let* ((buffer (combat-event-queue-buffer queue))
+           (size (length buffer))
+           (head (combat-event-queue-head queue)))
+      (declare (type fixnum size head))
+      ;; Write event at head position
+      (setf (aref buffer head) event)
+      ;; Advance head (circular)
+      (setf (combat-event-queue-head queue) (mod (1+ head) size))
+      ;; Update count (capped at size)
+      (when (< (combat-event-queue-count queue) size)
+        (incf (combat-event-queue-count queue)))
+      ;; If buffer full, advance tail (drop oldest)
+      (when (= (combat-event-queue-head queue) (combat-event-queue-tail queue))
+        (setf (combat-event-queue-tail queue)
+              (mod (1+ (combat-event-queue-tail queue)) size))))))
 
 (defun emit-combat-log-event (queue text)
-  ;; Emit a combat log event to the queue.
+  "Emit a combat log event to the queue."
   (when (and queue text)
     (push-combat-event queue (make-combat-event :type :combat-log :text text))))
 
 (defun emit-hud-message-event (queue text)
-  ;; Emit a HUD message event to the queue.
+  "Emit a HUD message event to the queue."
   (when (and queue text)
     (push-combat-event queue (make-combat-event :type :hud-message :text text))))
 
 (defun pop-combat-events (queue)
-  ;; Return all events and clear the queue.
+  "Return all events as a list and clear the queue.
+   Task 4.3: Collects events from ring buffer, then resets."
   (when queue
-    (let ((events (combat-event-queue-events queue)))
-      (setf (combat-event-queue-events queue) nil)
-      events)))
+    (let* ((count (combat-event-queue-count queue))
+           (buffer (combat-event-queue-buffer queue))
+           (size (length buffer))
+           (tail (combat-event-queue-tail queue))
+           (events nil))
+      (declare (type fixnum count size tail))
+      ;; Collect events from tail to head
+      (dotimes (i count)
+        (let ((idx (mod (+ tail i) size)))
+          (push (aref buffer idx) events)
+          ;; Clear slot for GC
+          (setf (aref buffer idx) nil)))
+      ;; Reset queue state
+      (setf (combat-event-queue-head queue) 0
+            (combat-event-queue-tail queue) 0
+            (combat-event-queue-count queue) 0)
+      ;; Return events in insertion order (nreverse since we pushed)
+      (nreverse events))))

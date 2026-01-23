@@ -450,11 +450,15 @@
                                                          (intent-run-toggle current-intent))))
                   (update-player-position current-player current-intent world speed-mult dt)
                   (update-player-pickup-target current-player world))))
+    ;; Task 4.1: Refresh occupied zones cache once per tick
+    ;; This populates *occupied-zones-cache* without allocating a new list
+    (refresh-occupied-zones-cache players)
     ;; Object and NPC respawns - run for all occupied zones
-    (let ((zone-ids (occupied-zone-ids players)))
-      (if zone-ids
+    ;; Task 4.1: zone-ids is *occupied-zones-cache* (vector) - use length check
+    (let ((zone-ids *occupied-zones-cache*))
+      (if (> (length zone-ids) 0)
           ;; Multi-zone: update respawns for all occupied zone-states
-          (dolist (zone-id zone-ids)
+          (loop :for zone-id :across zone-ids :do
             (let ((zone-state (get-zone-state zone-id)))
               (when zone-state
                 ;; Object respawns for this zone
@@ -498,14 +502,17 @@
                 (update-npc-hit-effect npc dt))
       ;; Per-zone melee combat and NPC simulation
       ;; For each occupied zone, run combat and NPC AI with that zone's players
-      (let ((zone-ids (occupied-zone-ids players)))
-        (if zone-ids
+      ;; Task 4.1: Reuse *occupied-zones-cache* populated earlier in this tick
+      (let ((zone-ids *occupied-zones-cache*))
+        (if (> (length zone-ids) 0)
             ;; Multi-zone mode: simulate each zone separately with per-zone collision
-            (dolist (zone-id zone-ids)
+            (loop :for zone-id :across zone-ids :do
               (let* ((zone-state (get-zone-state zone-id))
                      (zone-npcs (if zone-state
                                     (zone-state-npcs zone-state)
                                     npcs))  ; fallback to game-npcs
+                     ;; Task 4.1: Avoid allocating fallback path - zone-state should
+                     ;; always exist for occupied zones (created by register-player-session)
                      (zone-players (if zone-state
                                        (let ((cache (zone-state-zone-players zone-state)))
                                          ;; Rebuild cache once if stale/empty but players exist
@@ -514,7 +521,10 @@
                                                     (> (zone-state-player-count zone-id players) 0))
                                            (rebuild-zone-players-cache zone-state game))
                                          (zone-state-zone-players zone-state))
-                                       (players-in-zone zone-id players))))
+                                       ;; Non-allocating fallback: warn and skip this zone
+                                       (progn
+                                         (warn "update-sim: zone-state nil for occupied zone ~a" zone-id)
+                                         #()))))
                 ;; Ensure all players in this zone are in the spatial grid
                 ;; (handles players who joined before zone-state existed)
                 (when (and zone-state zone-players)
