@@ -569,3 +569,143 @@ With corrected math, 64 chunks is sufficient for 3+ viewports at max zoom-out. I
 ---
 
 **Signed:** Claude Opus 4.5 (2026-01-23, Revised)
+
+---
+
+## Appendix: Debug Session Data (2026-01-23)
+
+### Test Protocol
+- User walked around zone 1
+- Transitioned to another zone
+- Returned to zone 1
+- Session duration: ~10-15 seconds
+- Client configuration: `*debug-render-cache* t`
+
+### Raw Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total CREATE events | 1030 |
+| Total EVICT events | 0 |
+| Max observed cache-size | 90 |
+| Max observed visible | 75 |
+| Config *render-cache-max-chunks* | 64 |
+
+### Duplicate Chunk Creation Counts
+
+Output of `grep "[CACHE] CREATE" | sort | uniq -c | sort -rn`:
+
+```
+     27 [CACHE] CREATE chunk (2,-2) layer:WALLS
+     26 [CACHE] CREATE chunk (2,-1) layer:WALLS
+     26 [CACHE] CREATE chunk (2,0) layer:WALLS
+     26 [CACHE] CREATE chunk (1,-1) layer:WALLS
+     26 [CACHE] CREATE chunk (-1,-1) layer:WALLS
+     26 [CACHE] CREATE chunk (1,0) layer:WALLS
+     26 [CACHE] CREATE chunk (-1,0) layer:WALLS
+     26 [CACHE] CREATE chunk (0,-1) layer:WALLS
+     26 [CACHE] CREATE chunk (0,0) layer:WALLS
+     21 [CACHE] CREATE chunk (1,-2) layer:WALLS
+     21 [CACHE] CREATE chunk (-1,-2) layer:WALLS
+     21 [CACHE] CREATE chunk (0,-2) layer:WALLS
+     13 [CACHE] CREATE chunk (-2,-1) layer:WALLS
+     13 [CACHE] CREATE chunk (-2,0) layer:WALLS
+     12 [CACHE] CREATE chunk (1,1) layer:WALLS
+     11 [CACHE] CREATE chunk (3,-2) layer:WALLS
+     11 [CACHE] CREATE chunk (2,4) layer:WALLS
+     11 [CACHE] CREATE chunk (2,3) layer:WALLS
+     11 [CACHE] CREATE chunk (2,2) layer:WALLS
+     11 [CACHE] CREATE chunk (2,1) layer:WALLS
+     11 [CACHE] CREATE chunk (-1,-2) layer:FLOOR
+     10 [CACHE] CREATE chunk (2,-1) layer:FLOOR
+     10 [CACHE] CREATE chunk (2,0) layer:FLOOR
+     10 [CACHE] CREATE chunk (-1,1) layer:WALLS
+     10 [CACHE] CREATE chunk (0,1) layer:WALLS
+      9 [CACHE] CREATE chunk (3,-2) layer:FLOOR
+      9 [CACHE] CREATE chunk (3,-1) layer:WALLS
+      9 [CACHE] CREATE chunk (3,0) layer:WALLS
+      9 [CACHE] CREATE chunk (2,-2) layer:FLOOR
+      9 [CACHE] CREATE chunk (-2,-2) layer:FLOOR
+```
+
+### Negative Coordinate Chunk Count
+
+Total CREATE events with negative X coordinate: 218 (grep `CREATE chunk \(-`)
+
+Examples:
+```
+[CACHE] CREATE chunk (-3,1) layer:FLOOR
+[CACHE] CREATE chunk (-2,1) layer:FLOOR
+[CACHE] CREATE chunk (-1,1) layer:FLOOR
+[CACHE] CREATE chunk (-3,2) layer:WALLS
+[CACHE] CREATE chunk (-2,-2) layer:FLOOR
+[CACHE] CREATE chunk (-1,-2) layer:WALLS
+```
+
+### Steady State Samples (Stationary Player)
+
+```
+[CACHE] visible:48 cache-size:48 | new:0 rerender:0 evict:0 | hits:48 misses:0
+[CACHE] visible:48 cache-size:48 | new:0 rerender:0 evict:0 | hits:48 misses:0
+[CACHE] visible:48 cache-size:48 | new:0 rerender:0 evict:0 | hits:48 misses:0
+```
+
+Observation: 100% hit rate, zero creates, zero evictions when stationary.
+
+### Transition Burst Samples
+
+**Initial zone load (first frame):**
+```
+[CACHE] visible:75 cache-size:75 | new:75 rerender:0 evict:0 | hits:0 misses:75
+```
+
+**Movement near zone edge (lines 1110-1170):**
+```
+[CACHE] visible:48 cache-size:48 | new:0 rerender:0 evict:0 | hits:48 misses:0
+INFO: FBO: [ID 49] Framebuffer object created successfully
+[CACHE] CREATE chunk (-3,1) layer:FLOOR
+INFO: FBO: [ID 50] Framebuffer object created successfully
+[CACHE] CREATE chunk (-2,1) layer:FLOOR
+INFO: FBO: [ID 51] Framebuffer object created successfully
+[CACHE] CREATE chunk (-1,1) layer:FLOOR
+... (32 consecutive FBO creations)
+```
+
+**Duplicate creation in rapid succession (lines 1883 vs 1931):**
+```
+Line 1883: [CACHE] CREATE chunk (-2,-2) layer:FLOOR
+Line 1931: [CACHE] CREATE chunk (-2,-2) layer:FLOOR
+```
+Same chunk coordinates, 48 lines apart in the same transition burst.
+
+### FBO Creation Timing
+
+All FBO creations are interleaved with `INFO: TEXTURE:` and `INFO: FBO:` raylib messages, confirming GPU allocation happens during the draw phase.
+
+Pattern:
+```
+INFO: TEXTURE: [ID N] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID M] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID M] Framebuffer object created successfully
+[CACHE] CREATE chunk (X,Y) layer:LAYER
+```
+
+### Observations (Data-Driven)
+
+1. Same chunk coordinates appear in CREATE log multiple times (up to 27×)
+2. Cache size exceeds configured max (90 > 64) without eviction events
+3. Negative chunk coordinates are created (preview zones)
+4. Stationary state shows 100% cache hits
+5. Movement/transitions show burst of CREATE events with FBO allocation
+6. WALLS layer has more duplicate creates than FLOOR layer
+
+### Hypotheses (To Be Validated)
+
+- **H1:** Cache key lookup fails, causing repeated creation of same chunks
+- **H2:** Per-zone caches don't share the 64-chunk limit
+- **H3:** Preview zones create chunks for same coords as main zone
+- **H4:** Eviction check condition not triggering
+
+### Data Location
+
+Full debug output: `/tmp/claude/-home-telecommuter-repos-mmorpg/tasks/b8f4146.output` (555.9KB)
