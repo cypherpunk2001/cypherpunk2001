@@ -137,6 +137,10 @@
 (defparameter *render-cache-max-chunks* 64
   "Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth.")
 
+(defparameter *debug-render-cache* nil
+  "When T, log cache statistics and chunk creation/eviction events to stdout.
+   Useful for diagnosing black flashes and cache thrash issues.")
+
 (defparameter *entity-render-max-distance* nil
   "Maximum distance from player to render NPCs. NIL = unlimited (default).
    Set to ~3000.0 for very large zones with many NPCs to reduce draw calls.

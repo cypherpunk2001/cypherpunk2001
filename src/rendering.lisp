@@ -326,6 +326,71 @@
 (defparameter *zone-render-caches* (make-hash-table :test 'eq)
   "Hash table mapping zone-id to zone-render-cache structs.")
 
+;;; Render cache instrumentation (Phase A - Diagnostics)
+(defvar *render-cache-stats-created* 0
+  "New chunks created this frame (FBO allocations).")
+(defvar *render-cache-stats-rerendered* 0
+  "Dirty chunks re-rendered this frame (existing FBO updated).")
+(defvar *render-cache-stats-evicted* 0
+  "Chunks evicted this frame.")
+(defvar *render-cache-stats-hits* 0
+  "Cache hits this frame (existing texture reused).")
+(defvar *render-cache-stats-misses* 0
+  "Cache misses this frame (needed render or creation).")
+(defvar *render-cache-stats-visible* 0
+  "Visible chunks requested this frame.")
+
+(defun reset-render-cache-stats ()
+  "Reset per-frame cache statistics. Call at start of each frame."
+  (setf *render-cache-stats-created* 0
+        *render-cache-stats-rerendered* 0
+        *render-cache-stats-evicted* 0
+        *render-cache-stats-hits* 0
+        *render-cache-stats-misses* 0
+        *render-cache-stats-visible* 0))
+
+(defun get-total-cache-size ()
+  "Return total number of cached chunks across all zone caches."
+  (let ((total 0))
+    (maphash (lambda (_zone-id cache)
+               (declare (ignore _zone-id))
+               (incf total (hash-table-count (zone-render-cache-chunks cache))))
+             *zone-render-caches*)
+    total))
+
+(defun log-render-cache-stats ()
+  "Log cache stats summary when *debug-render-cache* enabled."
+  (when *debug-render-cache*
+    (format t "~&[CACHE] visible:~D cache-size:~D | new:~D rerender:~D evict:~D | hits:~D misses:~D~%"
+            *render-cache-stats-visible*
+            (get-total-cache-size)
+            *render-cache-stats-created*
+            *render-cache-stats-rerendered*
+            *render-cache-stats-evicted*
+            *render-cache-stats-hits*
+            *render-cache-stats-misses*)))
+
+(defun draw-cache-debug-overlay ()
+  "Draw cache stats HUD overlay when *debug-render-cache* enabled.
+   Displays at bottom-left of screen."
+  (when *debug-render-cache*
+    (let* ((text (format nil "Cache: ~D/~D vis:~D new:~D re:~D ev:~D"
+                         (get-total-cache-size)
+                         *render-cache-max-chunks*
+                         *render-cache-stats-visible*
+                         *render-cache-stats-created*
+                         *render-cache-stats-rerendered*
+                         *render-cache-stats-evicted*))
+           (text-size 16)
+           (padding 6)
+           (width (+ (* 8 (length text)) (* padding 2)))
+           (height (+ text-size (* padding 2)))
+           (x 6)
+           (y (- (current-screen-height) height 6))
+           (bg-color (raylib:make-color :r 0 :g 0 :b 0 :a 180)))
+      (raylib:draw-rectangle x y width height bg-color)
+      (raylib:draw-text text (+ x padding) (+ y padding) text-size raylib:+yellow+))))
+
 (defun chunk-cache-key (layer chunk-x chunk-y)
   "Generate a unique cache key for a layer chunk.
    Key includes both layer-id and tileset-id to handle per-layer tilesets."
@@ -359,6 +424,14 @@
              chunks)
     (when lru-key
       (let ((entry (gethash lru-key chunks)))
+        ;; Instrumentation: log eviction
+        (incf *render-cache-stats-evicted*)
+        (when *debug-render-cache*
+          (format t "~&[CACHE] EVICT chunk (~D,~D) layer-key:~A age:~D~%"
+                  (render-chunk-cache-chunk-x entry)
+                  (render-chunk-cache-chunk-y entry)
+                  (render-chunk-cache-layer-key entry)
+                  (- (zone-render-cache-frame-counter cache) lru-time)))
         (unload-chunk-texture entry)
         (remhash lru-key chunks)))))
 
@@ -486,10 +559,17 @@
 
 (defun get-or-render-chunk (cache zone layer chunk-x chunk-y tile-dest-size editor assets)
   "Get a cached chunk texture, rendering it if needed."
+  ;; Instrumentation: count visible chunks
+  (incf *render-cache-stats-visible*)
   (let* ((key (chunk-cache-key layer chunk-x chunk-y))
          (chunks (zone-render-cache-chunks cache))
          (entry (gethash key chunks))
-         (frame (zone-render-cache-frame-counter cache)))
+         (frame (zone-render-cache-frame-counter cache))
+         (was-cached (and entry
+                          (not (render-chunk-cache-dirty entry))
+                          (render-chunk-cache-texture entry)))
+         (is-new-entry (null entry))
+         (is-dirty (and entry (render-chunk-cache-dirty entry))))
     ;; Evict if at capacity and need new entry
     (when (and (null entry)
                (>= (hash-table-count chunks) *render-cache-max-chunks*))
@@ -510,7 +590,23 @@
         (raylib:unload-render-texture (render-chunk-cache-texture entry)))
       (setf (render-chunk-cache-texture entry)
             (render-chunk-to-texture zone layer chunk-x chunk-y tile-dest-size editor assets))
-      (setf (render-chunk-cache-dirty entry) nil))
+      (setf (render-chunk-cache-dirty entry) nil)
+      ;; Instrumentation: distinguish new creation vs dirty re-render
+      (if is-new-entry
+          (progn
+            (incf *render-cache-stats-created*)
+            (when *debug-render-cache*
+              (format t "~&[CACHE] CREATE chunk (~D,~D) layer:~A~%"
+                      chunk-x chunk-y (zone-layer-id layer))))
+          (when is-dirty
+            (incf *render-cache-stats-rerendered*)
+            (when *debug-render-cache*
+              (format t "~&[CACHE] RERENDER chunk (~D,~D) layer:~A~%"
+                      chunk-x chunk-y (zone-layer-id layer))))))
+    ;; Instrumentation: track hits vs misses
+    (if was-cached
+        (incf *render-cache-stats-hits*)
+        (incf *render-cache-stats-misses*))
     ;; Update LRU access time
     (setf (render-chunk-cache-last-access entry) frame)
     (render-chunk-cache-texture entry)))
@@ -2022,6 +2118,8 @@
 
 (defun draw-game (game)
   ;; Render a full frame: world, entities, HUD, and menu.
+  ;; Reset cache stats at start of frame (Phase A instrumentation)
+  (reset-render-cache-stats)
   (with-timing (:draw-game)
     (let* ((player (game-player game))
          (npcs (game-npcs game))
@@ -2059,5 +2157,9 @@
       (draw-loading-overlay ui)
       (draw-editor-ui-overlay editor ui)
       (draw-editor-tileset-preview editor render)
+      ;; Cache debug overlay (Phase A instrumentation)
+      (draw-cache-debug-overlay)
       (when (ui-menu-open ui)
-        (draw-menu ui audio editor))))))
+        (draw-menu ui audio editor)))
+    ;; Log cache stats at end of frame (Phase A instrumentation)
+    (log-render-cache-stats))))
