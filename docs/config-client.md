@@ -22,8 +22,11 @@ How it connects
 |-----------|---------|-------------|
 | `*window-width*` | `1280` | Window width in pixels |
 | `*window-height*` | `720` | Window height in pixels |
+| `*window-resize-enabled*` | `nil` | When T, creates resizable window and uses dynamic screen dimensions |
 
-*Why restart:* Raylib creates the window once at startup. Changing these affects UI layout calculations immediately, but NOT the actual window dimensions.
+*Why restart:* Raylib creates the window once at startup. The resizable flag must be set before window creation.
+
+**Note:** When `*window-resize-enabled*` is T, the window is created with `+flag-window-resizable+` (raylib FLAG_WINDOW_RESIZABLE = 4), enabling OS window resizing. Viewport culling and UI layout use `current-screen-width`/`current-screen-height` functions from utils.lisp that query raylib for runtime dimensions. When NIL (default), uses fixed `*window-width*`/`*window-height*` values for maximum performance.
 
 ### Frame Rate Target
 | Parameter | Default | Description |

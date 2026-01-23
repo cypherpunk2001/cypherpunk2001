@@ -471,3 +471,12 @@
   (%make-camera :offset (raylib:make-vector2 :x (/ *window-width* 2.0)
                                              :y (/ *window-height* 2.0))
                 :zoom *camera-zoom-default*))
+
+(defun update-camera-for-window-resize (camera)
+  "Update camera offset to center on new screen dimensions.
+   Called when the window is resized and *window-resize-enabled* is T."
+  (when camera
+    (let ((offset (camera-offset camera)))
+      (setf (raylib:vector2-x offset) (/ (current-screen-width) 2.0)
+            (raylib:vector2-y offset) (/ (current-screen-height) 2.0))))
+  camera)

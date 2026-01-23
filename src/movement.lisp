@@ -790,8 +790,8 @@
 (defun camera-view-bounds (camera player editor)
   ;; Return view bounds in world coordinates for the current camera focus.
   (let* ((zoom (camera-zoom camera))
-         (half-view-width (/ *window-width* (* 2.0 zoom)))
-         (half-view-height (/ *window-height* (* 2.0 zoom))))
+         (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-height (/ (current-screen-height) (* 2.0 zoom))))
     (multiple-value-bind (x y) (camera-view-center player editor)
       (values (- x half-view-width) (+ x half-view-width)
               (- y half-view-height) (+ y half-view-height)))))

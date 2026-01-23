@@ -54,6 +54,17 @@
   (unload-editor-tilesets (game-editor game) (game-assets game))
   (unload-assets (game-assets game)))
 
+(defun handle-window-resize (game)
+  "Check for window resize and update game components accordingly.
+   Only active when *window-resize-enabled* is T."
+  (when (and *window-resize-enabled*
+             (raylib:is-window-resized))
+    (log-verbose "Window resized to ~dx~d"
+                 (raylib:get-screen-width)
+                 (raylib:get-screen-height))
+    (update-ui-for-window-resize (game-ui game))
+    (update-camera-for-window-resize (game-camera game))))
+
 (defun npc-array-for-player-zone (game player)
   "Return the correct NPC array for PLAYER's current zone.
    Uses zone-state NPCs when available, falls back to game-npcs."
@@ -545,6 +556,9 @@
    Unlike run-client, this does not connect to a server and allows zone editing."
   (with-fatal-error-log ("Local game runtime")
     (log-verbose "Local game starting")
+    ;; Set window flags before init (must be called before with-window)
+    (when *window-resize-enabled*
+      (raylib:set-config-flags +flag-window-resizable+))
     (raylib:with-window ("Hello MMO (Local)" (*window-width* *window-height*))
       (raylib:set-target-fps *client-target-fps*)
       (raylib:set-exit-key 0)
@@ -564,6 +578,8 @@
                      :do (let ((dt (raylib:get-frame-time)))
                            (incf elapsed dt)
                            (incf frames)
+                           ;; Window resize handling (when enabled)
+                           (handle-window-resize game)
                            ;; Input
                            (update-client-input game dt)
                            ;; Sync client intent to player (server does this via apply-client-intents)

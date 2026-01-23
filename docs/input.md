@@ -31,6 +31,7 @@ Key functions
 - `trigger-click-marker`: Sets a fading click marker; accepts optional target-id for NPC tracking.
 - `update-click-marker`: Ticks marker timer; when tracking an NPC (target-id > 0), updates marker position to follow the NPC until it dies.
 - `clear-player-attack-target`, `clear-player-follow-target`, `clear-player-pickup-target`: Clear targeting state and also clear marker tracking (target-id and kind).
+- `update-camera-for-window-resize`: Update camera offset to center on new screen dimensions when window is resized.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.

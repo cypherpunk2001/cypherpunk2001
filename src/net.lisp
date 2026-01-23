@@ -2514,6 +2514,9 @@
   ;; If auto-login credentials are provided, attempts register first, then login on failure.
   (with-fatal-error-log ((format nil "Client runtime (~a:~d)" host port))
     (log-verbose "Client starting: connecting to ~a:~d" host port)
+    ;; Set window flags before init (must be called before with-window)
+    (when *window-resize-enabled*
+      (raylib:set-config-flags +flag-window-resizable+))
     (raylib:with-window ("Hello MMO" (*window-width* *window-height*))
       (raylib:set-target-fps *client-target-fps*)
       (raylib:set-exit-key 0)
@@ -2539,6 +2542,9 @@
                    :do (let ((dt (raylib:get-frame-time)))
                          (incf elapsed dt)
                          (incf frames)
+
+                         ;; Window resize handling (when enabled)
+                         (handle-window-resize game)
 
                          ;; Login screen phase
                          (cond

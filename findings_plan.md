@@ -423,7 +423,7 @@ Add check in entity draw loops:
 
 #### 5.1 Add Dynamic Dimension Functions
 
-**File:** `src/rendering.lisp`
+**File:** `src/utils.lisp` (placed here to avoid compile-order dependencies with ui.lisp/input.lisp)
 
 ```lisp
 (defun current-screen-width ()
@@ -442,9 +442,18 @@ Add check in entity draw loops:
 **File:** `src/config-client.lisp`
 
 ```lisp
+(defconstant +flag-window-resizable+ 4
+  "Raylib config flag to enable window resizing.")
+
 (defparameter *window-resize-enabled* nil
-  "When T, use dynamic screen dimensions for culling and UI.
-   Requires raylib window to be created with resizable flag.")
+  "When T, creates resizable window and uses dynamic screen dimensions.")
+```
+
+**Files:** `src/main.lisp` and `src/net.lisp` (before raylib:with-window)
+
+```lisp
+(when *window-resize-enabled*
+  (raylib:set-config-flags +flag-window-resizable+))
 ```
 
 #### 5.2 Replace Hardcoded References
@@ -460,19 +469,20 @@ Update all culling and UI code to use `(current-screen-width)` / `(current-scree
 
 ```lisp
 (defun handle-window-resize (game)
-  "Update state when window is resized."
+  "Check for window resize and update game components accordingly.
+   Only active when *window-resize-enabled* is T."
   (when (and *window-resize-enabled* (raylib:is-window-resized))
-    ;; Invalidate render cache (viewport changed)
-    (clear-all-render-caches game)
-    ;; Recalculate camera offset for new center
-    (let ((camera (game-camera game)))
-      (setf (camera-offset camera)
-            (raylib:make-vector2 :x (/ (current-screen-width) 2.0)
-                                 :y (/ (current-screen-height) 2.0))))
-    ;; UI layout would need recalculation (significant refactor)
     (log-verbose "Window resized to ~dx~d"
-                 (current-screen-width) (current-screen-height))))
+                 (raylib:get-screen-width) (raylib:get-screen-height))
+    ;; Update UI layout (menu panel, buttons, minimap position)
+    (update-ui-for-window-resize (game-ui game))
+    ;; Update camera offset for new screen center
+    (update-camera-for-window-resize (game-camera game))))
 ```
+
+**Note:** Render caches are NOT cleared on resize. Chunk caches are world-space and
+independent of screen dimensions, so clearing them would cause unnecessary hitches.
+Only camera offset and UI layout need updating.
 
 ---
 

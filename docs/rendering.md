@@ -65,9 +65,11 @@ Design note
 - **Preview zone caching**: Adjacent zones visible at map edges also use chunk caching.
   Each preview zone gets its own cache entry keyed by zone-id. The offset-aware drawing
   (`draw-cached-chunk-with-offset`) applies the world offset so preview chunks align correctly.
-- Fullscreen toggle keeps the logical render size at 1280x720 on this build, so culling
-  bounds based on `*window-width*/*window-height*` remain accurate. If you add resizable
-  windows or change render size on fullscreen, switch culling bounds to runtime screen size.
+- **Dynamic window resize support** (`*window-resize-enabled*`): When enabled, viewport
+  culling and UI layout use `current-screen-width`/`current-screen-height` which query
+  raylib for runtime dimensions. When disabled (default), uses fixed `*window-width*`/
+  `*window-height*` for maximum performance. The main loop calls `handle-window-resize`
+  each frame to detect and respond to window size changes.
 - The debug overlay draws both collision tiles and map bounds, which helps
   validate that collision and visuals are aligned.
 - NPC AI debug text is only drawn when explicitly enabled, keeping the

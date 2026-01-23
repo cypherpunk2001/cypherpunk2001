@@ -27,8 +27,8 @@
    CAMERA-X, CAMERA-Y: center of the camera view in world coordinates.
    ZOOM: camera zoom factor.
    MARGIN-X, MARGIN-Y: padding to add to viewport bounds (sprite half-sizes)."
-  (let* ((half-view-width (/ *window-width* (* 2.0 zoom)))
-         (half-view-height (/ *window-height* (* 2.0 zoom)))
+  (let* ((half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
          (view-left (- camera-x half-view-width margin-x))
          (view-right (+ camera-x half-view-width margin-x))
          (view-top (- camera-y half-view-height margin-y))
@@ -56,8 +56,8 @@
    NPCs are drawn first, then players (so players render on top).
    NPCs use spatial-grid-query-rect when grid is available.
    Optional distance filter via *entity-render-max-distance*."
-  (let* ((half-view-w (/ *window-width* (* 2.0 zoom)))
-         (half-view-h (/ *window-height* (* 2.0 zoom)))
+  (let* ((half-view-w (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-h (/ (current-screen-height) (* 2.0 zoom)))
          (view-left (- camera-x half-view-w margin-x))
          (view-right (+ camera-x half-view-w margin-x))
          (view-top (- camera-y half-view-h margin-y))
@@ -759,8 +759,8 @@
                 (editor-camera-y editor)
                 (player-y player)))
          (zoom (camera-zoom camera))
-         (half-view-width (/ *window-width* (* 2.0 zoom)))
-         (half-view-height (/ *window-height* (* 2.0 zoom)))
+         (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+         (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
          (view-left (- x half-view-width))
          (view-right (+ x half-view-width))
          (view-top (- y half-view-height))
@@ -948,8 +948,8 @@
           (editor-camera-target editor player)
         (let* ((tile-size (world-tile-dest-size world))
                (zoom (camera-zoom camera))
-               (half-view-width (/ *window-width* (* 2.0 zoom)))
-               (half-view-height (/ *window-height* (* 2.0 zoom)))
+               (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
+               (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
                (view-left (- camera-x half-view-width))
                (view-right (+ camera-x half-view-width))
                (view-top (- camera-y half-view-height))
@@ -1327,7 +1327,7 @@
                            (format nil "~dms | ~d FPS" ping-ms fps)
                            (format nil "~d FPS" fps)))
            (stats-width (+ 20 (* 10 (length stats-text))))
-           (stats-x (- *window-width* stats-width 6)))
+           (stats-x (- (current-screen-width) stats-width 6)))
       (raylib:draw-rectangle stats-x 6 stats-width 24 (ui-hud-bg-color ui))
       (raylib:draw-text stats-text (+ stats-x 10) hud-y 20 raylib:+white+))
     (let ((hover-name (ui-hover-npc-name ui)))
@@ -1335,7 +1335,7 @@
         (let* ((text-size 20)
                (padding 10)
                (width (+ (* 10 (length hover-name)) (* padding 2)))
-               (x (truncate (/ (- *window-width* width) 2)))
+               (x (truncate (/ (- (current-screen-width) width) 2)))
                (y 6))
           (raylib:draw-rectangle x y width 24 (ui-hud-bg-color ui))
           (raylib:draw-text hover-name
@@ -1593,8 +1593,8 @@
            (text-width (truncate (* (length label) (* font-size 0.6))))
            (box-width (+ text-width (* padding 2)))
            (box-height (+ font-size (* padding 2)))
-           (box-x (truncate (- (/ *window-width* 2) (/ box-width 2))))
-           (box-y (truncate (- (/ *window-height* 2) (/ box-height 2))))
+           (box-x (truncate (- (/ (current-screen-width) 2) (/ box-width 2))))
+           (box-y (truncate (- (/ (current-screen-height) 2) (/ box-height 2))))
            (text-x (+ box-x padding))
            (text-y (+ box-y padding)))
       (raylib:draw-rectangle box-x box-y box-width box-height
@@ -1778,7 +1778,7 @@
          (threshold-text-color (if hover-threshold
                                    (ui-menu-button-hover-color ui)
                                    (ui-menu-text-color ui))))
-    (raylib:draw-rectangle 0 0 *window-width* *window-height*
+    (raylib:draw-rectangle 0 0 (current-screen-width) (current-screen-height)
                            (ui-menu-overlay-color ui))
     (raylib:draw-rectangle (ui-menu-panel-x ui) (ui-menu-panel-y ui)
                            (ui-menu-panel-width ui) (ui-menu-panel-height ui)

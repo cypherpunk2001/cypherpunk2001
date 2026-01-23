@@ -343,6 +343,128 @@
               :combat-log-count combat-log-count
               :combat-log-buffer combat-log-buffer)))
 
+(defun update-ui-for-window-resize (ui)
+  "Recalculate ALL UI layout values that depend on window dimensions.
+   Called when the window is resized and *window-resize-enabled* is T.
+   Mirrors the layout logic in make-ui to ensure consistency."
+  (when ui
+    (let* ((screen-width (current-screen-width))
+           (screen-height (current-screen-height))
+           ;; Panel dimensions and position
+           (menu-padding 32)
+           (menu-panel-width (truncate (* screen-width 0.92)))
+           (menu-panel-height (truncate (* screen-height 0.92)))
+           (menu-panel-x (truncate (/ (- screen-width menu-panel-width) 2)))
+           (menu-panel-y (truncate (/ (- screen-height menu-panel-height) 2)))
+           ;; Bottom buttons (Unstuck above Logout)
+           (menu-action-gap 12)
+           (menu-logout-width (ui-menu-logout-width ui))
+           (menu-logout-height (ui-menu-logout-height ui))
+           (menu-unstuck-width (ui-menu-unstuck-width ui))
+           (menu-unstuck-height (ui-menu-unstuck-height ui))
+           (menu-logout-x (truncate (/ (- screen-width menu-logout-width) 2)))
+           (menu-logout-y (- (+ menu-panel-y menu-panel-height)
+                             menu-padding
+                             menu-logout-height))
+           (menu-unstuck-x (truncate (/ (- screen-width menu-unstuck-width) 2)))
+           (menu-unstuck-y (- menu-logout-y menu-action-gap menu-unstuck-height))
+           ;; Nav buttons (Prev/Next)
+           (menu-nav-button-width (ui-menu-nav-button-width ui))
+           (menu-nav-button-height (ui-menu-nav-button-height ui))
+           (menu-nav-gap (ui-menu-nav-gap ui))
+           (menu-nav-y (+ menu-panel-y 140))
+           (menu-prev-x (+ menu-panel-x menu-padding))
+           (menu-next-x (+ menu-prev-x menu-nav-button-width menu-nav-gap))
+           ;; Track text position
+           (menu-track-text-x (+ menu-panel-x menu-padding))
+           (menu-track-text-y (+ menu-nav-y menu-nav-button-height 22))
+           ;; Volume controls
+           (menu-volume-button-width (ui-menu-volume-button-width ui))
+           (menu-volume-gap (ui-menu-volume-gap ui))
+           (menu-volume-y (+ menu-track-text-y 40))
+           (menu-volume-down-x (+ menu-panel-x menu-padding))
+           (menu-volume-up-x (+ menu-volume-down-x menu-volume-button-width menu-volume-gap))
+           (menu-volume-bars-x (+ menu-volume-up-x menu-volume-button-width menu-volume-gap))
+           ;; Toggle options (vertical stack)
+           (menu-toggle-gap 18)
+           (menu-debug-size (ui-menu-debug-size ui))
+           (menu-debug-x (+ menu-panel-x menu-padding))
+           (menu-debug-y (+ menu-volume-y (ui-menu-volume-button-height ui) 24))
+           (menu-editor-size (ui-menu-editor-size ui))
+           (menu-editor-x menu-debug-x)
+           (menu-editor-y (+ menu-debug-y menu-debug-size menu-toggle-gap))
+           (menu-fullscreen-size (ui-menu-fullscreen-size ui))
+           (menu-fullscreen-x menu-debug-x)
+           (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
+           (menu-prediction-size (ui-menu-prediction-size ui))
+           (menu-prediction-x menu-debug-x)
+           (menu-prediction-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
+           (menu-tile-filter-size (ui-menu-tile-filter-size ui))
+           (menu-tile-filter-x menu-debug-x)
+           (menu-tile-filter-y (+ menu-prediction-y menu-prediction-size menu-toggle-gap))
+           (menu-render-cache-size (ui-menu-render-cache-size ui))
+           (menu-render-cache-x menu-debug-x)
+           (menu-render-cache-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
+           (menu-interp-size (ui-menu-interp-size ui))
+           (menu-interp-x menu-debug-x)
+           (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
+           (menu-threshold-x menu-debug-x)
+           (menu-threshold-y (+ menu-interp-y menu-interp-size menu-toggle-gap))
+           ;; Save/Load buttons (above Unstuck)
+           (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
+           (menu-save-x (+ menu-panel-x menu-padding))
+           (menu-load-x (+ menu-save-x menu-nav-button-width menu-nav-gap))
+           (menu-load-y menu-save-y)
+           ;; Minimap position (right edge)
+           (minimap-x (- screen-width *minimap-padding* *minimap-width*)))
+      ;; Update menu panel
+      (setf (ui-menu-panel-width ui) menu-panel-width
+            (ui-menu-panel-height ui) menu-panel-height
+            (ui-menu-panel-x ui) menu-panel-x
+            (ui-menu-panel-y ui) menu-panel-y)
+      ;; Update bottom buttons
+      (setf (ui-menu-logout-x ui) menu-logout-x
+            (ui-menu-logout-y ui) menu-logout-y
+            (ui-menu-unstuck-x ui) menu-unstuck-x
+            (ui-menu-unstuck-y ui) menu-unstuck-y)
+      ;; Update nav buttons
+      (setf (ui-menu-nav-y ui) menu-nav-y
+            (ui-menu-prev-x ui) menu-prev-x
+            (ui-menu-next-x ui) menu-next-x)
+      ;; Update track text
+      (setf (ui-menu-track-text-x ui) menu-track-text-x
+            (ui-menu-track-text-y ui) menu-track-text-y)
+      ;; Update volume controls
+      (setf (ui-menu-volume-y ui) menu-volume-y
+            (ui-menu-volume-down-x ui) menu-volume-down-x
+            (ui-menu-volume-up-x ui) menu-volume-up-x
+            (ui-menu-volume-bars-x ui) menu-volume-bars-x)
+      ;; Update toggle positions
+      (setf (ui-menu-debug-x ui) menu-debug-x
+            (ui-menu-debug-y ui) menu-debug-y
+            (ui-menu-editor-x ui) menu-editor-x
+            (ui-menu-editor-y ui) menu-editor-y
+            (ui-menu-fullscreen-x ui) menu-fullscreen-x
+            (ui-menu-fullscreen-y ui) menu-fullscreen-y
+            (ui-menu-prediction-x ui) menu-prediction-x
+            (ui-menu-prediction-y ui) menu-prediction-y
+            (ui-menu-tile-filter-x ui) menu-tile-filter-x
+            (ui-menu-tile-filter-y ui) menu-tile-filter-y
+            (ui-menu-render-cache-x ui) menu-render-cache-x
+            (ui-menu-render-cache-y ui) menu-render-cache-y
+            (ui-menu-interp-x ui) menu-interp-x
+            (ui-menu-interp-y ui) menu-interp-y
+            (ui-menu-threshold-x ui) menu-threshold-x
+            (ui-menu-threshold-y ui) menu-threshold-y)
+      ;; Update save/load buttons
+      (setf (ui-menu-save-x ui) menu-save-x
+            (ui-menu-save-y ui) menu-save-y
+            (ui-menu-load-x ui) menu-load-x
+            (ui-menu-load-y ui) menu-load-y)
+      ;; Update minimap position
+      (setf (ui-minimap-x ui) minimap-x)))
+  ui)
+
 (defun ui-push-combat-log (ui text)
   ;; Append TEXT to the UI combat log ring buffer.
   (when (and ui text)
@@ -675,8 +797,8 @@
 (defun draw-login-screen (ui)
   "Draw the login/register screen."
   (when (ui-login-active ui)
-    (let* ((screen-width *window-width*)
-           (screen-height *window-height*)
+    (let* ((screen-width (current-screen-width))
+           (screen-height (current-screen-height))
            (panel-width 500)
            (panel-height 550)
            (panel-x (truncate (/ (- screen-width panel-width) 2)))

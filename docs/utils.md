@@ -21,6 +21,7 @@ Key helpers
 - `player-direction`, `player-state`, `player-animation-params`: animation logic helpers.
 - `u32-hash`: deterministic variation for wall tile selection.
 - `vector-pool` helpers: reuse fixed-size vectors for hot serialization paths.
+- `current-screen-width`, `current-screen-height`: dynamic window dimensions for resize support.
 
 Retry utilities
 - `with-retry-exponential`: retry critical operations with exponential backoff

@@ -28,6 +28,7 @@ Key functions
 **UI Construction:**
 - `make-ui` - Build UI layout constants and colors for the menu and HUD.
 - `make-stamina-labels` - Precompute stamina HUD strings to avoid per-frame consing.
+- `update-ui-for-window-resize` - Recalculate UI layout values when window is resized (menu panel, buttons, minimap position).
 
 **Menu Interaction:**
 - `update-ui-input` - Handle UI toggle input and click interactions. Returns action keywords.

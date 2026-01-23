@@ -466,3 +466,22 @@
               (vector-pool-capacity pool)
               (max 0 (- (vector-pool-index pool) (vector-pool-capacity pool))))
       (values 0 0 0)))
+
+;;; Screen Dimension Helpers (for dynamic window resize support)
+;;; These are used by rendering, UI, and input modules for viewport calculations.
+
+(defun current-screen-width ()
+  "Return the current screen width for rendering calculations.
+   When *window-resize-enabled* is T, queries raylib for runtime dimensions.
+   When NIL, returns the fixed *window-width* value."
+  (if *window-resize-enabled*
+      (raylib:get-screen-width)
+      *window-width*))
+
+(defun current-screen-height ()
+  "Return the current screen height for rendering calculations.
+   When *window-resize-enabled* is T, queries raylib for runtime dimensions.
+   When NIL, returns the fixed *window-height* value."
+  (if *window-resize-enabled*
+      (raylib:get-screen-height)
+      *window-height*))

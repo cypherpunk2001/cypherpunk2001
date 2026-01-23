@@ -13,6 +13,15 @@
 (defparameter *window-height* 720
   "Window height in pixels. Requires restart to change.")
 
+;;; Window Resize - Enable dynamic screen dimensions
+;;; Raylib FLAG_WINDOW_RESIZABLE = 4 (from raylib.h)
+(defconstant +flag-window-resizable+ 4
+  "Raylib config flag to enable window resizing.")
+
+(defparameter *window-resize-enabled* nil
+  "When T, creates resizable window and uses dynamic screen dimensions.
+   When NIL (default), uses fixed *window-width*/*window-height*.")
+
 ;;; Frame Rate Target - Read once at startup, but CAN be changed at runtime
 ;;; NOTE: This is CLIENT-SIDE ONLY. Does not affect server tick rate or other players.
 ;;; Server tick rate is controlled by *sim-tick-seconds* in config-server.lisp.
