@@ -2745,6 +2745,14 @@
         (setf *use-npc-pool* t)
         (prewarm-npc-pool 256)
         (format t "~&SERVER: NPC object pooling enabled (256 pre-warmed)~%")))
+    ;; Phase 5 Task 5.4: Strategic GC scheduling
+    (let ((gc-sched-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_GC_SCHEDULING")
+                            #-sbcl (uiop:getenv "MMORPG_GC_SCHEDULING"))))
+      (when (and gc-sched-str (string= gc-sched-str "1"))
+        (setf *gc-scheduling-enabled* t
+              *gc-last-time* 0.0)
+        (format t "~&SERVER: Strategic GC scheduling enabled (~,0fs interval)~%"
+                *gc-interval-seconds*)))
     ;; Clear any stale session state from previous REPL runs
     ;; (Important when restarting server without restarting the Lisp process)
     (log-verbose "Clearing stale sessions (active=~d, player=~d)"
@@ -2961,6 +2969,14 @@
                          ;; 4b. Send private state updates (inventory/equipment/stats)
                          (when clients
                            (send-private-states socket clients))
+                         ;; 4c. Strategic GC scheduling (Task 5.4)
+                         ;; Trigger GC at safe points (after snapshots) to reduce worst-case spikes
+                         (when (and *gc-scheduling-enabled*
+                                    (>= (- elapsed *gc-last-time*) *gc-interval-seconds*))
+                           (setf *gc-last-time* elapsed)
+                           #+sbcl (sb-ext:gc :full nil)  ; Incremental, not full
+                           (when *verbose-gc*
+                             (format t "~&SERVER: Scheduled GC at ~,1fs~%" elapsed)))
                          ;; 5. Sleep for remaining tick time (accounts for processing duration)
                          ;; This ensures consistent tick rate regardless of frame complexity.
                          (let* ((frame-end (get-internal-real-time))

@@ -1049,9 +1049,10 @@ make tests
 
 ---
 
-### Task 5.1: Profile to Identify Compute-Bound Kernels
+### Task 5.1: Profile to Identify Compute-Bound Kernels (DEFERRED)
 
 **Purpose**: Validate need for SIMD and identify remaining hotspots.
+**Status**: DEFERRED - Only needed if Task 5.2 (SIMD) is pursued.
 
 **Steps**:
 1. Run server under load with sb-sprof
@@ -1117,12 +1118,14 @@ make test-unit
 
 ---
 
-### Task 5.3: Draw-Call Batching
+### Task 5.3: Draw-Call Batching (DEFERRED)
 
 **Files**: `src/rendering.lisp`
 **Source**: COMMON
 **Est. Benefit**: 5-20% (GPU-bound scenes only)
 **Risk**: Medium
+**Status**: DEFERRED - raylib already batches internally when textures don't change.
+  Chunk caching system provides major draw efficiency gains. Low priority.
 
 **Steps**:
 1. Sort entities by texture atlas before drawing

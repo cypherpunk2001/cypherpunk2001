@@ -138,3 +138,13 @@
 ;;; Combat Targeting - Read when validating target requests
 (defparameter *max-target-distance-tiles* 15
   "Maximum tiles away a player can target an NPC.")
+
+;;; Strategic GC Scheduling (Task 5.4)
+;;; Trigger GC at safe points to reduce worst-case spikes.
+(defparameter *gc-scheduling-enabled* nil
+  "When T, trigger periodic GC at safe points (after snapshot broadcast).
+   Enable via MMORPG_GC_SCHEDULING=1 environment variable.")
+(defparameter *gc-interval-seconds* 60.0
+  "Seconds between scheduled GC triggers. Default 60s.")
+(defparameter *gc-last-time* 0.0
+  "Internal: last GC trigger time. Do not modify.")
