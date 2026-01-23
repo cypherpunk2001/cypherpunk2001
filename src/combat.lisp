@@ -860,15 +860,19 @@
                            (not (player-attack-hit player))
                            (player-grid-cell-x player)
                            (player-grid-cell-y player))
-                :do (let ((nearby-ids (spatial-grid-query-neighbors
-                                       npc-grid
-                                       (player-grid-cell-x player)
-                                       (player-grid-cell-y player))))
-                      (dolist (npc-id nearby-ids)
-                        ;; O(1) NPC lookup via index map
-                        (let ((npc (find-npc-by-id-fast zone-state npc-id)))
-                          (when npc
-                            (apply-melee-hit player npc world event-queue))))))
+                ;; Phase 2: allocation-free query using scratch vector
+                :do (let ((count (spatial-grid-query-neighbors-into
+                                  npc-grid
+                                  (player-grid-cell-x player)
+                                  (player-grid-cell-y player)
+                                  *spatial-scratch-vector-2*)))  ; Use secondary scratch (nested in player loop)
+                      (declare (type fixnum count))
+                      (loop :for i fixnum :from 0 :below count
+                            :for npc-id fixnum = (aref *spatial-scratch-vector-2* i)
+                            ;; O(1) NPC lookup via index map
+                            :for npc = (find-npc-by-id-fast zone-state npc-id)
+                            :when npc
+                            :do (apply-melee-hit player npc world event-queue))))
           ;; Fallback: brute force if no spatial grid
           (loop :for player :across players
                 :do (loop :for npc :across zone-npcs

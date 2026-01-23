@@ -26,11 +26,11 @@
   ;; Loot table with weighted entries and roll count.
   id rolls entries)
 
-(defparameter *animation-sets* (make-hash-table :test 'eq))
-(defparameter *npc-archetypes* (make-hash-table :test 'eq))
-(defparameter *item-archetypes* (make-hash-table :test 'eq))
-(defparameter *object-archetypes* (make-hash-table :test 'eq))
-(defparameter *loot-tables* (make-hash-table :test 'eq))
+(defparameter *animation-sets* (make-hash-table :test 'eq :size 64))
+(defparameter *npc-archetypes* (make-hash-table :test 'eq :size 64))
+(defparameter *item-archetypes* (make-hash-table :test 'eq :size 128))
+(defparameter *object-archetypes* (make-hash-table :test 'eq :size 64))
+(defparameter *loot-tables* (make-hash-table :test 'eq :size 32))
 (defparameter *game-data-loaded-p* nil)
 
 (defparameter *game-data-path*

@@ -134,15 +134,19 @@
           ;; Use spatial query for NPCs - only iterate cells in viewport
           ;; Still apply npc-in-viewport-p since cell boundaries may include
           ;; NPCs outside the actual viewport
-          (let ((candidate-ids (spatial-grid-query-rect npc-grid
-                                                         view-left view-top
-                                                         view-right view-bottom)))
-            (dolist (npc-id candidate-ids)
-              (let ((npc (find-npc-by-id-fast zone-state npc-id)))
-                (when (and npc
-                           (npc-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
-                           (npc-in-render-distance-p npc player))
-                  (draw-npc npc assets render)))))
+          ;; Phase 2: allocation-free query using scratch vector
+          (let ((count (spatial-grid-query-rect-into npc-grid
+                                                      view-left view-top
+                                                      view-right view-bottom
+                                                      *spatial-scratch-vector*)))
+            (declare (type fixnum count))
+            (loop :for i fixnum :from 0 :below count
+                  :for npc-id fixnum = (aref *spatial-scratch-vector* i)
+                  :for npc = (find-npc-by-id-fast zone-state npc-id)
+                  :when (and npc
+                             (npc-in-viewport-p npc camera-x camera-y zoom margin-x margin-y)
+                             (npc-in-render-distance-p npc player))
+                  :do (draw-npc npc assets render)))
           ;; Fallback: iterate all NPCs with viewport check
           (when npcs
             (loop :for npc :across npcs
@@ -388,7 +392,7 @@
 ;;; Global zone render cache storage (zone-id -> zone-render-cache)
 ;;; Phase X2: Changed from :test 'eq to :test 'eql for safer symbol comparison.
 ;;; Keywords are always eql to themselves; eq can fail for non-interned symbols.
-(defparameter *zone-render-caches* (make-hash-table :test 'eql)
+(defparameter *zone-render-caches* (make-hash-table :test 'eql :size 64)
   "Hash table mapping zone-id to zone-render-cache structs.")
 
 ;;; Render cache instrumentation (Phase A - Diagnostics)

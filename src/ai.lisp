@@ -12,21 +12,24 @@
         (grid (and zone-state (zone-state-player-grid zone-state))))
     ;; Use spatial grid query if available
     (if (and grid (npc-grid-cell-x npc) (npc-grid-cell-y npc) game)
-        ;; O(1) cell lookup + local scan (9 cells)
-        (let ((nearby-ids (spatial-grid-query-neighbors
-                           grid
-                           (npc-grid-cell-x npc)
-                           (npc-grid-cell-y npc))))
-          (dolist (id nearby-ids)
-            (let ((player (find-player-by-id-fast game id)))
-              ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
-              (when player
-                (let* ((dx (- (player-x player) (npc-x npc)))
-                       (dy (- (player-y player) (npc-y npc)))
-                       (dist (+ (* dx dx) (* dy dy))))
-                  (when (or (null best-dist) (< dist best-dist))
-                    (setf best player
-                          best-dist dist)))))))
+        ;; O(1) cell lookup + local scan (9 cells) - Phase 2: allocation-free query
+        (let ((count (spatial-grid-query-neighbors-into
+                      grid
+                      (npc-grid-cell-x npc)
+                      (npc-grid-cell-y npc)
+                      *spatial-scratch-vector*)))
+          (declare (type fixnum count))
+          (loop :for i fixnum :from 0 :below count
+                :for id fixnum = (aref *spatial-scratch-vector* i)
+                :for player = (find-player-by-id-fast game id)
+                ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
+                :when player
+                :do (let* ((dx (- (player-x player) (npc-x npc)))
+                           (dy (- (player-y player) (npc-y npc)))
+                           (dist (+ (* dx dx) (* dy dy))))
+                      (when (or (null best-dist) (< dist best-dist))
+                        (setf best player
+                              best-dist dist)))))
         ;; Fallback: O(n) linear scan of all players
         (when players
           (loop :for player :across players

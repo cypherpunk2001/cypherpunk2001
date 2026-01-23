@@ -303,7 +303,7 @@
 
 (defstruct (zone-render-cache (:constructor %make-zone-render-cache))
   "Per-zone render cache state."
-  (chunks (make-hash-table :test 'equal)) ; key: (layer-key chunk-x chunk-y) -> render-chunk-cache
+  (chunks (make-hash-table :test 'equal :size 1024)) ; key: (layer-key chunk-x chunk-y) -> render-chunk-cache
   (chunk-pixel-size 0)       ; *render-chunk-size* * tile-dest-size (computed once)
   (zone-id nil)              ; Track which zone this cache belongs to
   (frame-counter 0 :type fixnum)) ; Frame counter for LRU tracking
@@ -626,7 +626,7 @@
    Called when the players array structure changes (add/remove/rebuild)."
   (let ((players (game-players game))
         (map (or (game-player-index-map game)
-                 (make-hash-table :test 'eql))))
+                 (make-hash-table :test 'eql :size 512))))
     (clrhash map)
     (when players
       (loop :for i :from 0 :below (length players)
@@ -654,7 +654,7 @@
   (when zone-state
     (let ((npcs (zone-state-npcs zone-state))
           (map (or (zone-state-npc-index-map zone-state)
-                   (make-hash-table :test 'eql))))
+                   (make-hash-table :test 'eql :size 256))))
       (clrhash map)
       (when npcs
         (loop :for i :from 0 :below (length npcs)

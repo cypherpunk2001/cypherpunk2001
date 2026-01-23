@@ -51,10 +51,10 @@
 ;;;; Active Trades Registry
 ;;;; ========================================================================
 
-(defparameter *active-trades* (make-hash-table)
+(defparameter *active-trades* (make-hash-table :test 'eql :size 128)
   "Hash table: trade-id -> trade-session")
 
-(defparameter *player-trade-map* (make-hash-table)
+(defparameter *player-trade-map* (make-hash-table :test 'eql :size 256)
   "Hash table: player-id -> trade-id (for quick lookup)")
 
 (defparameter *next-trade-id* 1

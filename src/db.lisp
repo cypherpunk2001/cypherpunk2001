@@ -1539,7 +1539,7 @@
   (last-flush 0.0 :type float)
   (tier1-pending nil :type list))
 
-(defparameter *player-sessions* (make-hash-table :test 'eql)
+(defparameter *player-sessions* (make-hash-table :test 'eql :size 512)
   "Map of player-id -> player-session for connected players.")
 
 #+sbcl

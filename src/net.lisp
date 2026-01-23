@@ -118,10 +118,10 @@
   "Client-side buffer for reassembling fragmented snapshots."
   (seq nil)                    ; Sequence number being assembled
   (total 0 :type fixnum)       ; Expected chunk count
-  (received (make-hash-table)) ; chunk-idx -> data string
+  (received (make-hash-table :test 'eql :size 16)) ; chunk-idx -> data string
   (timestamp 0.0))             ; For timeout detection
 
-(defparameter *active-sessions* (make-hash-table :test 'equal)
+(defparameter *active-sessions* (make-hash-table :test 'equal :size 512)
   "Map of username (lowercase) -> net-client for logged-in accounts.")
 
 #+sbcl
@@ -182,7 +182,7 @@
   (first-attempt-time 0.0 :type single-float)
   (lockout-until 0.0 :type single-float))
 
-(defparameter *auth-rate-limits* (make-hash-table :test 'equal)
+(defparameter *auth-rate-limits* (make-hash-table :test 'equal :size 256)
   "Map of IP address -> auth-rate-entry for rate limiting.")
 
 ;;; Thread-safe auth rate limit access
@@ -267,7 +267,7 @@
 (defparameter *auth-timestamp-window* 60
   "Maximum age in seconds for auth timestamps. Older messages rejected.")
 
-(defparameter *auth-nonce-cache* (make-hash-table :test 'equal)
+(defparameter *auth-nonce-cache* (make-hash-table :test 'equal :size 1024)
   "Cache of recently seen nonces to prevent replay attacks.")
 
 (defparameter *auth-nonce-cleanup-interval* 120
@@ -944,7 +944,7 @@
     ;; Update player index map - add new entry for the appended player
     (let ((map (or (game-player-index-map game)
                    (setf (game-player-index-map game)
-                         (make-hash-table :test 'eql)))))
+                         (make-hash-table :test 'eql :size 512)))))
       (setf (gethash (player-id player) map) count))
     ;; Insert player into zone's spatial grid and zone-players cache
     (let* ((zone-id (player-zone-id player))
@@ -1233,7 +1233,7 @@
               (/= seq (chunk-buffer-seq buffer)))
       (setf (chunk-buffer-seq buffer) seq
             (chunk-buffer-total buffer) total
-            (chunk-buffer-received buffer) (make-hash-table)
+            (chunk-buffer-received buffer) (make-hash-table :test 'eql :size 16)
             (chunk-buffer-timestamp buffer) current-time))
     ;; Store chunk
     (setf (gethash idx (chunk-buffer-received buffer)) data)
@@ -1269,7 +1269,7 @@
    Returns hash table: zone-id -> list of clients.
    Nil zone-ids are clamped to *starting-zone-id* to ensure clients
    always receive zone-filtered snapshots (never empty)."
-  (let ((groups (make-hash-table :test 'eq)))
+  (let ((groups (make-hash-table :test 'eq :size 64)))
     (dolist (c clients)
       (when (and (net-client-authenticated-p c)
                  (net-client-player c))
@@ -1497,7 +1497,7 @@
      :capacity cap
      :position-pool (let ((pool (make-array cap)))
                       (dotimes (i cap pool)
-                        (setf (aref pool i) (make-hash-table :test 'eql)))))))
+                        (setf (aref pool i) (make-hash-table :test 'eql :size 64)))))))
 
 (defun push-interpolation-snapshot (buffer snapshot)
   ;; Add a snapshot to the ring buffer.
@@ -1542,7 +1542,7 @@
                     (table (aref pool head)))
                (clrhash table)
                table)
-             (make-hash-table :test 'eql)))
+             (make-hash-table :test 'eql :size 64)))
         (players (game-players game))
         (npcs (game-npcs game)))
     ;; Capture other players

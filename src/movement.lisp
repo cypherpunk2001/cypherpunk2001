@@ -7,7 +7,7 @@
 ;;;; Enables multiple zones to be active simultaneously.
 ;;;; ========================================================================
 
-(defparameter *zone-states* (make-hash-table :test 'eq)
+(defparameter *zone-states* (make-hash-table :test 'eq :size 64)
   "Cache of zone-id -> zone-state for all loaded zones.
    Zones stay loaded once any player enters them.")
 
@@ -22,15 +22,19 @@
   (or (gethash zone-id *zone-states*)
       (let ((zone (when zone-path (load-zone zone-path))))
         (when zone
-          (let ((state (make-zone-state
-                        :zone-id zone-id
-                        :zone zone
-                        :npcs (or npcs (vector))
-                        :wall-map (derive-wall-map-from-zone zone)
-                        :objects (zone-objects zone)
-                        ;; Initialize spatial grids for proximity queries
-                        :player-grid (make-spatial-grid)
-                        :npc-grid (make-spatial-grid))))
+          ;; Phase 2 perf: Use array-backed spatial grids with zone dimensions
+          (let* ((tile-dest-size (* (float *tile-size* 1.0) *tile-scale*))
+                 (zone-w (or (zone-width zone) 64))
+                 (zone-h (or (zone-height zone) 64))
+                 (state (make-zone-state
+                         :zone-id zone-id
+                         :zone zone
+                         :npcs (or npcs (vector))
+                         :wall-map (derive-wall-map-from-zone zone)
+                         :objects (zone-objects zone)
+                         ;; Initialize array-backed spatial grids for O(1) queries
+                         :player-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size)
+                         :npc-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size))))
             (setf (gethash zone-id *zone-states*) state)
             (log-verbose "Created zone-state for ~a with spatial grids" zone-id)
             state)))))
@@ -992,7 +996,7 @@
 
 (defun build-carry-npc-table (entries)
   ;; Build a lookup table for NPCs carried across a zone transition.
-  (let ((table (make-hash-table :test 'eq)))
+  (let ((table (make-hash-table :test 'eq :size 32)))
     (dolist (entry entries)
       (setf (gethash (first entry) table) t))
     table))
@@ -1213,14 +1217,18 @@
                     (game-entities game) (make-entities players merged))
               ;; Update zone-state cache with NPCs for zone-filtered snapshots
               (when target-zone-id
-                (let ((target-state (or (get-zone-state target-zone-id)
-                                        (make-zone-state
-                                         :zone-id target-zone-id
-                                         :zone zone
-                                         :wall-map (zone-wall-map zone)
-                                         :objects (zone-objects zone)
-                                         :player-grid (make-spatial-grid)
-                                         :npc-grid (make-spatial-grid)))))
+                ;; Phase 2 perf: Use array-backed spatial grids
+                (let* ((tile-dest-size (* (float *tile-size* 1.0) *tile-scale*))
+                       (zone-w (or (zone-width zone) 64))
+                       (zone-h (or (zone-height zone) 64))
+                       (target-state (or (get-zone-state target-zone-id)
+                                         (make-zone-state
+                                          :zone-id target-zone-id
+                                          :zone zone
+                                          :wall-map (zone-wall-map zone)
+                                          :objects (zone-objects zone)
+                                          :player-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size)
+                                          :npc-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size)))))
                   (setf (zone-state-npcs target-state) merged)
                   ;; Populate NPC spatial grid for proximity queries
                   (populate-npc-grid target-state merged)
@@ -1400,7 +1408,7 @@
                               :zone zone
                               :zone-label (zone-label zone)
                               :world-graph graph
-                              :zone-preview-cache (make-hash-table :test 'eq)
+                              :zone-preview-cache (make-hash-table :test 'eq :size 64)
                               :minimap-spawns nil
                               :minimap-collisions nil
                               :wall-map wall-map
@@ -1426,16 +1434,20 @@
       (when zone
         (let ((initial-zone-id (zone-id zone)))
           (when initial-zone-id
-            (setf (gethash initial-zone-id *zone-states*)
-                  (make-zone-state
-                   :zone-id initial-zone-id
-                   :zone zone
-                   :wall-map wall-map
-                   :objects (zone-objects zone)
-                   :npcs (vector)
-                   ;; Initialize spatial grids for proximity queries
-                   :player-grid (make-spatial-grid)
-                   :npc-grid (make-spatial-grid))))))  ; NPCs populated later by make-npcs
+            ;; Phase 2 perf: Use array-backed spatial grids
+            (let* ((tile-dest-size-f (* (float *tile-size* 1.0) *tile-scale*))
+                   (zone-w (or (zone-width zone) 64))
+                   (zone-h (or (zone-height zone) 64)))
+              (setf (gethash initial-zone-id *zone-states*)
+                    (make-zone-state
+                     :zone-id initial-zone-id
+                     :zone zone
+                     :wall-map wall-map
+                     :objects (zone-objects zone)
+                     :npcs (vector)
+                     ;; Initialize array-backed spatial grids for O(1) queries
+                     :player-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size-f)
+                     :npc-grid (make-spatial-grid-for-zone zone-w zone-h tile-dest-size-f)))))))  ; NPCs populated later
       world)))
 
 (defun apply-zone-to-world (world zone)
@@ -1470,7 +1482,7 @@
           (world-wall-min-y world) wall-min-y
           (world-wall-max-y world) wall-max-y)
     (unless (world-zone-preview-cache world)
-      (setf (world-zone-preview-cache world) (make-hash-table :test 'eq)))
+      (setf (world-zone-preview-cache world) (make-hash-table :test 'eq :size 64)))
     (let ((graph (world-world-graph world)))
       (when graph
         (setf (world-graph-zone-paths graph)
