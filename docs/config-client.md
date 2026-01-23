@@ -104,7 +104,7 @@ How it connects
 | `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles. **Use `toggle-tile-point-filter` to change** (clears render caches) |
 | `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. **Use `toggle-render-cache-enabled` to change** (clears caches) |
 | `*render-cache-max-chunks*` | `64` | Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth |
-| `*render-chunk-size*` | `8` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
+| `*render-chunk-size*` | `16` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
 
 **Important:** Use `toggle-tile-point-filter` and `toggle-render-cache-enabled` instead of raw `setf` - direct assignment leaves stale cached textures.
 
@@ -199,3 +199,10 @@ How it connects
 |-----------|---------|-------------|
 | `*music-volume-steps*` | `10` | Number of volume steps for music controls |
 | `*music-default-volume-level*` | `1` | Default music volume step (0 mutes) |
+
+### Client Hooks
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*client-zone-change-hook*` | `on-zone-change` | Called on zone transition with new zone-id. Set by rendering.lisp to clear all render caches |
+
+Client hooks allow presentation systems (rendering, audio) to register callbacks without creating dependencies from game logic to presentation code. The hook is called from client-only code paths in zone transition handling. The default implementation clears all render caches (strict Option A) to ensure editor changes aren't stale.

@@ -49,6 +49,14 @@ Design note
   are drawn when players zoom out. This is correct behavior, but increases draw workload.
 - With current settings (`*camera-zoom-min* = 0.5`, `*camera-zoom-default* = 1.0`,
   `*camera-zoom-max* = 3.0`), max zoom-out shows ~4x the area compared to default.
+- **Chunk render caching** (`*render-cache-enabled*`): When enabled, static tile layers
+  are pre-rendered into chunk textures (16x16 tiles by default via `*render-chunk-size*`).
+  This dramatically reduces draw calls at high zoom-out levels. Caches are per-zone and
+  use LRU eviction (`*render-cache-max-chunks*`) to bound VRAM usage. Editor tile edits
+  invalidate affected chunks. Use `toggle-render-cache-enabled` to change at runtime.
+- **Preview zone caching**: Adjacent zones visible at map edges also use chunk caching.
+  Each preview zone gets its own cache entry keyed by zone-id. The offset-aware drawing
+  (`draw-cached-chunk-with-offset`) applies the world offset so preview chunks align correctly.
 - Fullscreen toggle keeps the logical render size at 1280x720 on this build, so culling
   bounds based on `*window-width*/*window-height*` remain accurate. If you add resizable
   windows or change render size on fullscreen, switch culling bounds to runtime screen size.

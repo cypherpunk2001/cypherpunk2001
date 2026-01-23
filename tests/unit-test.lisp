@@ -289,7 +289,10 @@
                 test-chunk-cache-lru-eviction
                 ;; Render Toggle Tests
                 test-toggle-render-cache-enabled
-                test-toggle-tile-point-filter)))
+                test-toggle-tile-point-filter
+                ;; Preview Zone Cache Tests (Phase 2)
+                test-preview-zone-cache-separation
+                test-clear-other-zone-render-caches)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -8027,3 +8030,57 @@ hello
                     () "toggle-tile-point-filter: global restored")))
       ;; Restore original state
       (setf *tile-point-filter* original))))
+
+(defun test-preview-zone-cache-separation ()
+  "Test that preview zones get separate cache entries from main zone."
+  ;; Clear any existing caches
+  (clrhash *zone-render-caches*)
+  (let ((main-zone-id :main-zone)
+        (preview-zone-id :preview-zone)
+        (tile-dest-size 64.0))
+    ;; Create cache for main zone
+    (let ((main-cache (get-or-create-zone-render-cache main-zone-id tile-dest-size)))
+      (assert (not (null main-cache))
+              () "preview-zone-cache: main zone cache created")
+      (assert (= (hash-table-count *zone-render-caches*) 1)
+              () "preview-zone-cache: 1 cache after main zone"))
+    ;; Create cache for preview zone (should be separate)
+    (let ((preview-cache (get-or-create-zone-render-cache preview-zone-id tile-dest-size)))
+      (assert (not (null preview-cache))
+              () "preview-zone-cache: preview zone cache created")
+      (assert (= (hash-table-count *zone-render-caches*) 2)
+              () "preview-zone-cache: 2 caches after preview zone")
+      ;; Verify they are different cache objects
+      (let ((main-cache-2 (gethash main-zone-id *zone-render-caches*)))
+        (assert (not (eq main-cache-2 preview-cache))
+                () "preview-zone-cache: caches are separate objects"))))
+  ;; Clean up
+  (clrhash *zone-render-caches*))
+
+(defun test-clear-other-zone-render-caches ()
+  "Test that clear-other-zone-render-caches keeps only the specified zone."
+  ;; Clear any existing caches
+  (clrhash *zone-render-caches*)
+  (let ((current-zone-id :current)
+        (preview1-zone-id :preview1)
+        (preview2-zone-id :preview2)
+        (tile-dest-size 64.0))
+    ;; Create caches for current zone and two preview zones
+    (get-or-create-zone-render-cache current-zone-id tile-dest-size)
+    (get-or-create-zone-render-cache preview1-zone-id tile-dest-size)
+    (get-or-create-zone-render-cache preview2-zone-id tile-dest-size)
+    (assert (= (hash-table-count *zone-render-caches*) 3)
+            () "clear-other: 3 caches before clear")
+    ;; Clear all except current zone
+    (clear-other-zone-render-caches current-zone-id)
+    ;; Verify only current zone cache remains
+    (assert (= (hash-table-count *zone-render-caches*) 1)
+            () "clear-other: 1 cache after clear")
+    (assert (not (null (gethash current-zone-id *zone-render-caches*)))
+            () "clear-other: current zone cache kept")
+    (assert (null (gethash preview1-zone-id *zone-render-caches*))
+            () "clear-other: preview1 cache cleared")
+    (assert (null (gethash preview2-zone-id *zone-render-caches*))
+            () "clear-other: preview2 cache cleared"))
+  ;; Clean up
+  (clrhash *zone-render-caches*))

@@ -251,3 +251,10 @@
   "Number of volume steps for music controls.")
 (defparameter *music-default-volume-level* 1
   "Default music volume step (0 mutes).")
+
+;;; Client Hooks - Called by game logic for client-only side effects
+;;; These allow rendering/audio systems to register callbacks without
+;;; creating dependencies from game logic to presentation code.
+(defparameter *client-zone-change-hook* nil
+  "Function called on zone transition with new zone-id.
+   Set by rendering.lisp to clear stale render caches.")

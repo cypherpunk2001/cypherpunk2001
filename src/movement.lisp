@@ -1098,7 +1098,10 @@
                  (half-h (world-collision-half-height world)))
             (unless is-server
               (setf *zone-path* target-path)
-              (apply-zone-to-world world zone))
+              (apply-zone-to-world world zone)
+              ;; Call client hook to clear render caches (set by rendering.lisp)
+              (when *client-zone-change-hook*
+                (funcall *client-zone-change-hook* target-zone-id)))
             (setf (world-zone-label world) (zone-label zone))
             ;; Calculate spawn position using appropriate bounds
             (multiple-value-bind (new-min-x new-max-x new-min-y new-max-y)
@@ -1406,10 +1409,8 @@
 
 (defun apply-zone-to-world (world zone)
   ;; Replace the world's zone and rebuild wall-map-derived bounds.
-  ;; Clear render cache for the old zone before loading new zone.
-  (let ((old-zone (world-zone world)))
-    (when (and old-zone (zone-id old-zone))
-      (clear-zone-render-cache (zone-id old-zone))))
+  ;; NOTE: Render cache clearing is handled by *client-zone-change-hook*
+  ;; which is called from client-only code paths, not here.
   (let* ((tile-dest-size (world-tile-dest-size world))
          (wall-map (if zone
                        (zone-wall-map zone)

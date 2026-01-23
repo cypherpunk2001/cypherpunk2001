@@ -334,6 +334,28 @@
   ;; Final clear in case any were missed
   (clrhash *zone-render-caches*))
 
+(defun clear-other-zone-render-caches (keep-zone-id)
+  "Clear all zone render caches except KEEP-ZONE-ID.
+   Call on zone transition to free preview zone caches while keeping current zone warm."
+  (let ((zone-ids nil))
+    (maphash (lambda (zone-id _cache)
+               (declare (ignore _cache))
+               (unless (eql zone-id keep-zone-id)
+                 (push zone-id zone-ids)))
+             *zone-render-caches*)
+    (dolist (zone-id zone-ids)
+      (clear-zone-render-cache zone-id))))
+
+;; Register zone change hook to clear stale render caches on zone transition.
+;; This keeps game logic (movement.lisp) decoupled from rendering.
+;; Uses clear-all (strict Option A) to ensure editor changes aren't stale.
+(defun on-zone-change (new-zone-id)
+  "Clear all render caches on zone transition. Cache rebuilds on first draw."
+  (declare (ignore new-zone-id))
+  (clear-all-zone-render-caches))
+
+(setf *client-zone-change-hook* #'on-zone-change)
+
 (defun toggle-render-cache-enabled ()
   "Toggle *render-cache-enabled* and clear caches for consistency."
   (setf *render-cache-enabled* (not *render-cache-enabled*))
@@ -495,6 +517,75 @@
                          (eql (zone-layer-id layer) *editor-object-layer-id*))
               :do (draw-layer-cached layer))))))
 
+(defun draw-cached-chunk-with-offset (cache zone layer chunk-x chunk-y
+                                      chunk-pixel-size tile-dest-size
+                                      offset-x offset-y
+                                      editor assets zoom)
+  "Draw a single cached chunk at its world position plus offset.
+   Used for preview zones rendered at map edges."
+  (let ((texture (get-or-render-chunk cache zone layer chunk-x chunk-y
+                                      tile-dest-size editor assets)))
+    (when texture
+      (let* ((world-x (+ (* chunk-x chunk-pixel-size) offset-x))
+             (world-y (+ (* chunk-y chunk-pixel-size) offset-y))
+             ;; Render textures are flipped vertically in raylib
+             (tex (raylib:render-texture-2d-texture texture))
+             (tex-width (float (raylib:texture-2d-width tex)))
+             (tex-height (float (raylib:texture-2d-height tex)))
+             ;; Source rect: flip Y by using negative height
+             (src-rect (raylib:make-rectangle :x 0.0 :y tex-height
+                                              :width tex-width :height (- tex-height)))
+             ;; Dest rect: world position with offset, camera handles transform
+             (dest-rect (raylib:make-rectangle :x (float world-x) :y (float world-y)
+                                               :width (float chunk-pixel-size)
+                                               :height (float chunk-pixel-size)))
+             (origin (raylib:make-vector2 :x 0.0 :y 0.0)))
+        (declare (ignore zoom)) ; Camera mode handles zoom
+        (raylib:draw-texture-pro tex src-rect dest-rect origin 0.0 raylib:+white+)))))
+
+(defun draw-zone-preview-cached (zone tile-dest-size
+                                 view-left view-right view-top view-bottom
+                                 offset-x offset-y
+                                 editor assets zoom)
+  "Draw preview zone using cached chunk textures with world offset."
+  (let* ((zone-id (zone-id zone))
+         (cache (get-or-create-zone-render-cache zone-id tile-dest-size))
+         (zone-layers (zone-layers zone))
+         (chunk-pixel-size (zone-render-cache-chunk-pixel-size cache))
+         ;; Adjust view bounds by offset to get preview-local coordinates
+         (preview-left (- view-left offset-x))
+         (preview-right (- view-right offset-x))
+         (preview-top (- view-top offset-y))
+         (preview-bottom (- view-bottom offset-y)))
+    ;; Increment frame counter for LRU tracking
+    (incf (zone-render-cache-frame-counter cache))
+    ;; Calculate visible chunk bounds in preview zone's coordinate space
+    (let ((start-chunk-x (floor preview-left chunk-pixel-size))
+          (end-chunk-x (ceiling preview-right chunk-pixel-size))
+          (start-chunk-y (floor preview-top chunk-pixel-size))
+          (end-chunk-y (ceiling preview-bottom chunk-pixel-size)))
+      ;; Draw each layer in correct order with cached chunks (with offset)
+      (labels ((draw-layer-cached (layer)
+                 (loop :for cy :from start-chunk-y :to end-chunk-y
+                       :do (loop :for cx :from start-chunk-x :to end-chunk-x
+                                 :do (draw-cached-chunk-with-offset
+                                      cache zone layer cx cy
+                                      chunk-pixel-size tile-dest-size
+                                      offset-x offset-y
+                                      editor assets zoom)))))
+        ;; Layer order: normal (non-collision, non-object) -> collision -> object
+        (loop :for layer :across zone-layers
+              :when (and (not (zone-layer-collision-p layer))
+                         (not (eql (zone-layer-id layer) *editor-object-layer-id*)))
+              :do (draw-layer-cached layer))
+        (loop :for layer :across zone-layers
+              :when (zone-layer-collision-p layer)
+              :do (draw-layer-cached layer))
+        (loop :for layer :across zone-layers
+              :when (and (not (zone-layer-collision-p layer))
+                         (eql (zone-layer-id layer) *editor-object-layer-id*))
+              :do (draw-layer-cached layer))))))
+
 ;;;; ========================================================================
 ;;;; END RENDER CHUNK CACHE
 ;;;; ========================================================================
@@ -521,64 +612,74 @@
 (defun draw-zone-preview (zone render assets editor
                           view-left view-right view-top view-bottom
                           tile-dest-size tile-size-f
-                          offset-x offset-y)
+                          offset-x offset-y
+                          &optional (zoom 1.0))
   ;; Draw ZONE layers offset into world space.
-  ;; Apply tile filter based on user setting (0=POINT, 1=BILINEAR)
-  (raylib:set-texture-filter (assets-tileset assets)
-                             (if *tile-point-filter* 0 1))
-  (let* ((zone-layers (zone-layers zone))
-         (chunk-size (zone-chunk-size zone))
-         (tile-source (render-tile-source render))
-         (tile-dest (render-tile-dest render))
-         (origin (render-origin render))
-         (preview-left (- view-left offset-x))
-         (preview-right (- view-right offset-x))
-         (preview-top (- view-top offset-y))
-         (preview-bottom (- view-bottom offset-y))
-         (max-col (max 0 (1- (zone-width zone))))
-         (max-row (max 0 (1- (zone-height zone))))
-         (start-col (max 0 (floor preview-left tile-dest-size)))
-         (end-col (min max-col (ceiling preview-right tile-dest-size)))
-         (start-row (max 0 (floor preview-top tile-dest-size)))
-         (end-row (min max-row (ceiling preview-bottom tile-dest-size))))
-    (when (and zone-layers (<= start-col end-col) (<= start-row end-row))
-      (labels ((draw-layer (layer)
-                 (multiple-value-bind (layer-tileset layer-columns)
-                     (layer-tileset-context layer editor assets)
-                   (when (and layer-tileset layer-columns)
-                     (loop :for row :from start-row :to end-row
-                           :for dest-y :from (+ offset-y (* start-row tile-dest-size))
-                             :by tile-dest-size
-                           :do (loop :for col :from start-col :to end-col
-                                     :for dest-x :from (+ offset-x (* start-col tile-dest-size))
-                                       :by tile-dest-size
-                                     :for layer-index = (zone-layer-tile-at layer
-                                                                            chunk-size
-                                                                            col row)
-                                     :do (set-rectangle tile-dest dest-x dest-y
-                                                        tile-dest-size tile-dest-size)
-                                         (when (not (zerop layer-index))
-                                           (set-tile-source-rect tile-source
-                                                                 layer-index
-                                                                 tile-size-f
-                                                                 layer-columns)
-                                           (raylib:draw-texture-pro layer-tileset
-                                                                    tile-source
-                                                                    tile-dest
-                                                                    origin
-                                                                    0.0
-                                                                    raylib:+white+)))))))
-               (draw-layers (predicate)
-                 (loop :for layer :across zone-layers
-                       :when (funcall predicate layer)
-                         :do (draw-layer layer))))
-        (draw-layers (lambda (layer)
-                       (and (not (zone-layer-collision-p layer))
-                            (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
-        (draw-layers #'zone-layer-collision-p)
-        (draw-layers (lambda (layer)
-                       (and (not (zone-layer-collision-p layer))
-                            (eql (zone-layer-id layer) *editor-object-layer-id*))))))))
+  ;; Uses cached chunks when *render-cache-enabled*, otherwise per-tile rendering.
+  (if *render-cache-enabled*
+      ;; Cached rendering path for preview zones
+      (draw-zone-preview-cached zone tile-dest-size
+                                view-left view-right view-top view-bottom
+                                offset-x offset-y
+                                editor assets zoom)
+      ;; Original per-tile rendering path (fallback)
+      (progn
+        ;; Apply tile filter based on user setting (0=POINT, 1=BILINEAR)
+        (raylib:set-texture-filter (assets-tileset assets)
+                                   (if *tile-point-filter* 0 1))
+        (let* ((zone-layers (zone-layers zone))
+               (chunk-size (zone-chunk-size zone))
+               (tile-source (render-tile-source render))
+               (tile-dest (render-tile-dest render))
+               (origin (render-origin render))
+               (preview-left (- view-left offset-x))
+               (preview-right (- view-right offset-x))
+               (preview-top (- view-top offset-y))
+               (preview-bottom (- view-bottom offset-y))
+               (max-col (max 0 (1- (zone-width zone))))
+               (max-row (max 0 (1- (zone-height zone))))
+               (start-col (max 0 (floor preview-left tile-dest-size)))
+               (end-col (min max-col (ceiling preview-right tile-dest-size)))
+               (start-row (max 0 (floor preview-top tile-dest-size)))
+               (end-row (min max-row (ceiling preview-bottom tile-dest-size))))
+          (when (and zone-layers (<= start-col end-col) (<= start-row end-row))
+            (labels ((draw-layer (layer)
+                       (multiple-value-bind (layer-tileset layer-columns)
+                           (layer-tileset-context layer editor assets)
+                         (when (and layer-tileset layer-columns)
+                           (loop :for row :from start-row :to end-row
+                                 :for dest-y :from (+ offset-y (* start-row tile-dest-size))
+                                   :by tile-dest-size
+                                 :do (loop :for col :from start-col :to end-col
+                                           :for dest-x :from (+ offset-x (* start-col tile-dest-size))
+                                             :by tile-dest-size
+                                           :for layer-index = (zone-layer-tile-at layer
+                                                                                  chunk-size
+                                                                                  col row)
+                                           :do (set-rectangle tile-dest dest-x dest-y
+                                                              tile-dest-size tile-dest-size)
+                                               (when (not (zerop layer-index))
+                                                 (set-tile-source-rect tile-source
+                                                                       layer-index
+                                                                       tile-size-f
+                                                                       layer-columns)
+                                                 (raylib:draw-texture-pro layer-tileset
+                                                                          tile-source
+                                                                          tile-dest
+                                                                          origin
+                                                                          0.0
+                                                                          raylib:+white+)))))))
+                     (draw-layers (predicate)
+                       (loop :for layer :across zone-layers
+                             :when (funcall predicate layer)
+                               :do (draw-layer layer))))
+              (draw-layers (lambda (layer)
+                             (and (not (zone-layer-collision-p layer))
+                                  (not (eql (zone-layer-id layer) *editor-object-layer-id*)))))
+              (draw-layers #'zone-layer-collision-p)
+              (draw-layers (lambda (layer)
+                             (and (not (zone-layer-collision-p layer))
+                                  (eql (zone-layer-id layer) *editor-object-layer-id*))))))))))
 
 (defun draw-world (world render assets camera player npcs ui editor)
   ;; Render floor, map layers, and debug overlays.
@@ -625,7 +726,7 @@
                      (draw-zone-preview preview-zone render assets editor
                                         view-left view-right view-top view-bottom
                                         tile-dest-size tile-size-f
-                                        offset-x offset-y)))))
+                                        offset-x offset-y zoom)))))
              (draw-preview-for-corner (edge-a edge-b)
                (let ((preview-zone (world-preview-zone-for-corner world edge-a edge-b)))
                  (when preview-zone
@@ -634,7 +735,7 @@
                      (draw-zone-preview preview-zone render assets editor
                                         view-left view-right view-top view-bottom
                                         tile-dest-size tile-size-f
-                                        offset-x offset-y)))))
+                                        offset-x offset-y zoom)))))
       )
       (when ex-west
         (draw-preview-for-edge :west))

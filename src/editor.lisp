@@ -294,6 +294,9 @@
       (setf *zone-path* path
             (editor-export-path editor) path))
     (apply-zone-to-world (game-world game) zone)
+    ;; Call client hook to clear render caches (set by rendering.lisp)
+    (when *client-zone-change-hook*
+      (funcall *client-zone-change-hook* (and zone (zone-id zone))))
     (editor-assign-default-layer-tilesets editor zone)
     (editor-track-zone editor path)
     (editor-refresh-zone-files editor)

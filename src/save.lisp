@@ -1712,6 +1712,9 @@
               (when zone
                 (setf *zone-path* path)
                 (apply-zone-to-world world zone)
+                ;; Call client hook to clear render caches (set by rendering.lisp)
+                (when *client-zone-change-hook*
+                  (funcall *client-zone-change-hook* (zone-id zone)))
                 (setf zone-loaded t))))))
       (when zone-loaded
         (let* ((player (game-player game))
