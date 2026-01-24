@@ -397,16 +397,32 @@
 
 (defun handle-zone-transition (game)
   ;; Sync client-facing state after a zone change.
-  (let ((ui (game-ui game))
-        (editor (game-editor game))
-        (world (game-world game))
-        (buffer (game-interpolation-buffer game)))
+  (let* ((ui (game-ui game))
+         (editor (game-editor game))
+         (world (game-world game))
+         (zone (and world (world-zone world)))
+         (zone-id (and zone (zone-id zone)))
+         (buffer (game-interpolation-buffer game))
+         (pred (game-prediction-state game))
+         (player (game-player game)))
     (ui-trigger-loading ui)
     (editor-sync-zone editor world)
+    ;; Sync player zone-id to world zone - compact snapshots don't set this,
+    ;; and prediction uses player-zone-id for collision map lookup
+    (when (and player zone-id)
+      (setf (player-zone-id player) zone-id))
     ;; Clear interpolation buffer - stale positions are invalid after zone change
     (when buffer
       (setf (interpolation-buffer-count buffer) 0
-            (interpolation-buffer-head buffer) 0))))
+            (interpolation-buffer-head buffer) 0))
+    ;; Reset prediction state - stale predicted position causes "stuck" movement
+    ;; after zone transition because old coordinates don't match new zone
+    ;; NOTE: Don't reset last-acked-sequence (leave unchanged to avoid snap spike)
+    (when (and pred player)
+      (setf (prediction-state-predicted-x pred) (player-x player)
+            (prediction-state-predicted-y pred) (player-y player)
+            (prediction-state-input-count pred) 0
+            (prediction-state-input-head pred) 0))))
 
 (defun update-sim (game dt &optional (allow-player-control t))
   "Run one fixed-tick simulation step. Returns true on zone transition.
