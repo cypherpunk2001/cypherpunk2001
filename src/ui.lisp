@@ -85,13 +85,9 @@
          (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
          ;; Client-side options
-         (menu-prediction-size 18)
-         (menu-prediction-x menu-debug-x)
-         (menu-prediction-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
-         (menu-prediction-label "Client Prediction")
          (menu-tile-filter-size 18)
          (menu-tile-filter-x menu-debug-x)
-         (menu-tile-filter-y (+ menu-prediction-y menu-prediction-size menu-toggle-gap))
+         (menu-tile-filter-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
          (menu-tile-filter-label "Pixel-Perfect Tiles")
          (menu-render-cache-size 18)
          (menu-render-cache-x menu-debug-x)
@@ -100,9 +96,6 @@
          (menu-interp-size 18)
          (menu-interp-x menu-debug-x)
          (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
-         (menu-threshold-size 18)
-         (menu-threshold-x menu-debug-x)
-         (menu-threshold-y (+ menu-interp-y menu-interp-size menu-toggle-gap))
          ;; Position Save/Load above Unstuck (from bottom) to avoid overlap with toggles
          (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
          (menu-save-x (+ menu-panel-x menu-padding))
@@ -256,10 +249,6 @@
               :menu-fullscreen-x menu-fullscreen-x
               :menu-fullscreen-y menu-fullscreen-y
               :menu-fullscreen-label menu-fullscreen-label
-              :menu-prediction-size menu-prediction-size
-              :menu-prediction-x menu-prediction-x
-              :menu-prediction-y menu-prediction-y
-              :menu-prediction-label menu-prediction-label
               :menu-tile-filter-size menu-tile-filter-size
               :menu-tile-filter-x menu-tile-filter-x
               :menu-tile-filter-y menu-tile-filter-y
@@ -271,9 +260,6 @@
               :menu-interp-size menu-interp-size
               :menu-interp-x menu-interp-x
               :menu-interp-y menu-interp-y
-              :menu-threshold-size menu-threshold-size
-              :menu-threshold-x menu-threshold-x
-              :menu-threshold-y menu-threshold-y
               :hud-bg-color hud-bg-color
               :menu-overlay-color menu-overlay-color
               :menu-panel-color menu-panel-color
@@ -396,20 +382,15 @@
            (menu-fullscreen-size (ui-menu-fullscreen-size ui))
            (menu-fullscreen-x menu-debug-x)
            (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
-           (menu-prediction-size (ui-menu-prediction-size ui))
-           (menu-prediction-x menu-debug-x)
-           (menu-prediction-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
            (menu-tile-filter-size (ui-menu-tile-filter-size ui))
            (menu-tile-filter-x menu-debug-x)
-           (menu-tile-filter-y (+ menu-prediction-y menu-prediction-size menu-toggle-gap))
+           (menu-tile-filter-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
            (menu-render-cache-size (ui-menu-render-cache-size ui))
            (menu-render-cache-x menu-debug-x)
            (menu-render-cache-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
            (menu-interp-size (ui-menu-interp-size ui))
            (menu-interp-x menu-debug-x)
            (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
-           (menu-threshold-x menu-debug-x)
-           (menu-threshold-y (+ menu-interp-y menu-interp-size menu-toggle-gap))
            ;; Save/Load buttons (above Unstuck)
            (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
            (menu-save-x (+ menu-panel-x menu-padding))
@@ -446,16 +427,12 @@
             (ui-menu-editor-y ui) menu-editor-y
             (ui-menu-fullscreen-x ui) menu-fullscreen-x
             (ui-menu-fullscreen-y ui) menu-fullscreen-y
-            (ui-menu-prediction-x ui) menu-prediction-x
-            (ui-menu-prediction-y ui) menu-prediction-y
             (ui-menu-tile-filter-x ui) menu-tile-filter-x
             (ui-menu-tile-filter-y ui) menu-tile-filter-y
             (ui-menu-render-cache-x ui) menu-render-cache-x
             (ui-menu-render-cache-y ui) menu-render-cache-y
             (ui-menu-interp-x ui) menu-interp-x
-            (ui-menu-interp-y ui) menu-interp-y
-            (ui-menu-threshold-x ui) menu-threshold-x
-            (ui-menu-threshold-y ui) menu-threshold-y)
+            (ui-menu-interp-y ui) menu-interp-y)
       ;; Update save/load buttons
       (setf (ui-menu-save-x ui) menu-save-x
             (ui-menu-save-y ui) menu-save-y
@@ -557,11 +534,6 @@
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
      (raylib:toggle-fullscreen))
-    ;; Client prediction toggle
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-prediction-x ui) (ui-menu-prediction-y ui)
-                      (ui-menu-prediction-size ui) (ui-menu-prediction-size ui))
-     (setf *client-prediction-enabled* (not *client-prediction-enabled*)))
     ;; Tile filter toggle (clears render cache to apply new filter)
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-tile-filter-x ui) (ui-menu-tile-filter-y ui)
@@ -580,15 +552,7 @@
            (cond ((< *interpolation-delay-seconds* 0.07) 0.1)
                  ((< *interpolation-delay-seconds* 0.12) 0.15)
                  ((< *interpolation-delay-seconds* 0.17) 0.2)
-                 (t 0.05))))
-    ;; Prediction threshold cycle: 2.5 -> 5.0 -> 10.0 -> 2.5
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-threshold-x ui) (ui-menu-threshold-y ui)
-                      200 (ui-menu-threshold-size ui))
-     (setf *prediction-error-threshold*
-           (cond ((< *prediction-error-threshold* 3.0) 5.0)
-                 ((< *prediction-error-threshold* 7.0) 10.0)
-                 (t 2.5))))))
+                 (t 0.05))))))
 
 (defun update-ui-input (ui audio mouse-clicked)
   ;; Handle UI toggle input and click interactions.

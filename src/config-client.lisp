@@ -95,6 +95,18 @@
   "Tiles per render chunk side (16x16 = 256 tiles per texture).
    Requires restart to change. Balance: larger = fewer textures but more VRAM per texture.")
 
+;;; Client Prediction - Initialized once at startup
+(defparameter *client-prediction-enabled* t
+  "Enable client-side prediction for local player. Requires restart to enable.
+   Provides smooth 60fps movement while server snapshots run at lower rates (20Hz).
+   Prediction state is created at client startup; can be disabled at runtime via SLIME,
+   but enabling after startup has no effect (no prediction state exists).")
+
+(defparameter *prediction-error-threshold* 5.0
+  "Max prediction error in pixels before snapping to server position.
+   When client prediction differs from server by more than this threshold,
+   the client snaps to the authoritative server position.")
+
 ;;;; ========================================================================
 ;;;; CLIENT OPTIONS - Immediate (SLIME tunable)
 ;;;; Changes take effect immediately. Modify via SLIME: (setf *var* value)
@@ -113,13 +125,9 @@
 (defparameter *editor-start-enabled* nil
   "When true, editor mode starts enabled.")
 
-;;; Interpolation & Prediction - Read during client loop
+;;; Interpolation - Read during client loop
 (defparameter *interpolation-delay-seconds* 0.1
   "Render delay for interpolation. Higher = smoother, more perceived lag.")
-(defparameter *client-prediction-enabled* nil
-  "Enable client-side prediction for local player. Toggle via SLIME for testing.")
-(defparameter *prediction-error-threshold* 5.0
-  "Max prediction error in pixels before correction.")
 
 ;;; Rendering - Read during draw
 ;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (ESC menu or SLIME)

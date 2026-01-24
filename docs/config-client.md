@@ -78,6 +78,14 @@ How it connects
 
 *Why restart:* Layer IDs and tileset catalog parsed at zone load time.
 
+### Client Prediction
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*client-prediction-enabled*` | `t` | Enable client-side prediction for local player. Provides smooth 60fps movement while server snapshots run at lower rates (20Hz) |
+| `*prediction-error-threshold*` | `5.0` | Max prediction error in pixels before snapping to server position |
+
+*Why restart (to enable):* Prediction state is created once at client startup. If started with `nil`, no state exists and enabling at runtime has no effect. However, if started with `t`, you can **disable** at runtime via SLIME `(setf *client-prediction-enabled* nil)` — the code checks the flag each frame.
+
 ---
 
 ## Immediate Effect Parameters
@@ -94,12 +102,10 @@ How it connects
 | `*auto-walk-enabled*` | `t` | When true, WASD toggles auto-walk direction |
 | `*editor-start-enabled*` | `nil` | When true, editor mode starts enabled |
 
-### Interpolation & Prediction
+### Interpolation
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation. Higher = smoother, more perceived lag |
-| `*client-prediction-enabled*` | `nil` | Enable client-side prediction for local player. Toggle via SLIME for testing |
-| `*prediction-error-threshold*` | `5.0` | Max prediction error in pixels before correction |
 
 ### Rendering
 | Parameter | Default | Description |

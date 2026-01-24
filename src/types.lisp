@@ -219,11 +219,9 @@
   menu-toggle-gap menu-debug-size menu-debug-x menu-debug-y menu-debug-label
   menu-editor-size menu-editor-x menu-editor-y menu-editor-label
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
-  menu-prediction-size menu-prediction-x menu-prediction-y menu-prediction-label
   menu-tile-filter-size menu-tile-filter-x menu-tile-filter-y menu-tile-filter-label
   menu-render-cache-size menu-render-cache-x menu-render-cache-y menu-render-cache-label
   menu-interp-size menu-interp-x menu-interp-y
-  menu-threshold-size menu-threshold-x menu-threshold-y
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
   inventory-open

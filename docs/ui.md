@@ -10,7 +10,7 @@ Why we do it this way
 
 What it does
 - Builds layout constants (panel sizes, button positions, labels).
-- Handles menu click actions (logout, unstuck, music, volume, debug, editor mode, fullscreen, client prediction, pixel-perfect tiles, chunk render cache, interpolation delay, prediction threshold).
+- Handles menu click actions (logout, unstuck, music, volume, debug, editor mode, fullscreen, pixel-perfect tiles, chunk render cache, interpolation delay).
 - Provides precomputed stamina labels to avoid consing.
 - Tracks a short loading overlay timer for zone transitions.
 - Tracks inventory overlay visibility for the `I` hotkey.
