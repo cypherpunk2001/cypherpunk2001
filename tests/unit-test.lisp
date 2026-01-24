@@ -219,6 +219,7 @@
                 test-build-zone-paths
                 ;; Final AI Tests
                 test-update-npc-behavior
+                test-update-npc-intent-nil-player
                 ;; Final Progression Tests
                 test-award-skill-xp
                 test-apply-item-modifiers
@@ -2432,6 +2433,41 @@ hello
     (update-npc-behavior npc player world)
     (assert (member (npc-behavior-state npc) '(:idle :aggressive :retaliate :flee)) ()
             "npc-behavior: valid state")))
+
+(defun test-update-npc-intent-nil-player ()
+  "Test NPC intent with nil player (idle/wander path).
+   Ensures no crash and that wander direction is computed."
+  (ensure-test-game-data)
+  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+         (npc (make-npc 100.0f0 100.0f0 :archetype archetype :id 1))
+         (world (make-test-world :tile-size 32.0f0))
+         (dt 0.016f0))
+    ;; Setup deterministic wander target to avoid randomness
+    ;; Set wander target 10 units to the right of NPC position
+    (setf (npc-wander-x npc) (+ (npc-x npc) 10.0f0)
+          (npc-wander-y npc) (npc-y npc)
+          (npc-wander-timer npc) 5.0f0  ; positive timer = use existing target
+          (npc-alive npc) t
+          (npc-behavior-state npc) :idle)
+    ;; Reset intent to known state
+    (let ((intent (npc-intent npc)))
+      (setf (intent-move-dx intent) 0.0f0
+            (intent-move-dy intent) 0.0f0))
+    ;; Call update-npc-behavior with nil player
+    (update-npc-behavior npc nil world)
+    (assert (eq (npc-behavior-state npc) :idle) ()
+            "nil-player: behavior state should be :idle")
+    ;; Call update-npc-intent with nil player - should not crash
+    (update-npc-intent npc nil world dt)
+    ;; Check that intent was updated with wander direction
+    (let* ((intent (npc-intent npc))
+           (dx (intent-move-dx intent))
+           (dy (intent-move-dy intent)))
+      ;; Wander target is +10,0 from NPC, so normalized direction should be (1.0, 0.0)
+      (assert (> dx 0.5f0) ()
+              (format nil "nil-player: intent dx should be positive (wander right), got ~a" dx))
+      (assert (< (abs dy) 0.1f0) ()
+              (format nil "nil-player: intent dy should be near zero, got ~a" dy)))))
 
 ;;; ============================================================
 ;;; FINAL PROGRESSION TESTS

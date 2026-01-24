@@ -4,7 +4,14 @@
 (defun closest-player (players npc &optional zone-state game)
   "Return the closest alive player to NPC, if any.
    When ZONE-STATE and GAME are provided, uses spatial grid for O(1) cell lookup
-   instead of O(n) linear scan of all players."
+   instead of O(n) linear scan of all players.
+
+   NOTE: This is intentionally neighbor-cell biased for performance. When players
+   exist in the 3x3 neighboring cells, returns the closest among those neighbors
+   (not the globally closest in the zone). Zone-wide fallback only triggers when
+   no players are found in neighbor cells or all grid IDs are stale. This means
+   aggro is driven by local proximity. If true perception-range awareness is
+   needed (global closest), consider a radius-based spatial query."
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc))
   (let ((best nil)
@@ -19,18 +26,29 @@
                       (npc-grid-cell-y npc)
                       *spatial-scratch-vector*)))
           (declare (type fixnum count))
-          (loop :for i fixnum :from 0 :below count
-                :for id fixnum = (aref *spatial-scratch-vector* i)
-                :for player = (find-player-by-id-fast game id)
-                ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
-                :when player
-                :do (let* ((dx (- (player-x player) (npc-x npc)))
-                           (dy (- (player-y player) (npc-y npc)))
-                           (dist (+ (* dx dx) (* dy dy))))
-                      (when (or (null best-dist) (< dist best-dist))
-                        (setf best player
-                              best-dist dist)))))
-        ;; Fallback: O(n) linear scan of all players
+          ;; Scan neighbor cells if any IDs found
+          (when (> count 0)
+            (loop :for i fixnum :from 0 :below count
+                  :for id fixnum = (aref *spatial-scratch-vector* i)
+                  :for player = (find-player-by-id-fast game id)
+                  ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
+                  :when player
+                  :do (let* ((dx (- (player-x player) (npc-x npc)))
+                             (dy (- (player-y player) (npc-y npc)))
+                             (dist (+ (* dx dx) (* dy dy))))
+                        (when (or (null best-dist) (< dist best-dist))
+                          (setf best player
+                                best-dist dist)))))
+          ;; Fall back to zone-wide scan if no player found (empty cells or stale IDs)
+          (when (and (null best) players)
+            (loop :for player :across players
+                  :do (let* ((dx (- (player-x player) (npc-x npc)))
+                             (dy (- (player-y player) (npc-y npc)))
+                             (dist (+ (* dx dx) (* dy dy))))
+                        (when (or (null best-dist) (< dist best-dist))
+                          (setf best player
+                                best-dist dist))))))
+        ;; No grid available: O(n) linear scan of all players
         (when players
           (loop :for player :across players
                 ;; Players are always considered alive (Task 1.5: avoid CLOS dispatch)
@@ -183,16 +201,21 @@
         (finish-output)))))
 
 (defun update-npc-intent (npc player world dt)
-  "Populate the NPC intent based on behavior and proximity."
+  "Populate the NPC intent based on behavior and proximity.
+   When PLAYER is nil, NPC runs idle/wander behavior."
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc)
            (type world world)
            (type single-float dt))
-  (when (and (npc-alive npc) player)
+  (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
-           (state (if (npc-should-flee-p npc)
-                      :flee
-                      (npc-behavior-state npc)))
+           (state (cond
+                    ;; Flee requires a player to flee FROM - gate on player
+                    ((and player (npc-should-flee-p npc)) :flee)
+                    ;; No player nearby = idle/wander
+                    ((null player) :idle)
+                    ;; Otherwise use behavior state
+                    (t (npc-behavior-state npc))))
            (attack-range (npc-attack-range npc world))
            (attack-range-sq (* attack-range attack-range))
            (dx 0.0f0)

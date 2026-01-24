@@ -377,21 +377,24 @@
 (defun simulate-zone-npcs (zone-npcs zone-players world dt event-queue &optional zone-state game)
   "Run NPC AI for NPCs in a specific zone with that zone's players.
    ZONE-NPCS: vector of NPCs in the zone
-   ZONE-PLAYERS: vector of players in the same zone
+   ZONE-PLAYERS: vector of players in the same zone (may be empty/nil)
    ZONE-STATE: optional zone-state for per-zone collision and spatial grid
    GAME: optional game struct for O(1) player lookup via spatial grid
-   Returns number of NPCs updated."
+   Returns number of NPCs updated.
+   NPCs run idle/wander behavior even without a nearby player."
   (let ((count 0))
-    (when (and zone-npcs (> (length zone-npcs) 0)
-               zone-players (> (length zone-players) 0))
+    (when (and zone-npcs (> (length zone-npcs) 0))
       (loop :for npc :across zone-npcs
             ;; Use spatial grid for O(1) cell lookup when available
+            ;; Returns nil if no player nearby - NPC will idle/wander
             :for target-player = (closest-player zone-players npc zone-state game)
-            :do (when target-player
+            :do (progn
                   (update-npc-behavior npc target-player world)
                   (update-npc-intent npc target-player world dt)
                   (update-npc-movement npc world dt zone-state)
-                  (update-npc-attack npc target-player world dt event-queue)
+                  ;; Only attack when player is nearby
+                  (when target-player
+                    (update-npc-attack npc target-player world dt event-queue))
                   (incf count))))
     count))
 
@@ -560,11 +563,12 @@
                               :do (apply-melee-hit current-player npc world event-queue)))
               (loop :for npc :across npcs
                     :for target-player = (closest-player players npc)
-                    :do (when target-player
+                    :do (progn
                           (update-npc-behavior npc target-player world)
                           (update-npc-intent npc target-player world dt)
                           (update-npc-movement npc world dt)
-                          (update-npc-attack npc target-player world dt event-queue))))))
+                          (when target-player
+                            (update-npc-attack npc target-player world dt event-queue)))))))
       (loop :for current-player :across players
             :do (consume-intent-actions (player-intent current-player)))
       ;; Increment playtime for all connected players (server-side tracking)
