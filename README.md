@@ -42,6 +42,11 @@ MMORPG_VERBOSE_COORDS=1 make server   # Entity positions per frame (noisy)
 ```shell
 MMORPG_WORKER_THREADS=4 make server      # Parallel snapshot sending
 MMORPG_WORKER_THREADS=$(nproc) make server   # Use all CPU cores
+MMORPG_SNAPSHOT_RATE=20 make server          # Snapshot rate in Hz (default 20)
+MMORPG_BINARY_SNAPSHOTS=1 make server        # Binary snapshots (client/server must match)
+MMORPG_NPC_POOL=1 make server                # Enable NPC object pooling (prewarms 256)
+MMORPG_GC_SCHEDULING=1 make server           # Periodic safe-point GC (default 60s)
+MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 make server  # Timing hooks + per-frame GC stats
 ```
 
 ### Build Environment

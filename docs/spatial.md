@@ -6,26 +6,28 @@ Purpose
 - Each zone maintains separate grids for players and NPCs.
 
 Why we do it this way
-- Hash-based grid allows O(1) cell lookup and constant-time neighbor queries.
+- Array-backed grids for zones with known dimensions give O(1) access with no consing.
+- Hash-based fallback remains for tests/unbounded grids.
 - Cell size (128px default) balances query efficiency with cell population.
 - Per-zone grids avoid cross-zone queries and simplify zone transitions.
 - Entity cell tracking enables O(1) grid updates on movement.
+- Scratch vectors keep neighbor queries allocation-free in hot loops.
 
 Key structures
-- `spatial-grid` - Hash table mapping (cell-x . cell-y) to list of entity IDs.
+- `spatial-grid` - Either:
+  - **Array-backed** `cells-array` for zones (2D array of lists).
+  - **Hash fallback** `cells` for tests/unbounded grids (packed fixnum keys).
 - `*spatial-cell-size*` - Configurable cell size (default 128px = 4 tiles).
+- `*spatial-scratch-vector*`, `*spatial-scratch-vector-2*` - Reused vectors for queries.
 
 Key functions
-- `make-spatial-grid` - Create empty grid with given cell size.
-- `spatial-grid-insert` - Add entity ID at world position.
-- `spatial-grid-remove` - Remove entity ID from specific cell.
-- `spatial-grid-move` - Update entity position (remove old, insert new).
-- `spatial-grid-query-neighbors` - Get IDs in cell and 8 neighbors (3x3).
-- `spatial-grid-query-radius` - Get IDs within N cells of center.
-- `spatial-grid-query-rect` - Get IDs within world-coordinate rectangle (for viewport culling).
-- `spatial-grid-query-position` - Query neighbors at world position.
-- `position-to-cell` - Convert world coords to cell coords.
-- `entity-cell-changed-p` - Check if position is in different cell.
+- `make-spatial-grid` - Create **hash-based** grid (fallback/tests).
+- `make-spatial-grid-for-zone` - Create **array-backed** grid sized for zone dimensions.
+- `spatial-grid-insert` / `spatial-grid-remove` / `spatial-grid-move` - Update membership.
+- `spatial-grid-query-neighbors-into` - Fill a scratch vector (no allocation).
+- `spatial-grid-query-rect-into` - Fill a scratch vector for viewport culling.
+- `spatial-grid-query-neighbors`, `spatial-grid-query-rect` - Convenience wrappers (allocate lists).
+- `position-to-cell`, `entity-cell-changed-p` - Coordinate helpers.
 
 Entity cell tracking
 Entities track their current cell for O(1) grid updates:
@@ -53,33 +55,37 @@ Grid membership MUST be updated at these locations:
 | net.lisp | Player join | Insert into zone's player grid |
 | net.lisp | Player leave | Remove from zone's player grid |
 
-Example: NPC targeting with spatial query
+Example: NPC targeting with allocation-free spatial query
 ```lisp
 ;; OLD: O(n) scan of all players
 (loop :for player :across players
       :when (< (distance npc player) range)
       :collect player)
 
-;; NEW: O(1) cell lookup + local scan
+;; NEW: O(1) cell lookup + local scan (no per-query consing)
 (let* ((cx (npc-grid-cell-x npc))
        (cy (npc-grid-cell-y npc))
-       (nearby-ids (spatial-grid-query-neighbors player-grid cx cy)))
-  (loop :for id :in nearby-ids
+       (scratch *spatial-scratch-vector*)
+       (count (spatial-grid-query-neighbors-into player-grid cx cy scratch)))
+  (loop :for i fixnum :from 0 :below count
+        :for id fixnum = (aref scratch i)
         :for player = (find-player-by-id-fast game id)
         :when (and player (< (distance npc player) range))
         :collect player))
 ```
 
 Performance characteristics
-- Insert/Remove: O(1) amortized (hash table operations)
-- Move (same cell): O(1) - no-op
-- Move (different cell): O(1) amortized
-- Query neighbors: O(9 + k) where k = entities in 3x3 region
-- Query radius N: O((2N+1)² + k) where k = entities in region
+- Array-backed insert/remove/move: O(1) with direct array access (no consing).
+- Hash fallback insert/remove/move: O(1) amortized (hash table ops).
+- Move (same cell): O(1) - no-op.
+- Query neighbors: O(9 + k) where k = entities in 3x3 region.
+- Query radius N: O((2N+1)² + k) where k = entities in region.
+- `*-into` queries reuse scratch vectors; list-returning wrappers allocate.
 
 Design notes
 - Cell size should be >= typical interaction range to minimize cross-cell queries.
 - 128px default covers melee range (~64px) with margin for movement.
 - IDs are stored, not entity references, for serialization safety.
-- Query functions return fresh lists to avoid aliasing issues.
+- Use `spatial-grid-query-*-into` in hot loops to avoid allocation.
+- List-returning query wrappers are for tooling/debug or non-hot code paths.
 - Grid is cleared on zone unload; entities reset grid-cell-x/y to nil.
