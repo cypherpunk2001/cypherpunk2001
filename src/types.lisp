@@ -219,7 +219,6 @@
   menu-toggle-gap menu-debug-size menu-debug-x menu-debug-y menu-debug-label
   menu-editor-size menu-editor-x menu-editor-y menu-editor-label
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
-  menu-interp-size menu-interp-x menu-interp-y
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
   inventory-open

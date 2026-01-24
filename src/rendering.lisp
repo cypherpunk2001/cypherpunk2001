@@ -2188,11 +2188,6 @@
                                     (ui-menu-fullscreen-y ui)
                                     (ui-menu-fullscreen-size ui)
                                     (ui-menu-fullscreen-size ui)))
-         (hover-interp (point-in-rect-p mouse-x mouse-y
-                                        (ui-menu-interp-x ui)
-                                        (ui-menu-interp-y ui)
-                                        200
-                                        (ui-menu-interp-size ui)))
          (debug-box-color (cond
                             (hover-debug (ui-menu-button-hover-color ui))
                             (debug-on (ui-menu-button-color ui))
@@ -2204,10 +2199,7 @@
          (fs-box-color (cond
                          (hover-fs (ui-menu-button-hover-color ui))
                          (fs-on (ui-menu-button-color ui))
-                         (t (ui-menu-panel-color ui))))
-         (interp-text-color (if hover-interp
-                                (ui-menu-button-hover-color ui)
-                                (ui-menu-text-color ui))))
+                         (t (ui-menu-panel-color ui)))))
     (raylib:draw-rectangle 0 0 (current-screen-width) (current-screen-height)
                            (ui-menu-overlay-color ui))
     (raylib:draw-rectangle (ui-menu-panel-x ui) (ui-menu-panel-y ui)
@@ -2326,12 +2318,6 @@
                       (- (ui-menu-fullscreen-y ui) 2)
                       (ui-menu-volume-text-size ui)
                       (ui-menu-text-color ui))
-    ;; Interpolation delay (click to cycle)
-    (raylib:draw-text (format nil "Interp Delay: ~,2fs (click)" *interpolation-delay-seconds*)
-                      (ui-menu-interp-x ui)
-                      (- (ui-menu-interp-y ui) 2)
-                      (ui-menu-volume-text-size ui)
-                      interp-text-color)
     ;; Unstuck button (above logout)
     (raylib:draw-rectangle (ui-menu-unstuck-x ui) (ui-menu-unstuck-y ui)
                            (ui-menu-unstuck-width ui)

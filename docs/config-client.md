@@ -105,7 +105,7 @@ How it connects
 ### Interpolation
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation. Higher = smoother, more perceived lag |
+| `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation. Higher = smoother, more perceived lag. SLIME/config only (no UI toggle) |
 
 ### Rendering
 | Parameter | Default | Description |

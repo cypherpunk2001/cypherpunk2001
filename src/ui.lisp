@@ -84,10 +84,6 @@
          (menu-fullscreen-x menu-debug-x)
          (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
-         ;; Client-side options
-         (menu-interp-size 18)
-         (menu-interp-x menu-debug-x)
-         (menu-interp-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
          ;; Position Save/Load above Unstuck (from bottom) to avoid overlap with toggles
          (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
          (menu-save-x (+ menu-panel-x menu-padding))
@@ -241,9 +237,6 @@
               :menu-fullscreen-x menu-fullscreen-x
               :menu-fullscreen-y menu-fullscreen-y
               :menu-fullscreen-label menu-fullscreen-label
-              :menu-interp-size menu-interp-size
-              :menu-interp-x menu-interp-x
-              :menu-interp-y menu-interp-y
               :hud-bg-color hud-bg-color
               :menu-overlay-color menu-overlay-color
               :menu-panel-color menu-panel-color
@@ -366,9 +359,6 @@
            (menu-fullscreen-size (ui-menu-fullscreen-size ui))
            (menu-fullscreen-x menu-debug-x)
            (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
-           (menu-interp-size (ui-menu-interp-size ui))
-           (menu-interp-x menu-debug-x)
-           (menu-interp-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
            ;; Save/Load buttons (above Unstuck)
            (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
            (menu-save-x (+ menu-panel-x menu-padding))
@@ -404,9 +394,7 @@
             (ui-menu-editor-x ui) menu-editor-x
             (ui-menu-editor-y ui) menu-editor-y
             (ui-menu-fullscreen-x ui) menu-fullscreen-x
-            (ui-menu-fullscreen-y ui) menu-fullscreen-y
-            (ui-menu-interp-x ui) menu-interp-x
-            (ui-menu-interp-y ui) menu-interp-y)
+            (ui-menu-fullscreen-y ui) menu-fullscreen-y)
       ;; Update save/load buttons
       (setf (ui-menu-save-x ui) menu-save-x
             (ui-menu-save-y ui) menu-save-y
@@ -507,16 +495,7 @@
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
-     (raylib:toggle-fullscreen))
-    ;; Interpolation delay cycle: 0.05 -> 0.1 -> 0.15 -> 0.2 -> 0.05
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-interp-x ui) (ui-menu-interp-y ui)
-                      200 (ui-menu-interp-size ui))
-     (setf *interpolation-delay-seconds*
-           (cond ((< *interpolation-delay-seconds* 0.07) 0.1)
-                 ((< *interpolation-delay-seconds* 0.12) 0.15)
-                 ((< *interpolation-delay-seconds* 0.17) 0.2)
-                 (t 0.05))))))
+     (raylib:toggle-fullscreen))))
 
 (defun update-ui-input (ui audio mouse-clicked)
   ;; Handle UI toggle input and click interactions.
