@@ -85,17 +85,9 @@
          (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
          ;; Client-side options
-         (menu-tile-filter-size 18)
-         (menu-tile-filter-x menu-debug-x)
-         (menu-tile-filter-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
-         (menu-tile-filter-label "Pixel-Perfect Tiles")
-         (menu-render-cache-size 18)
-         (menu-render-cache-x menu-debug-x)
-         (menu-render-cache-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
-         (menu-render-cache-label "Chunk Render Cache")
          (menu-interp-size 18)
          (menu-interp-x menu-debug-x)
-         (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
+         (menu-interp-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
          ;; Position Save/Load above Unstuck (from bottom) to avoid overlap with toggles
          (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
          (menu-save-x (+ menu-panel-x menu-padding))
@@ -249,14 +241,6 @@
               :menu-fullscreen-x menu-fullscreen-x
               :menu-fullscreen-y menu-fullscreen-y
               :menu-fullscreen-label menu-fullscreen-label
-              :menu-tile-filter-size menu-tile-filter-size
-              :menu-tile-filter-x menu-tile-filter-x
-              :menu-tile-filter-y menu-tile-filter-y
-              :menu-tile-filter-label menu-tile-filter-label
-              :menu-render-cache-size menu-render-cache-size
-              :menu-render-cache-x menu-render-cache-x
-              :menu-render-cache-y menu-render-cache-y
-              :menu-render-cache-label menu-render-cache-label
               :menu-interp-size menu-interp-size
               :menu-interp-x menu-interp-x
               :menu-interp-y menu-interp-y
@@ -382,15 +366,9 @@
            (menu-fullscreen-size (ui-menu-fullscreen-size ui))
            (menu-fullscreen-x menu-debug-x)
            (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
-           (menu-tile-filter-size (ui-menu-tile-filter-size ui))
-           (menu-tile-filter-x menu-debug-x)
-           (menu-tile-filter-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
-           (menu-render-cache-size (ui-menu-render-cache-size ui))
-           (menu-render-cache-x menu-debug-x)
-           (menu-render-cache-y (+ menu-tile-filter-y menu-tile-filter-size menu-toggle-gap))
            (menu-interp-size (ui-menu-interp-size ui))
            (menu-interp-x menu-debug-x)
-           (menu-interp-y (+ menu-render-cache-y menu-render-cache-size menu-toggle-gap))
+           (menu-interp-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
            ;; Save/Load buttons (above Unstuck)
            (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
            (menu-save-x (+ menu-panel-x menu-padding))
@@ -427,10 +405,6 @@
             (ui-menu-editor-y ui) menu-editor-y
             (ui-menu-fullscreen-x ui) menu-fullscreen-x
             (ui-menu-fullscreen-y ui) menu-fullscreen-y
-            (ui-menu-tile-filter-x ui) menu-tile-filter-x
-            (ui-menu-tile-filter-y ui) menu-tile-filter-y
-            (ui-menu-render-cache-x ui) menu-render-cache-x
-            (ui-menu-render-cache-y ui) menu-render-cache-y
             (ui-menu-interp-x ui) menu-interp-x
             (ui-menu-interp-y ui) menu-interp-y)
       ;; Update save/load buttons
@@ -534,16 +508,6 @@
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
      (raylib:toggle-fullscreen))
-    ;; Tile filter toggle (clears render cache to apply new filter)
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-tile-filter-x ui) (ui-menu-tile-filter-y ui)
-                      (ui-menu-tile-filter-size ui) (ui-menu-tile-filter-size ui))
-     (toggle-tile-point-filter))
-    ;; Render cache toggle (clears and rebuilds cache)
-    ((point-in-rect-p mouse-x mouse-y
-                      (ui-menu-render-cache-x ui) (ui-menu-render-cache-y ui)
-                      (ui-menu-render-cache-size ui) (ui-menu-render-cache-size ui))
-     (toggle-render-cache-enabled))
     ;; Interpolation delay cycle: 0.05 -> 0.1 -> 0.15 -> 0.2 -> 0.05
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-interp-x ui) (ui-menu-interp-y ui)

@@ -110,13 +110,13 @@ How it connects
 ### Rendering
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles. **Use `toggle-tile-point-filter` to change** (clears render caches) |
-| `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. **Use `toggle-render-cache-enabled` to change** (clears caches) |
+| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles. Always on; SLIME-only via `toggle-tile-point-filter` |
+| `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. Always on; SLIME-only via `toggle-render-cache-enabled` |
 | `*render-cache-max-chunks*` | `64` | Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth |
 | `*render-chunk-size*` | `16` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
 | `*entity-render-max-distance*` | `nil` | Maximum distance (world pixels) from player to render NPCs. `nil` = unlimited. Only affects NPCs; players always render if in viewport |
 
-**Important:** Use `toggle-tile-point-filter` and `toggle-render-cache-enabled` instead of raw `setf` - direct assignment leaves stale cached textures.
+**Note:** `*tile-point-filter*` and `*render-cache-enabled*` are always-on features with no in-game toggle. Use SLIME functions `toggle-tile-point-filter` or `toggle-render-cache-enabled` for debugging—these properly clear render caches (raw `setf` leaves stale textures).
 
 ### Camera
 | Parameter | Default | Description |

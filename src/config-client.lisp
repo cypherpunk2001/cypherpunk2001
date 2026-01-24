@@ -130,7 +130,7 @@
   "Render delay for interpolation. Higher = smoother, more perceived lag.")
 
 ;;; Rendering - Read during draw
-;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (ESC menu or SLIME)
+;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (SLIME only)
 ;;; to change these values - they clear render caches. Direct setf leaves stale caches.
 (defparameter *tile-point-filter* t
   "Use point (nearest-neighbor) filtering for tiles. Reduces seam artifacts but looks pixelated.
@@ -140,7 +140,7 @@
 ;;; Pre-render static tile chunks to reduce draw calls at high zoom-out levels.
 (defparameter *render-cache-enabled* t
   "Enable/disable chunk render caching. Set NIL to use original per-tile rendering.
-   Use toggle-render-cache-enabled (ESC menu) to change - it clears render caches.")
+   Use toggle-render-cache-enabled (SLIME only) to change - it clears render caches.")
 
 (defparameter *render-cache-max-chunks* 64
   "Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth.")
