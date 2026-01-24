@@ -1424,7 +1424,10 @@
                     (player-y player) final-y
                     (player-dx player) 0.0
                     (player-dy player) 0.0
-                    (player-snapshot-dirty player) t)
+                    (player-snapshot-dirty player) t
+                    ;; Force full resync so client gets complete snapshot after teleport
+                    ;; This prevents frozen sprites from stale interpolation buffers
+                    (player-force-full-resync player) t)
               (mark-player-dirty (player-id player))
               (log-verbose "Player ~a unstuck in zone ~a, teleported to (~,1f, ~,1f)"
                            (player-id player) player-zone final-x final-y)

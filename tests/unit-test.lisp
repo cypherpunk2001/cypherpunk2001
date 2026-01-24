@@ -156,6 +156,8 @@
                 test-octets-to-string
                 test-encode-decode-net-message
                 test-host-to-string
+                test-position-distance-sq
+                test-teleport-detected-p
                 ;; Binary Snapshot Tests (Phase 3)
                 test-binary-int-encoding
                 test-binary-int-decoding
@@ -444,6 +446,47 @@
   (assert (= (exponential-backoff-delay 3 100 1000) 800) () "backoff: attempt 3")
   (assert (= (exponential-backoff-delay 4 100 1000) 1000) () "backoff: capped at max")
   (assert (= (exponential-backoff-delay 10 100 1000) 1000) () "backoff: stays at max"))
+
+;;; ============================================================
+;;; NET.LISP TESTS
+;;; ============================================================
+
+(defun test-position-distance-sq ()
+  "Test position-distance-sq helper for teleport detection."
+  ;; Same position
+  (assert (= (position-distance-sq 0.0f0 0.0f0 0.0f0 0.0f0) 0.0)
+          () "distance-sq: same position")
+  ;; Horizontal distance
+  (assert (= (position-distance-sq 0.0f0 0.0f0 10.0f0 0.0f0) 100.0)
+          () "distance-sq: horizontal 10")
+  ;; Vertical distance
+  (assert (= (position-distance-sq 0.0f0 0.0f0 0.0f0 10.0f0) 100.0)
+          () "distance-sq: vertical 10")
+  ;; Diagonal (3-4-5 triangle)
+  (assert (= (position-distance-sq 0.0f0 0.0f0 3.0f0 4.0f0) 25.0)
+          () "distance-sq: 3-4-5 triangle")
+  ;; Negative direction
+  (assert (= (position-distance-sq 10.0f0 10.0f0 0.0f0 0.0f0) 200.0)
+          () "distance-sq: negative direction"))
+
+(defun test-teleport-detected-p ()
+  "Test teleport detection based on distance threshold."
+  ;; Default threshold is 10000.0 (100 pixels)
+  ;; Small movement - no teleport
+  (assert (not (teleport-detected-p 0.0f0 0.0f0 10.0f0 10.0f0))
+          () "teleport-detected-p: small movement")
+  ;; Exactly at threshold (100 pixels in one direction = 10000 sq)
+  (assert (not (teleport-detected-p 0.0f0 0.0f0 100.0f0 0.0f0))
+          () "teleport-detected-p: at threshold")
+  ;; Just over threshold
+  (assert (teleport-detected-p 0.0f0 0.0f0 101.0f0 0.0f0)
+          () "teleport-detected-p: just over threshold")
+  ;; Large teleport
+  (assert (teleport-detected-p 0.0f0 0.0f0 500.0f0 500.0f0)
+          () "teleport-detected-p: large teleport")
+  ;; Teleport in negative direction
+  (assert (teleport-detected-p 500.0f0 500.0f0 0.0f0 0.0f0)
+          () "teleport-detected-p: negative direction"))
 
 ;;; ============================================================
 ;;; COMBAT.LISP TESTS

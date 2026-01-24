@@ -129,6 +129,11 @@
 (defparameter *interpolation-delay-seconds* 0.1
   "Render delay for interpolation. Higher = smoother, more perceived lag.")
 
+(defparameter *teleport-distance-threshold-sq* 10000.0f0
+  "Squared distance threshold for teleport detection (single-float).
+   If player position jumps more than sqrt(10000)=100 pixels (~3 tiles at 32px),
+   treat as teleport and reset interpolation/prediction state to avoid frozen sprites.")
+
 ;;; Rendering - Read during draw
 ;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (SLIME only)
 ;;; to change these values - they clear render caches. Direct setf leaves stale caches.

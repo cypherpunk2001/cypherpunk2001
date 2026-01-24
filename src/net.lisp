@@ -1721,7 +1721,13 @@
             (log-verbose "Zone change detected: player ~d zone ~a -> ~a"
                          (player-id player) client-zone player-zone)
             (setf (net-client-needs-full-resync client) t)
-            (setf (net-client-zone-id client) player-zone))))))
+            (setf (net-client-zone-id client) player-zone)))
+        ;; Check for player-initiated full resync (unstuck teleport)
+        (when (player-force-full-resync player)
+          (log-verbose "Player ~d force-full-resync (unstuck teleport)"
+                       (player-id player))
+          (setf (net-client-needs-full-resync client) t)
+          (setf (player-force-full-resync player) nil)))))
   ;; Now proceed with zone-grouped broadcast
   (let ((zone-groups (group-clients-by-zone clients))
         (any-sent nil)
@@ -1903,12 +1909,54 @@
           (apply-player-private-plist player payload)
           (log-verbose "Private state ignored (player ~a not found)" id)))))
 
+(defun position-distance-sq (x1 y1 x2 y2)
+  "Compute squared distance between two positions. Avoids sqrt for efficiency."
+  (declare (type single-float x1 y1 x2 y2))
+  (let ((dx (- x2 x1))
+        (dy (- y2 y1)))
+    (+ (* dx dx) (* dy dy))))
+
+(defun teleport-detected-p (old-x old-y new-x new-y)
+  "Return T if position jump exceeds teleport threshold (same-zone teleport).
+   Used to detect unstuck teleports and reset client sync state."
+  (declare (type single-float old-x old-y new-x new-y))
+  (> (position-distance-sq old-x old-y new-x new-y)
+     *teleport-distance-threshold-sq*))
+
+(defun reset-client-sync-state (game)
+  "Reset interpolation and prediction state after same-zone teleport (unstuck).
+   Lighter-weight than handle-zone-transition - no UI/editor side effects.
+   Lives in net.lisp to avoid cross-module dependency (called from apply-snapshot)."
+  (let* ((buffer (game-interpolation-buffer game))
+         (pred (game-prediction-state game))
+         (player (game-player game)))
+    ;; Clear interpolation buffer - stale positions cause frozen sprites
+    (when buffer
+      (setf (interpolation-buffer-count buffer) 0
+            (interpolation-buffer-head buffer) 0))
+    ;; Reset prediction state - stale predicted position causes movement issues
+    (when (and pred player)
+      (setf (prediction-state-predicted-x pred) (player-x player)
+            (prediction-state-predicted-y pred) (player-y player)
+            (prediction-state-input-count pred) 0
+            (prediction-state-input-head pred) 0))))
+
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
   ;; Returns (values zone-id delta-positions) where delta-positions is
   ;; non-nil for delta snapshots (used for interpolation buffer fix).
+  ;; Detects same-zone teleports (unstuck) and resets sync state to avoid frozen sprites.
   (handler-case
-      (progn
+      (let* ((player (game-player game))
+             (buffer (game-interpolation-buffer game))
+             ;; Guard: only detect teleports after we have prior data
+             ;; Prevents false positive on first snapshot (old-x/old-y = 0,0)
+             (has-prior-data (and player
+                                  buffer
+                                  (> (interpolation-buffer-count buffer) 0)))
+             ;; Capture pre-snapshot position for teleport detection
+             (old-x (if player (player-x player) 0.0f0))
+             (old-y (if player (player-y player) 0.0f0)))
         (when player-id
           (setf (game-net-player-id game) player-id))
         (multiple-value-bind (zone-id zone-changed delta-positions)
@@ -1916,15 +1964,28 @@
           (when zone-changed
             (log-verbose "Client zone transitioned to ~a" zone-id)
             (handle-zone-transition game))
+          ;; Detect same-zone teleport (unstuck) - reset sync state if position jumped
+          ;; Only check if we had prior data to avoid first-snapshot false positives
+          (let ((new-player (game-player game)))
+            (when (and new-player
+                       has-prior-data
+                       (not zone-changed)  ; Zone changes already handle this
+                       (teleport-detected-p old-x old-y
+                                            (player-x new-player)
+                                            (player-y new-player)))
+              (log-verbose "Teleport detected (unstuck): (~,1f,~,1f) -> (~,1f,~,1f)"
+                           old-x old-y (player-x new-player) (player-y new-player))
+              ;; Use lightweight reset - no UI/editor side effects
+              (reset-client-sync-state game)))
           (let ((queue (game-combat-events game)))
             (dolist (event-plist event-plists)
               (let ((event (plist->combat-event event-plist)))
                 (when event
                   (push-combat-event queue event)))))
-          (let ((player (game-player game)))
-            (when player
-              (mark-player-hud-stats-dirty player)
-              (mark-player-inventory-dirty player)))
+          (let ((final-player (game-player game)))
+            (when final-player
+              (mark-player-hud-stats-dirty final-player)
+              (mark-player-inventory-dirty final-player)))
           (values zone-id delta-positions)))
     (error (e)
       (warn "Failed to apply snapshot: ~a" e)

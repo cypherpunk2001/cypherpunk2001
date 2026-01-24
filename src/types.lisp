@@ -61,6 +61,8 @@
   (last-sequence 0 :type fixnum)
   ;; Network delta compression (see docs/net.md 4-Prong Approach)
   (snapshot-dirty t :type boolean)
+  ;; Force full resync on next snapshot (set after unstuck teleport)
+  (force-full-resync nil :type boolean)
   ;; Spatial grid cell tracking (nil if not in a grid)
   (grid-cell-x nil :type (or null fixnum))
   (grid-cell-y nil :type (or null fixnum)))
