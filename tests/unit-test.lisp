@@ -158,6 +158,7 @@
                 test-host-to-string
                 test-position-distance-sq
                 test-teleport-detected-p
+                test-sync-client-zone-npcs
                 ;; Binary Snapshot Tests (Phase 3)
                 test-binary-int-encoding
                 test-binary-int-decoding
@@ -487,6 +488,57 @@
   ;; Teleport in negative direction
   (assert (teleport-detected-p 500.0f0 500.0f0 0.0f0 0.0f0)
           () "teleport-detected-p: negative direction"))
+
+(defun test-sync-client-zone-npcs ()
+  "Test zone-state NPC sync after teleport/resync.
+   Phase 2: Ensures rendering uses the same NPC array that snapshots update."
+  (ensure-test-game-data)
+  ;; Save original zone-states and restore after test to avoid order-dependent failures
+  ;; Use 'eq to match *zone-states* hash table test function
+  (let ((saved-zone-states (make-hash-table :test 'eq)))
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           ;; Clear zone-states cache for isolated test
+           (clrhash *zone-states*)
+           (let* (;; Create initial zone-state with empty NPC array
+                  (zone-state (make-zone-state :zone-id :test-sync-zone
+                                                :zone nil
+                                                :wall-map (make-array '(10 10) :initial-element 0)
+                                                :npcs (make-array 0)
+                                                :npc-grid (make-spatial-grid 64.0f0)))
+                  ;; Create game with NPC array that differs from zone-state
+                  (archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+                  (npc1 (make-npc 100.0f0 100.0f0 :archetype archetype :id 1))
+                  (npc2 (make-npc 200.0f0 200.0f0 :archetype archetype :id 2))
+                  (game-npcs (make-array 2 :initial-contents (list npc1 npc2)))
+                  (player (make-player 150.0f0 150.0f0 :id 1))
+                  ;; Use %make-game to create minimal game struct for testing
+                  (game (%make-game :npcs game-npcs :player player)))
+             ;; Setup player zone-id and register zone-state in cache
+             (setf (player-zone-id player) :test-sync-zone)
+             (setf (gethash :test-sync-zone *zone-states*) zone-state)
+             ;; Verify initial state: zone-state has 0 NPCs, game has 2
+             (assert (= (length (zone-state-npcs zone-state)) 0) ()
+                     "sync-npcs: zone-state starts with 0 npcs")
+             (assert (= (length game-npcs) 2) ()
+                     "sync-npcs: game has 2 npcs")
+             ;; Call sync
+             (sync-client-zone-npcs game)
+             ;; Verify zone-state now has the game NPCs
+             (assert (eq (zone-state-npcs zone-state) game-npcs) ()
+                     "sync-npcs: zone-state-npcs now equals game-npcs")
+             (assert (= (length (zone-state-npcs zone-state)) 2) ()
+                     "sync-npcs: zone-state has 2 npcs after sync")
+             ;; Verify NPC index map was rebuilt
+             (let ((index-map (zone-state-npc-index-map zone-state)))
+               (assert (not (null index-map)) ()
+                       "sync-npcs: npc-index-map created")
+               (assert (= (hash-table-count index-map) 2) ()
+                       "sync-npcs: index-map has 2 entries"))))
+      ;; Restore original zone-states
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
 
 ;;; ============================================================
 ;;; COMBAT.LISP TESTS

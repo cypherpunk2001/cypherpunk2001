@@ -1776,6 +1776,8 @@
                   (let ((full-state (serialize-game-state-for-zone
                                      game effective-zone-id zone-state :use-pool t)))
                     (setf full-state (plist-put full-state :seq current-seq))
+                    ;; Mark as explicit resync so client knows to sync zone-state NPCs
+                    (setf full-state (plist-put full-state :resync t))
                     (log-verbose "Zone ~a: resync ~d clients (seq ~d, ~d players)"
                                  effective-zone-id (length resync-clients) current-seq
                                  (length (getf full-state :players)))
@@ -1941,6 +1943,7 @@
             (prediction-state-input-count pred) 0
             (prediction-state-input-head pred) 0))))
 
+
 (defun apply-snapshot (game state event-plists &key player-id)
   ;; Apply a snapshot state and queue HUD/combat events for UI.
   ;; Returns (values zone-id delta-positions) where delta-positions is
@@ -1966,17 +1969,27 @@
             (handle-zone-transition game))
           ;; Detect same-zone teleport (unstuck) - reset sync state if position jumped
           ;; Only check if we had prior data to avoid first-snapshot false positives
-          (let ((new-player (game-player game)))
-            (when (and new-player
-                       has-prior-data
-                       (not zone-changed)  ; Zone changes already handle this
-                       (teleport-detected-p old-x old-y
-                                            (player-x new-player)
-                                            (player-y new-player)))
+          (let* ((new-player (game-player game))
+                 (teleported (and new-player
+                                  has-prior-data
+                                  (not zone-changed)
+                                  (teleport-detected-p old-x old-y
+                                                       (player-x new-player)
+                                                       (player-y new-player))))
+                 ;; Explicit resync flag from server (unstuck, reconnect, etc.)
+                 ;; Only sync NPC grid when server explicitly marks resync, not just compact snapshot
+                 (server-resync-p (getf state :resync)))
+            (when teleported
               (log-verbose "Teleport detected (unstuck): (~,1f,~,1f) -> (~,1f,~,1f)"
                            old-x old-y (player-x new-player) (player-y new-player))
               ;; Use lightweight reset - no UI/editor side effects
-              (reset-client-sync-state game)))
+              (reset-client-sync-state game))
+            ;; Phase 2: Sync zone-state NPCs after explicit server resync or teleport
+            ;; Zone change already syncs via handle-zone-transition
+            ;; Teleport and explicit resync need sync here (not every compact snapshot)
+            (when (and (not zone-changed)
+                       (or teleported server-resync-p))
+              (sync-client-zone-npcs game)))
           (let ((queue (game-combat-events game)))
             (dolist (event-plist event-plists)
               (let ((event (plist->combat-event event-plist)))

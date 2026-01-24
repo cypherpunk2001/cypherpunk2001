@@ -398,6 +398,27 @@
                   (incf count))))
     count))
 
+(defun sync-client-zone-npcs (game)
+  "Sync zone-state NPCs with game-npcs after teleport/resync/zone-change.
+   Phase 2: Ensures rendering uses the same NPC array that snapshots update.
+   Without this, zone-state-npcs can become stale and cause frozen sprites.
+   Called from handle-zone-transition (zone changes) and apply-snapshot (resyncs/teleports)."
+  (let* ((player (game-player game))
+         (npcs (game-npcs game))
+         ;; Resolve zone-id from player or world
+         (zone-id (or (and player (player-zone-id player))
+                      (let ((world (game-world game)))
+                        (and world (world-zone world)
+                             (zone-id (world-zone world))))))
+         (zone-state (and zone-id (get-zone-state zone-id))))
+    (when (and zone-state npcs)
+      ;; Update zone-state to use the current game-npcs array
+      (setf (zone-state-npcs zone-state) npcs)
+      ;; Rebuild NPC spatial grid and index map for rendering/culling
+      (populate-npc-grid zone-state npcs)
+      (log-verbose "Client NPC zone-state synced (zone-id=~a npcs=~d)"
+                   zone-id (length npcs)))))
+
 (defun handle-zone-transition (game)
   ;; Sync client-facing state after a zone change.
   (let* ((ui (game-ui game))
@@ -425,7 +446,9 @@
       (setf (prediction-state-predicted-x pred) (player-x player)
             (prediction-state-predicted-y pred) (player-y player)
             (prediction-state-input-count pred) 0
-            (prediction-state-input-head pred) 0))))
+            (prediction-state-input-head pred) 0))
+    ;; Phase 2: Sync zone-state NPCs with game-npcs so rendering matches
+    (sync-client-zone-npcs game)))
 
 (defun update-sim (game dt &optional (allow-player-control t))
   "Run one fixed-tick simulation step. Returns true on zone transition.
