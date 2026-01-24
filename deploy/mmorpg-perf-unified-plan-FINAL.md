@@ -1,3 +1,23 @@
+---
+
+This PLAN to implement performance guidelines of CLAUDE.md was implemented SANS SIMD step in
+
+cee364b Mark Phase 5 complete in performance plan
+9a018c0 Task 5.5: Convert zone objects from plists to structs
+2b718bf Phase 5: Conditional optimizations
+dd97cc5 Phase 4: Targeted allocation/CPU cleanup
+be6bea5 Phase 3 performance: serialization and networking improvements
+2b935f8 Phase 2 performance: allocation-free hot loops
+af63bed Phase 1 performance: CLOS removal and struct typing
+
+The only issue is 3 introduces choppiness for player traveling game world without client side prediction enabled, to which, we will make client side prediction a default. If that becomes a problem later, we can revert be6bea5 or make be6bea5 less extreme maybe try 30hz etc.
+
+Initial client side prediction commits:
+74bb0fa Enable client prediction by default, remove ESC menu toggle
+
+
+---
+
 # MMORPG Performance Optimization Plan - UNIFIED FINAL
 
 **Date**: 2026-01-23
