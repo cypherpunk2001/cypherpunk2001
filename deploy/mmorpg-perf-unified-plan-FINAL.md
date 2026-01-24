@@ -15,6 +15,8 @@ The only issue is 3 introduces choppiness for player traveling game world withou
 Initial client side prediction commits:
 74bb0fa Enable client prediction by default, remove ESC menu toggle
 3a38c17 Fix prediction stuck on zone transition
+48b7fef origin/master Remove interpolation delay toggle from ESC menu
+f062249 Remove tile filter and render cache toggles from ESC menu
 
 ---
 
