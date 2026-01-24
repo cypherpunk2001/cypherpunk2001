@@ -61,10 +61,14 @@
       (when (env-bool "MMORPG_DELTA_COMPRESSION")
         (setf (symbol-value (read-from-string "mmorpg:*delta-compression-enabled*")) t)
         (format t "~&SERVER: delta compression enabled (Prong 2)~%"))
-      (let ((worker-threads (env-int "MMORPG_WORKER_THREADS" 1)))
-        (format t "~&SERVER: running (worker-threads=~d)~%" worker-threads)
+      (let ((host (or (sb-ext:posix-getenv "MMORPG_HOST") "127.0.0.1"))
+            (port (env-int "MMORPG_PORT" 1337))
+            (worker-threads (env-int "MMORPG_WORKER_THREADS" 1)))
+        (format t "~&SERVER: binding to ~a:~d (worker-threads=~d)~%" host port worker-threads)
         (finish-output)
         (funcall (read-from-string "mmorpg:run-server")
+                 :host host
+                 :port port
                  :worker-threads worker-threads))
       (format t "~&SERVER: ok~%")
       (sb-ext:exit :code 0))
