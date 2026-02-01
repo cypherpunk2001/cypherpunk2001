@@ -1,21 +1,9 @@
 # TODO
 
-We noticed while running `scripts/stress-test.lisp` that when server has around 1000 concurrent players that it becomes near impossible for users to login or register. The concern is that under high server loads that auth may become unusable.
+In 1b4fd42 I think *if I understand correctly, not sure* we may have implemented some type of redis connection
+pooling, especially related to auth logins/registers. I am wondering if it is possible or worth doing (or already done?) that maybe we should re-use the redis connection pooling around the other places of the codebase that make redis connections? Since it's a MMORPG, we definitely should always take care to make sure we are scaling the way we connect to DB so as to support massive amounts of players on the same server at the same time. This task is to research my idea, and let me know the facts, are we doing this, what are we in fact doing, should we consider doing this, and if so, how would we do it. Provide recommends in findings_redis_connections.md
 
-- Stress test (simple mode) still shows auth timeouts/drops even at 1 registration per 0.5s; indicates server-side auth throughput/queueing limits, not client hammering.
-
-Is this possible? If so, can we investigate and ensure that both login and registration auth will continue to work 100% even under high server load with many concurrent players?
-
-- Fix server auth throughput (auth queue O(1), multiple auth workers, backpressure, metrics).
-
-no code changes yet, investigate and report to findings.md
-
-
-
-- Decide next step:
-  - Increase auth timeout in `scripts/stress-test.lisp` to avoid dropping slow auths during long runs, or
-  - Fix server auth throughput (auth queue O(1), multiple auth workers, backpressure, metrics).
-
+---
 
 consider 2x'ing 36 seconds walk or 3x'ing ~50ish seconds the size of all zones  walk before zone crossing
 currently walking across a new zone with a brief loading hitch is annoying every 18 seconds.

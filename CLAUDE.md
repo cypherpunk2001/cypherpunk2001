@@ -22,21 +22,6 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 make tests              # Run ALL tests including smoke test (recommended)
 ```
 
-## MANDATORY: Desktop Notification on Completion (DO NOT SKIP)
-
-**This is NON-NEGOTIABLE. Every single time ALL tasks are done, run this command:**
-
-```bash
-make notify MSG="All jobs are complete and ready for review"
-```
-
-**Rules:**
-1. When ALL work is finished (code written, `make tests` passing, nothing left to do), you MUST run `make notify`. No exceptions. Do not forget. Do not skip. Do not assume the user saw your text output — they are not watching the terminal.
-2. This applies to EVERY type of completed work: code changes, review-only tasks, research tasks, anything the user asked you to do.
-3. Do NOT notify mid-work or between sub-tasks, UNLESS the user explicitly asked you to stop for review between steps.
-4. If you are unsure whether you already notified, run `make notify` again. A duplicate notification is always better than a missing one.
-5. The user relies on `notify-send` to know when to come back. If you forget, they are left waiting with no signal. This wastes their time and is unacceptable.
-
 **CRITICAL TEST ORDER**: The first three tests MUST run in this exact order:
 1. `make checkparens` - Verify balanced parentheses (fastest, catches syntax errors)
 2. `make ci` - Cold compile + UDP handshake (catches compile errors)
@@ -402,13 +387,22 @@ Agent self-check:
 - No direct database calls from game logic
 
 ### Plist Mutation: The `setf getf` Pitfall (CRITICAL)
-In Common Lisp, `setf getf` only modifies existing keys — it does NOT add new keys to a plist.
-The modification is silently ignored.
+`(setf (getf place key) value)` works correctly (adds or updates) **only when `place` is a setf-able location** (a variable, struct slot, or array element). The danger is when the plist is a temporary or computed form — `setf getf` may prepend a new cons cell that is silently lost because nothing holds the updated head of the list.
+
+```lisp
+;; SAFE — x is a setf-able variable
+(let ((x '(:a 1)))
+  (setf (getf x :b) 2)  ; x is now (:b 2 :a 1)
+  x)
+
+;; DANGEROUS — return value of (foo) is not a setf-able place
+(setf (getf (foo) :b) 2)  ; new cons may be lost
+```
 
 Prevention rules:
-1. Always initialize mutable plist keys when creating plists
-2. Prefer structs for complex mutable state
-3. Add assertions during debugging to catch missing keys
+1. Only use `setf getf` on variables, struct slots, or other genuine places
+2. Prefer structs for complex mutable state (compile-time slot access, no place ambiguity)
+3. When passing plists through function boundaries, return the updated plist rather than relying on in-place mutation
 4. Document required keys for mutable plist-based features
 
 ### Security: Untrusted Client Principle
