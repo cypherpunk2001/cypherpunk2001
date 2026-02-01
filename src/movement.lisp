@@ -796,35 +796,114 @@
   ;; Return a position inside MIN/MAX based on RATIO.
   (+ min-value (* (clamp ratio 0.0 1.0) (- max-value min-value))))
 
-(defun world-exit-edge-with-bounds (player min-x max-x min-y max-y)
+;;;; ========================================================================
+;;;; Directional Gating (Step 3) — Only arm/transition when movement intent
+;;;; has a significant component toward the zone edge.
+;;;; ========================================================================
+
+(defun edge-direction-passes-p (dx dy edge)
+  "Return T if movement direction (DX, DY) has sufficient component toward EDGE.
+   Uses *zone-direction-threshold* as minimum normalized dot product.
+   Returns nil for zero movement vectors (stationary players never trigger)."
+  (let ((mag (sqrt (+ (* dx dx) (* dy dy)))))
+    (when (< mag 0.001)
+      (return-from edge-direction-passes-p nil))
+    (let ((dot (case edge
+                 (:north (/ (- dy) mag))
+                 (:south (/ dy mag))
+                 (:west  (/ (- dx) mag))
+                 (:east  (/ dx mag))
+                 (t 0.0))))
+      (>= dot *zone-direction-threshold*))))
+
+(defun edge-direction-dot (dx dy edge)
+  "Return normalized dot product of (DX, DY) with EDGE's inward normal.
+   Returns 0.0 for zero-length vectors. Used to rank edges by alignment strength."
+  (let ((mag (sqrt (+ (* dx dx) (* dy dy)))))
+    (if (< mag 0.001)
+        0.0
+        (case edge
+          (:north (/ (- dy) mag))
+          (:south (/ dy mag))
+          (:west  (/ (- dx) mag))
+          (:east  (/ dx mag))
+          (t 0.0)))))
+
+(defun spatial-exit-p (exit-spec)
+  "Return T if EXIT-SPEC is a spatial edge (not a teleport).
+   Spatial exits have :offset :preserve-x or :preserve-y."
+  (let ((offset (getf exit-spec :offset)))
+    (or (eq offset :preserve-x)
+        (eq offset :preserve-y))))
+
+;;;; ========================================================================
+;;;; Arm-Band Detection (Step 2) — Determine if player is within hysteresis
+;;;; arm, cancel, or commit zones relative to zone bounds.
+;;;; ========================================================================
+
+(defun player-distance-to-edge (player edge min-x max-x min-y max-y)
+  "Return the player's distance inward from EDGE in pixels.
+   Larger value = further from edge = deeper in zone interior."
+  (let ((x (player-x player))
+        (y (player-y player)))
+    (case edge
+      (:north (- y min-y))
+      (:south (- max-y y))
+      (:west  (- x min-x))
+      (:east  (- max-x x))
+      (t 0.0))))
+
+(defun player-in-arm-band-p (player edge min-x max-x min-y max-y tile-dest-size)
+  "Return T if PLAYER is within the arm band for EDGE (between arm line and zone edge).
+   Arm line = *zone-hysteresis-in* tiles from edge."
+  (let ((dist (player-distance-to-edge player edge min-x max-x min-y max-y))
+        (arm-px (* *zone-hysteresis-in* tile-dest-size)))
+    (<= dist arm-px)))
+
+(defun player-past-cancel-line-p (player edge min-x max-x min-y max-y tile-dest-size)
+  "Return T if PLAYER has retreated past the cancel line for EDGE.
+   Cancel line = *zone-hysteresis-out* tiles from edge (deeper into interior than arm)."
+  (let ((dist (player-distance-to-edge player edge min-x max-x min-y max-y))
+        (cancel-px (* *zone-hysteresis-out* tile-dest-size)))
+    (> dist cancel-px)))
+
+(defun world-exit-edge-with-bounds (player min-x max-x min-y max-y
+                                    &optional (commit-margin 0.0))
   "Return the edge the player is pushing against using specified bounds.
-   Used for per-zone edge detection."
+   COMMIT-MARGIN is added to relax the boundary check so the player doesn't
+   need to push through collision to trigger commit. Applies directional gating (Step 3)."
   (multiple-value-bind (dx dy)
       (player-intent-direction player)
     (let ((edge nil)
           (weight 0.0)
           (x (player-x player))
           (y (player-y player)))
-      (when (and (< dy 0.0) (<= y min-y))
+      (when (and (< dy 0.0) (<= y (+ min-y commit-margin)))
         (let ((w (abs dy)))
           (when (> w weight)
             (setf edge :north
                   weight w))))
-      (when (and (> dy 0.0) (>= y max-y))
+      (when (and (> dy 0.0) (>= y (- max-y commit-margin)))
         (let ((w (abs dy)))
           (when (> w weight)
             (setf edge :south
                   weight w))))
-      (when (and (< dx 0.0) (<= x min-x))
+      (when (and (< dx 0.0) (<= x (+ min-x commit-margin)))
         (let ((w (abs dx)))
           (when (> w weight)
             (setf edge :west
                   weight w))))
-      (when (and (> dx 0.0) (>= x max-x))
+      (when (and (> dx 0.0) (>= x (- max-x commit-margin)))
         (let ((w (abs dx)))
           (when (> w weight)
             (setf edge :east
                   weight w))))
+      ;; Step 3: Directional gating — reject if movement doesn't point toward edge
+      (when (and edge (not (edge-direction-passes-p dx dy edge)))
+        (when *verbose-zone-transitions*
+          (log-zone "Zone transition: directional gating rejected edge ~a (dx=~,2f dy=~,2f)"
+                    edge dx dy))
+        (setf edge nil))
       edge)))
 
 (defun world-exit-edge (world player)
@@ -910,12 +989,13 @@
 
 (defun world-diagonal-zone-id (world edge-a edge-b)
   ;; Return the diagonal zone id for EDGE-A + EDGE-B if the graph connects it.
+  ;; Only follows spatial exits (not teleports/dungeon portals).
   (let* ((zone (world-zone world))
          (zone-id (and zone (zone-id zone))))
     (when zone-id
       (labels ((next-zone (from edge)
                  (let ((exit (world-edge-exit-for-zone world from edge)))
-                   (and exit (getf exit :to)))))
+                   (and exit (spatial-exit-p exit) (getf exit :to)))))
         (let ((first (next-zone zone-id edge-a)))
           (or (and first (next-zone first edge-b))
               (let ((second (next-zone zone-id edge-b)))
@@ -934,33 +1014,90 @@
          (target-id (and cache (world-diagonal-zone-id world edge-a edge-b))))
     (and target-id (gethash target-id cache))))
 
-(defun ensure-preview-zone-for-edge (world edge)
-  ;; Load adjacent zone data for preview rendering on EDGE.
+(defun ensure-preview-zone-for-edge (world edge &optional zone-lru-cache)
+  "Load adjacent zone data for preview rendering on EDGE.
+   Step 10: Consults LRU zone cache before loading from disk."
   (let* ((graph (world-world-graph world))
          (cache (world-zone-preview-cache world))
          (exit (and graph cache (world-edge-exit world edge)))
-         (target-id (and exit (getf exit :to))))
+         (target-id (and exit (spatial-exit-p exit) (getf exit :to))))
     (when (and graph cache target-id (not (gethash target-id cache)))
-      (let ((path (world-graph-zone-path graph target-id)))
-        (when (and path (probe-file path))
-          (let ((zone (load-zone path)))
-            (when zone
-              (setf (gethash target-id cache) zone))))))))
+      ;; Step 10: Check LRU cache first
+      (let ((cached-zone (and zone-lru-cache (zone-cache-lookup zone-lru-cache target-id))))
+        (if cached-zone
+            (progn
+              (when *verbose-zone-transitions*
+                (log-zone "Preview cache HIT (LRU) for ~a on edge" target-id))
+              (setf (gethash target-id cache) cached-zone))
+            ;; Load from disk and insert into both caches
+            (let ((path (world-graph-zone-path graph target-id)))
+              (when (and path (probe-file path))
+                (log-zone "Preview cache MISS for ~a — loading from disk" target-id)
+                (let ((zone (load-zone path)))
+                  (when zone
+                    (setf (gethash target-id cache) zone)
+                    ;; Also insert into LRU cache
+                    (when zone-lru-cache
+                      (zone-cache-insert zone-lru-cache target-id zone)))))))))))
 
-(defun ensure-preview-zone-for-corner (world edge-a edge-b)
-  ;; Load diagonal zone data for preview rendering on EDGE-A + EDGE-B.
+(defun ensure-preview-zone-for-corner (world edge-a edge-b &optional zone-lru-cache)
+  "Load diagonal zone data for preview rendering on EDGE-A + EDGE-B.
+   Step 10: Consults LRU zone cache before loading from disk."
   (let* ((cache (world-zone-preview-cache world))
          (target-id (and cache (world-diagonal-zone-id world edge-a edge-b))))
     (when (and cache target-id (not (gethash target-id cache)))
-      (let* ((graph (world-world-graph world))
-             (path (and graph (world-graph-zone-path graph target-id))))
-        (when (and path (probe-file path))
-          (let ((zone (load-zone path)))
-            (when zone
-              (setf (gethash target-id cache) zone))))))))
+      ;; Step 10: Check LRU cache first
+      (let ((cached-zone (and zone-lru-cache (zone-cache-lookup zone-lru-cache target-id))))
+        (if cached-zone
+            (progn
+              (when *verbose-zone-transitions*
+                (log-zone "Preview corner cache HIT (LRU) for ~a+~a -> ~a" edge-a edge-b target-id))
+              (setf (gethash target-id cache) cached-zone))
+            (let* ((graph (world-world-graph world))
+                   (path (and graph (world-graph-zone-path graph target-id))))
+              (when (and path (probe-file path))
+                (log-zone "Preview corner cache MISS for ~a+~a -> ~a — loading from disk" edge-a edge-b target-id)
+                (let ((zone (load-zone path)))
+                  (when zone
+                    (setf (gethash target-id cache) zone)
+                    (when zone-lru-cache
+                      (zone-cache-insert zone-lru-cache target-id zone)))))))))))
 
-(defun ensure-preview-zones (world player camera editor)
-  ;; Load adjacent zone data when the camera view reaches a world edge.
+
+(defun cleanup-stale-preview-zones (world ex-west ex-east ex-north ex-south)
+  "Remove preview cache entries for edges no longer visible.
+   Step 10: The underlying zone data stays in the LRU cache (may be evicted later)."
+  (let ((cache (world-zone-preview-cache world)))
+    (when cache
+      (let ((graph (world-world-graph world))
+            (zone (world-zone world)))
+        (when (and graph zone)
+          (let ((zone-id (zone-id zone)))
+            ;; Clean cardinal preview entries
+            (dolist (exit-spec (world-graph-exits graph zone-id))
+              (when (spatial-exit-p exit-spec)
+                (let* ((edge (getf exit-spec :edge))
+                       (target-id (getf exit-spec :to))
+                       (visible (case edge
+                                  (:west ex-west)
+                                  (:east ex-east)
+                                  (:north ex-north)
+                                  (:south ex-south))))
+                  (when (and (not visible) target-id (gethash target-id cache))
+                    (remhash target-id cache)))))
+            ;; Clean diagonal preview entries -- remove when either edge is no longer visible
+            (dolist (pair '((:west :north) (:east :north) (:west :south) (:east :south)))
+              (let ((diag-id (world-diagonal-zone-id world (first pair) (second pair))))
+                (when (and diag-id (gethash diag-id cache))
+                  (let ((vis-a (case (first pair) (:west ex-west) (:east ex-east)))
+                        (vis-b (case (second pair) (:north ex-north) (:south ex-south))))
+                    (unless (and vis-a vis-b)
+                      (remhash diag-id cache))))))))))))
+
+
+(defun ensure-preview-zones (world player camera editor &optional zone-lru-cache)
+  "Load adjacent zone data when the camera view reaches a world edge.
+   Step 10: Passes LRU cache to avoid duplicate loads."
   (multiple-value-bind (view-left view-right view-top view-bottom)
       (camera-view-bounds camera player editor)
     (let* ((ex-west (view-exceeds-edge-p world view-left view-right view-top view-bottom :west))
@@ -968,21 +1105,23 @@
            (ex-north (view-exceeds-edge-p world view-left view-right view-top view-bottom :north))
            (ex-south (view-exceeds-edge-p world view-left view-right view-top view-bottom :south)))
       (when ex-west
-        (ensure-preview-zone-for-edge world :west))
+        (ensure-preview-zone-for-edge world :west zone-lru-cache))
       (when ex-east
-        (ensure-preview-zone-for-edge world :east))
+        (ensure-preview-zone-for-edge world :east zone-lru-cache))
       (when ex-north
-        (ensure-preview-zone-for-edge world :north))
+        (ensure-preview-zone-for-edge world :north zone-lru-cache))
       (when ex-south
-        (ensure-preview-zone-for-edge world :south))
+        (ensure-preview-zone-for-edge world :south zone-lru-cache))
       (when (and ex-west ex-north)
-        (ensure-preview-zone-for-corner world :west :north))
+        (ensure-preview-zone-for-corner world :west :north zone-lru-cache))
       (when (and ex-east ex-north)
-        (ensure-preview-zone-for-corner world :east :north))
+        (ensure-preview-zone-for-corner world :east :north zone-lru-cache))
       (when (and ex-west ex-south)
-        (ensure-preview-zone-for-corner world :west :south))
+        (ensure-preview-zone-for-corner world :west :south zone-lru-cache))
       (when (and ex-east ex-south)
-        (ensure-preview-zone-for-corner world :east :south)))))
+        (ensure-preview-zone-for-corner world :east :south zone-lru-cache))
+      ;; Step 10: Remove stale preview entries
+      (cleanup-stale-preview-zones world ex-west ex-east ex-north ex-south))))
 
 (defun world-edge-exit (world edge)
   ;; Return the exit spec for EDGE in the current zone.
@@ -1124,6 +1263,36 @@
               :do (setf (aref result i) npc))
         result)))
 
+;;; ADDENDUM 1: Overstep preservation for continuous zone transitions
+
+(defun compute-transition-overstep (edge player src-min-x src-max-x src-min-y src-max-y)
+  "Compute the distance between the player and the source zone edge being crossed.
+   Returns a non-negative float: how far the player is from the exact edge boundary.
+   EDGE is the direction the player is transitioning toward."
+  (declare (type single-float src-min-x src-max-x src-min-y src-max-y))
+  (let ((px (player-x player))
+        (py (player-y player)))
+    (max 0.0
+         (case edge
+           (:north (- py src-min-y))    ; distance from north (top) edge
+           (:south (- src-max-y py))    ; distance from south (bottom) edge
+           (:west  (- px src-min-x))    ; distance from west (left) edge
+           (:east  (- src-max-x px))    ; distance from east (right) edge
+           (t 0.0)))))
+
+(defun apply-overstep-to-spawn (spawn-edge overstep base-x base-y)
+  "Apply overstep offset to base spawn position for continuous world-space transition.
+   SPAWN-EDGE is the edge in the destination zone where the player spawns.
+   OVERSTEP is subtracted from the spawn edge position, pushing the player
+   inward from the destination edge by the same amount they were from the source edge."
+  (declare (type single-float overstep base-x base-y))
+  (case spawn-edge
+    (:north (values base-x (+ base-y overstep)))   ; push down from north edge
+    (:south (values base-x (- base-y overstep)))   ; push up from south edge
+    (:west  (values (+ base-x overstep) base-y))   ; push right from west edge
+    (:east  (values (- base-x overstep) base-y))   ; push left from east edge
+    (t (values base-x base-y))))
+
 (defun transition-zone (game player exit edge)
   ;; Apply a zone transition using EXIT metadata for the given PLAYER.
   ;; Updates player's zone-id and position. Also updates zone-state cache.
@@ -1146,37 +1315,46 @@
     (when (and target-path (probe-file target-path))
       ;; Cache current zone's NPCs in zone-state (excluding carried NPCs)
       (cache-zone-npcs current-zone-id current-npcs carry-table)
-      (let* ((zone (with-retry-exponential (loaded (lambda () (load-zone target-path))
-                                             :max-retries 2
-                                             :initial-delay 100
-                                             :max-delay 200
-                                             :on-final-fail (lambda (e)
-                                                              (warn "Zone transition failed: could not load zone ~a after retries: ~a"
-                                                                    target-id e)))
-                     loaded))
+      ;; Check LRU zone cache first to avoid synchronous disk load on main thread.
+      ;; Preloading (Step 5) should have warmed the cache, but best-effort fallback.
+      (let* ((zone-lru (game-zone-cache game))
+             (cached-zone (and zone-lru (zone-cache-lookup zone-lru target-id)))
+             (zone (or cached-zone
+                       (progn
+                         (when *verbose-zone-transitions*
+                           (log-zone "Zone transition: cache MISS for ~a — synchronous disk load" target-id))
+                         (with-retry-exponential (loaded (lambda () (load-zone target-path))
+                                                   :max-retries 2
+                                                   :initial-delay 100
+                                                   :max-delay 200
+                                                   :on-final-fail (lambda (e)
+                                                                    (warn "Zone transition failed: could not load zone ~a after retries: ~a"
+                                                                          target-id e)))
+                           loaded))))
              (spawn-edge (or (getf exit :spawn-edge)
                              (getf exit :to-edge)
                              (edge-opposite edge)))
              (offset (getf exit :offset))
              (preserve-axis (edge-preserve-axis edge offset))
-             ;; Calculate ratio using SOURCE zone bounds (per-zone, not stale world bounds)
+             ;; Source zone bounds (used for ratio AND overstep computation)
              (tile-size-for-ratio (world-tile-dest-size world))
              (half-w-for-ratio (world-collision-half-width world))
-             (half-h-for-ratio (world-collision-half-height world))
-             (ratio (if preserve-axis
-                        (multiple-value-bind (src-min-x src-max-x src-min-y src-max-y)
-                            (if (get-zone-wall-map current-zone-id)
-                                (get-zone-collision-bounds current-zone-id
-                                                            tile-size-for-ratio
-                                                            half-w-for-ratio
-                                                            half-h-for-ratio)
-                                (values (world-wall-min-x world) (world-wall-max-x world)
-                                        (world-wall-min-y world) (world-wall-max-y world)))
-                          (if (eq preserve-axis :x)
-                              (edge-offset-ratio src-min-x src-max-x (player-x player))
-                              (edge-offset-ratio src-min-y src-max-y (player-y player))))
-                        0.5)))
+             (half-h-for-ratio (world-collision-half-height world)))
         (when zone
+          ;; Compute source zone collision bounds (for ratio and overstep)
+          (multiple-value-bind (src-min-x src-max-x src-min-y src-max-y)
+              (if (get-zone-wall-map current-zone-id)
+                  (get-zone-collision-bounds current-zone-id
+                                              tile-size-for-ratio
+                                              half-w-for-ratio
+                                              half-h-for-ratio)
+                  (values (world-wall-min-x world) (world-wall-max-x world)
+                          (world-wall-min-y world) (world-wall-max-y world)))
+            (let ((ratio (if preserve-axis
+                             (if (eq preserve-axis :x)
+                                 (edge-offset-ratio src-min-x src-max-x (player-x player))
+                                 (edge-offset-ratio src-min-y src-max-y (player-y player)))
+                             0.5)))
           (log-verbose "Zone transition: ~a -> ~a via ~a"
                        current-zone-id
                        (zone-id zone)
@@ -1204,9 +1382,16 @@
                     (get-zone-collision-bounds target-zone-id tile-size half-w half-h)
                     (values (world-wall-min-x world) (world-wall-max-x world)
                             (world-wall-min-y world) (world-wall-max-y world)))
-              (multiple-value-bind (raw-x raw-y)
+              ;; ADDENDUM 1: Compute overstep for continuous world-space transition
+              (let ((overstep (compute-transition-overstep
+                               edge player
+                               src-min-x src-max-x src-min-y src-max-y)))
+              (multiple-value-bind (base-x base-y)
                   (edge-spawn-position-bounds new-min-x new-max-x new-min-y new-max-y
                                               spawn-edge preserve-axis ratio)
+                ;; Apply overstep to transition axis for seamless positioning
+                (multiple-value-bind (raw-x raw-y)
+                    (apply-overstep-to-spawn spawn-edge overstep base-x base-y)
                 (multiple-value-bind (spawn-x spawn-y)
                     (if (and is-server target-wall-map)
                         (find-open-position-with-map target-wall-map raw-x raw-y
@@ -1243,15 +1428,15 @@
                           (spatial-grid-insert new-grid (player-id player) spawn-x spawn-y)
                           (setf (player-grid-cell-x player) cx
                                 (player-grid-cell-y player) cy)))))
-                  ;; Tier-1 write: zone transition saves immediately
-                  (with-retry-exponential (saved (lambda () (db-save-player-immediate player))
-                                            :max-retries 5
-                                            :initial-delay 100
-                                            :max-delay 500
-                                            :on-final-fail (lambda (e)
-                                                             (warn "Zone transition save failed: ~a" e)
-                                                             (mark-player-dirty (player-id player))))
-                    saved)))))
+                  ;; Step 11: Downgrade to Tier-2 (dirty flag) — flushes within 30s checkpoint.
+                  ;; Zone transitions are not critical enough for Tier-1 blocking save.
+                  ;; Crash between transition and checkpoint → player reverts to pre-transition zone (acceptable).
+                  (mark-player-dirty (player-id player))))))
+          ;; Step 1: Set transition cooldown
+          (setf (player-zone-transition-cooldown player)
+                *zone-transition-cooldown-seconds*)
+          ;; Step 2: Clear pending transition
+          (setf (player-zone-transition-pending player) nil)
           (reset-frame-intent intent)
           (when had-target
             (set-intent-target intent
@@ -1293,31 +1478,130 @@
                   ;; Populate NPC spatial grid for proximity queries
                   (populate-npc-grid target-state merged)
                   (setf (gethash target-zone-id *zone-states*) target-state)))))
-          t)))))
+          t)))))))))
 
-(defun update-zone-transition (game)
-  ;; Handle edge-based world graph transitions for ALL players, regardless of zone.
-  ;; Each player is checked against their own zone's exits using per-zone collision bounds.
-  ;; Returns count of players that transitioned this frame.
+(defun update-zone-transition (game &optional (dt *sim-tick-seconds*))
+  "Handle edge-based zone transitions with cooldown, hysteresis, and directional gating.
+   Each player is checked against their own zone's exits using per-zone collision bounds.
+   Two-phase arm/commit/cancel model:
+   - Arm: player crosses arm line toward edge → set pending (no transition yet)
+   - Commit: player with pending reaches zone edge → transition fires
+   - Cancel: player retreats past cancel line → pending cleared
+   Returns count of players that transitioned this frame."
+  ;; Config invariant: cancel line must be further from edge than arm line
+  (assert (> *zone-hysteresis-out* *zone-hysteresis-in*)
+          (*zone-hysteresis-out* *zone-hysteresis-in*)
+          "Zone config invariant violated: *zone-hysteresis-out* (~a) must be > *zone-hysteresis-in* (~a)")
   (let* ((world (game-world game))
          (players (game-players game))
          (transition-count 0))
     (when (and world players (> (length players) 0))
-      ;; Check all players for zone transition using their own zone
       (loop :for player :across players
             :when player
-            :do (let* ((player-zone-id (or (player-zone-id player) *starting-zone-id*))
-                       ;; Ensure zone-state exists for player's zone
-                       (zone-path (zone-path-for-id world player-zone-id))
-                       (_zone-state (when zone-path
-                                      (get-or-create-zone-state player-zone-id zone-path))))
-                  (declare (ignore _zone-state))
-                  ;; world-exit-edge already uses per-zone bounds via player-zone-id
-                  (let* ((edge (world-exit-edge world player))
-                         (exit (and edge (world-edge-exit-for-zone world player-zone-id edge))))
-                    (when exit
-                      (transition-zone game player exit edge)
-                      (incf transition-count))))))
+            :do (block per-player
+                  (let* ((player-zone-id (or (player-zone-id player) *starting-zone-id*))
+                         (zone-path (zone-path-for-id world player-zone-id))
+                         (_zone-state (when zone-path
+                                        (get-or-create-zone-state player-zone-id zone-path)))
+                         (tile-size (world-tile-dest-size world))
+                         (half-w (world-collision-half-width world))
+                         (half-h (world-collision-half-height world))
+                         ;; ADDENDUM 2: Derive commit margin from collision size
+                         ;; so the player doesn't need to push through collision.
+                         ;; Use max(collision-half-w, collision-half-h) as the base,
+                         ;; scaled by *zone-commit-margin-tiles* as a multiplier.
+                         (commit-margin (max (* *zone-commit-margin-tiles* tile-size)
+                                             (max half-w half-h))))
+                    (declare (ignore _zone-state))
+                    ;; Step 1: Cooldown — decrement and skip if active
+                    (when (> (player-zone-transition-cooldown player) 0.0)
+                      (decf (player-zone-transition-cooldown player) dt)
+                      (when (> (player-zone-transition-cooldown player) 0.0)
+                        (when *verbose-zone-transitions*
+                          (log-zone "Zone transition: cooldown active (~,2fs remaining) for player ~a"
+                                   (player-zone-transition-cooldown player) (player-id player)))
+                        (return-from per-player)))
+                    ;; Get per-zone bounds
+                    (multiple-value-bind (min-x max-x min-y max-y)
+                        (if (and player-zone-id (get-zone-wall-map player-zone-id))
+                            (get-zone-collision-bounds player-zone-id tile-size half-w half-h)
+                            (values (world-wall-min-x world) (world-wall-max-x world)
+                                    (world-wall-min-y world) (world-wall-max-y world)))
+                      (when (and min-x max-x min-y max-y)
+                        (let ((pending (player-zone-transition-pending player)))
+                          (cond
+                            ;; === PENDING SET: evaluate commit/cancel ===
+                            (pending
+                             (let ((exit (world-edge-exit-for-zone world player-zone-id pending)))
+                               (cond
+                                 ;; Cancel: retreated past cancel line
+                                 ((player-past-cancel-line-p player pending min-x max-x min-y max-y tile-size)
+                                  (when *verbose-zone-transitions*
+                                    (log-zone "Zone transition: cancel for edge ~a (player ~a retreated past cancel line)"
+                                              pending (player-id player)))
+                                  (setf (player-zone-transition-pending player) nil))
+                                 ;; Cancel: no exit for this edge
+                                 ((null exit)
+                                  (setf (player-zone-transition-pending player) nil))
+                                 ;; Cancel: intent dropped below direction threshold
+                                 ((multiple-value-bind (dx dy) (player-intent-direction player)
+                                    (not (edge-direction-passes-p dx dy pending)))
+                                  (when *verbose-zone-transitions*
+                                    (log-zone "Zone transition: cancel for edge ~a (intent dropped)" pending))
+                                  (setf (player-zone-transition-pending player) nil))
+                                 ;; Commit or edge-change: check actual edge at boundary
+                                 ;; commit-margin relaxes the boundary so collision doesn't
+                                 ;; prevent reaching the exact edge position
+                                 (t
+                                  (let ((actual-edge (world-exit-edge-with-bounds
+                                                      player min-x max-x min-y max-y
+                                                      commit-margin)))
+                                    (cond
+                                      ;; Commit: at the pending edge
+                                      ((eq actual-edge pending)
+                                       (let ((now (/ (float (get-internal-real-time) 1.0)
+                                                     (float internal-time-units-per-second 1.0))))
+                                         (let* ((last (player-zone-transition-last-time player))
+                                                (time-since (if (> last 0.0) (- now last) -1.0)))
+                                           (log-zone "Zone transition: COMMIT edge ~a player ~a (time-since-last=~,2fs)"
+                                                     pending (player-id player) time-since))
+                                         (setf (player-zone-transition-last-time player) now))
+                                       (transition-zone game player exit pending)
+                                       (incf transition-count))
+                                      ;; Edge changed: player now at a different edge → clear pending
+                                      (actual-edge
+                                       (when *verbose-zone-transitions*
+                                         (log-zone "Zone transition: cancel ~a (edge changed to ~a)"
+                                                   pending actual-edge))
+                                       (setf (player-zone-transition-pending player) nil))
+                                      ;; No edge detected: still in arm band, waiting
+                                      (t nil)))))))
+                            ;; === NO PENDING: check for arm ===
+                            (t
+                             ;; Pick the edge with strongest directional alignment
+                             ;; (dominant direction), not first match from dolist.
+                             (let ((graph (world-world-graph world)))
+                               (when graph
+                                 (multiple-value-bind (dx dy) (player-intent-direction player)
+                                   (let ((best-edge nil)
+                                         (best-dot 0.0))
+                                     (declare (type single-float best-dot))
+                                     (dolist (exit-spec (world-graph-exits graph player-zone-id))
+                                       (let ((edge (getf exit-spec :edge)))
+                                         (when (and edge
+                                                    (player-in-arm-band-p player edge
+                                                                          min-x max-x min-y max-y tile-size)
+                                                    (edge-direction-passes-p dx dy edge))
+                                           ;; Rank by dot product with edge normal
+                                           (let ((dot (edge-direction-dot dx dy edge)))
+                                             (when (> dot best-dot)
+                                               (setf best-edge edge
+                                                     best-dot dot))))))
+                                     (when best-edge
+                                       (when *verbose-zone-transitions*
+                                         (log-zone "Zone transition: ARM edge ~a for player ~a (dot=~,2f)"
+                                                   best-edge (player-id player) best-dot))
+                                       (setf (player-zone-transition-pending player) best-edge)))))))))))))))
     transition-count))
 
 (defun log-player-position (player world)

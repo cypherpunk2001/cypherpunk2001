@@ -1995,13 +1995,6 @@
           (apply-player-private-plist player payload)
           (log-verbose "Private state ignored (player ~a not found)" id)))))
 
-(defun position-distance-sq (x1 y1 x2 y2)
-  "Compute squared distance between two positions. Avoids sqrt for efficiency."
-  (declare (type single-float x1 y1 x2 y2))
-  (let ((dx (- x2 x1))
-        (dy (- y2 y1)))
-    (+ (* dx dx) (* dy dy))))
-
 (defun teleport-detected-p (old-x old-y new-x new-y)
   "Return T if position jump exceeds teleport threshold (same-zone teleport).
    Used to detect unstuck teleports and reset client sync state."
@@ -2050,7 +2043,7 @@
             (apply-game-state game state :apply-zone t)
           (when zone-changed
             (log-verbose "Client zone transitioned to ~a" zone-id)
-            (handle-zone-transition game))
+            (handle-zone-transition game :old-x old-x :old-y old-y))
           ;; Detect same-zone teleport (unstuck) - reset sync state if position jumped
           ;; Only check if we had prior data to avoid first-snapshot false positives
           (let* ((new-player (game-player game))
@@ -2901,6 +2894,12 @@
         (setf *use-binary-snapshots* t)
         (ensure-binary-send-buffer)
         (format t "~&SERVER: Binary snapshots enabled~%")))
+    ;; Seamless zone transitions: verbose zone diagnostics
+    (let ((zone-verbose-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_VERBOSE_ZONES")
+                                #-sbcl (uiop:getenv "MMORPG_VERBOSE_ZONES"))))
+      (when (and zone-verbose-str (string= zone-verbose-str "1"))
+        (setf *verbose-zone-transitions* t)
+        (format t "~&SERVER: Zone transition diagnostics enabled~%")))
     ;; Phase 4 Task 4.4: NPC object pooling
     (let ((npc-pool-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_NPC_POOL")
                             #-sbcl (uiop:getenv "MMORPG_NPC_POOL"))))
@@ -2951,6 +2950,8 @@
     (session-clear-all)
     (clear-all-player-sessions)
     (log-verbose "Sessions cleared")
+    ;; Validate zone transition config invariants at startup
+    (validate-zone-config)
     ;; Initialize auth encryption (generates server keypair)
     ;; The server public key should be shared with clients for encrypted auth
     (when *auth-encryption-enabled*
@@ -3234,6 +3235,7 @@
   ;; Run a client that connects to the UDP server and renders snapshots.
   ;; If auto-login credentials are provided, attempts register first, then login on failure.
   (with-fatal-error-log ((format nil "Client runtime (~a:~d)" host port))
+    (validate-zone-config)
     (log-verbose "Client starting: connecting to ~a:~d" host port)
     ;; Set window flags before init (must be called before with-window)
     (when *window-resize-enabled*

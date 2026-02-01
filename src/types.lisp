@@ -65,7 +65,11 @@
   (force-full-resync nil :type boolean)
   ;; Spatial grid cell tracking (nil if not in a grid)
   (grid-cell-x nil :type (or null fixnum))
-  (grid-cell-y nil :type (or null fixnum)))
+  (grid-cell-y nil :type (or null fixnum))
+  ;; Seamless zone transition state (ephemeral, not persisted)
+  (zone-transition-cooldown 0.0 :type single-float)   ; Seconds remaining before next transition allowed
+  (zone-transition-pending nil :type (or null keyword)) ; Edge keyword (:north etc) or nil
+  (zone-transition-last-time 0.0 :type single-float))  ; Wall-clock time of last commit (for thrash metrics)
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.
@@ -399,6 +403,19 @@
   (dotimes (i count)
     (pool-release pool (funcall (object-pool-constructor pool)))))
 
+;;;; ========================================================================
+;;;; Zone Cache (LRU) — Seamless Zone Loading Step 4
+;;;; Client-side cache of loaded zone data to eliminate disk I/O.
+;;;; ========================================================================
+
+(defstruct zone-cache
+  "LRU cache of zone-id -> zone struct for client-side zone preloading."
+  (entries (make-hash-table :test 'eq :size 16) :type hash-table)
+  (order nil :type list)   ; LRU order: most recently used at front
+  (capacity 9 :type fixnum)
+  (hits 0 :type fixnum)    ; Step 12: cache hit counter for diagnostics
+  (misses 0 :type fixnum)) ; Step 12: cache miss counter for diagnostics
+
 (defstruct (game (:constructor %make-game))
   ;; Aggregate of game subsystems for update/draw.
   world player players npcs entities id-source npc-id-source audio ui render assets camera editor
@@ -408,7 +425,11 @@
   ;; Interpolation state (client-only, for smooth remote entity movement)
   interpolation-buffer interpolation-delay client-time last-snapshot-time
   ;; Prediction state (client-only, optional via *client-prediction-enabled*)
-  prediction-state)
+  prediction-state
+  ;; Seamless zone loading state (client-only)
+  (zone-cache nil)           ; zone-cache struct (LRU)
+  (preload-queue nil)        ; List of (zone-id . path) pairs to preload
+  (edge-strips nil))
 
 (defun queue-net-request (game request)
   ;; Queue a network request for the client to send.

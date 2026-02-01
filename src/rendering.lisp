@@ -159,7 +159,120 @@
     (when players
       (loop :for p :across players
             :when (player-in-viewport-p p camera-x camera-y zoom margin-x margin-y)
-            :do (draw-player p assets render)))))
+            :do (draw-player p assets render)))
+    ;; Step 9: Draw edge-strip entities from adjacent zones
+    (let ((edge-strips (game-edge-strips game)))
+      (when edge-strips
+        (let* ((world (game-world game))
+               (tds (if world (world-tile-dest-size world) 64.0)))
+          (draw-edge-strip-entities edge-strips view-left view-right view-top view-bottom
+                                    assets render tds))))))
+
+;;;; ========================================================================
+;;;; Edge-Strip Entity Rendering (Step 9)
+;;;; Renders entities from adjacent zones that are within the edge strip.
+;;;; Uses the same draw functions as main-zone entities.
+;;;; ========================================================================
+
+;;;; --- Edge-Strip Cull Helpers (per entity type) ---
+;;;; These are referenced by *edge-entity-specs* in save.lisp.
+;;;; Signature: (entity view-left view-right view-top view-bottom tile-dest-size) -> bool
+
+(defun edge-cull-player (entity vl vr vt vb tile-dest-size)
+  "Viewport cull check for edge-strip player (pixel coords)."
+  (declare (ignore tile-dest-size))
+  (and entity
+       (let ((x (player-x entity)) (y (player-y entity)))
+         (and (>= x vl) (<= x vr) (>= y vt) (<= y vb)))))
+
+(defun edge-cull-npc (entity vl vr vt vb tile-dest-size)
+  "Viewport cull check for edge-strip NPC (pixel coords, must be alive)."
+  (declare (ignore tile-dest-size))
+  (and entity
+       (npc-alive entity)
+       (let ((x (npc-x entity)) (y (npc-y entity)))
+         (and (>= x vl) (<= x vr) (>= y vt) (<= y vb)))))
+
+(defun edge-cull-object (entity vl vr vt vb tile-dest-size)
+  "Viewport cull check for edge-strip zone-object (tile coords)."
+  (let* ((tx (zone-object-x entity))
+         (ty (zone-object-y entity))
+         (count (zone-object-count entity))
+         (respawn (zone-object-respawn entity)))
+    (and (numberp tx) (numberp ty)
+         (> count 0) (<= respawn 0.0)
+         (let* ((x (* tx tile-dest-size))
+                (y (* ty tile-dest-size))
+                (x2 (+ x tile-dest-size))
+                (y2 (+ y tile-dest-size)))
+           (and (< x vr) (> x2 vl)
+                (< y vb) (> y2 vt))))))
+
+;;;; --- Edge-Strip Draw Helpers (per entity type) ---
+;;;; Signature: (entity assets render tile-dest-size) -> nil
+
+(defun edge-draw-player-one (entity assets render tile-dest-size)
+  "Draw one edge-strip player."
+  (declare (ignore tile-dest-size))
+  (draw-player entity assets render))
+
+(defun edge-draw-npc-one (entity assets render tile-dest-size)
+  "Draw one edge-strip NPC."
+  (declare (ignore tile-dest-size))
+  (draw-npc entity assets render))
+
+(defun edge-draw-object-one (entity assets render tile-dest-size)
+  "Draw one edge-strip zone-object with texture lookup."
+  (let ((tile-source (render-tile-source render))
+        (tile-dest (render-tile-dest render))
+        (origin (render-origin render))
+        (tx (zone-object-x entity))
+        (ty (zone-object-y entity)))
+    (let ((texture (or (object-texture-for assets (zone-object-id entity))
+                       (item-texture-for assets (zone-object-id entity)))))
+      (when texture
+        (let* ((src-w (float (raylib:texture-width texture) 1.0))
+               (src-h (float (raylib:texture-height texture) 1.0))
+               (dest-size (float tile-dest-size 1.0))
+               (dest-x (float (* tx tile-dest-size) 1.0))
+               (dest-y (float (* ty tile-dest-size) 1.0)))
+          (set-rectangle tile-source 0.0 0.0 src-w src-h)
+          (set-rectangle tile-dest dest-x dest-y dest-size dest-size)
+          (raylib:draw-texture-pro texture tile-source tile-dest
+                                   origin 0.0 :raywhite))))))
+
+;;;; --- Registry-Driven Edge-Strip Renderer ---
+
+(defun draw-edge-strip-entities (edge-strips view-left view-right view-top view-bottom
+                                  assets render tile-dest-size)
+  "Render entities from edge strips using *edge-entity-specs* registry.
+   Iterates all registered entity types so new types are drawn automatically.
+   Each strip contains real entity structs with world-space coordinates
+   offset-applied by deserialize-edge-strips (Step 8)."
+  (let ((total-drawn 0))
+    (declare (type fixnum total-drawn))
+    (dolist (strip edge-strips)
+      (dolist (spec *edge-entity-specs*)
+        (let* ((key (getf spec :key))
+               (entities (getf strip key))
+               (cull-fn (getf spec :cull-one))
+               (draw-fn (getf spec :draw-one))
+               (coll-type (getf spec :collection-type)))
+          (when entities
+            (if (eq coll-type :array)
+                (when (> (length entities) 0)
+                  (loop :for entity :across entities
+                        :when (funcall cull-fn entity view-left view-right
+                                       view-top view-bottom tile-dest-size)
+                        :do (funcall draw-fn entity assets render tile-dest-size)
+                            (incf total-drawn)))
+                (dolist (entity entities)
+                  (when (funcall cull-fn entity view-left view-right
+                                 view-top view-bottom tile-dest-size)
+                    (funcall draw-fn entity assets render tile-dest-size)
+                    (incf total-drawn))))))))
+    (when (> total-drawn 0)
+      (log-zone "Edge-strip render: ~d entities drawn" total-drawn))))
 
 (defun set-tile-source-rect (rect tile-index tile-size-f &optional (columns *tileset-columns*))
   ;; Set the atlas source rectangle for a given tile index.

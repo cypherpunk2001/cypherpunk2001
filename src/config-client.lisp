@@ -134,6 +134,12 @@
    If player position jumps more than sqrt(10000)=100 pixels (~3 tiles at 32px),
    treat as teleport and reset interpolation/prediction state to avoid frozen sprites.")
 
+(defparameter *soft-reset-threshold-sq* 1024.0f0
+  "Squared distance threshold for soft interpolation/prediction reset (single-float).
+   If zone transition position delta < sqrt(1024)=32 pixels (~1 tile at 32px),
+   preserve interpolation/prediction buffers for smooth continuity.
+   Above this threshold, buffers are cleared to avoid stale data artifacts.")
+
 ;;; Rendering - Read during draw
 ;;; NOTE: Use toggle-tile-point-filter or toggle-render-cache-enabled (SLIME only)
 ;;; to change these values - they clear render caches. Direct setf leaves stale caches.

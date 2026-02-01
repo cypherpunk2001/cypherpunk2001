@@ -9,6 +9,15 @@
     (format t "~%")
     (finish-output)))
 
+(defun log-zone (fmt &rest args)
+  "Emit a zone diagnostics log line when *verbose-zone-transitions* is enabled.
+   Independent of *verbose* — setting MMORPG_VERBOSE_ZONES=1 alone is sufficient."
+  (when *verbose-zone-transitions*
+    (format t "~&[ZONE] ")
+    (apply #'format t fmt args)
+    (format t "~%")
+    (finish-output)))
+
 (defun log-fatal-error (context condition)
   ;; Emit fatal error context and optional backtrace.
   (warn "~a: ~a" context condition)
@@ -477,6 +486,13 @@
   (if *window-resize-enabled*
       (raylib:get-screen-width)
       *window-width*))
+
+(defun position-distance-sq (x1 y1 x2 y2)
+  "Compute squared distance between two positions. Avoids sqrt for efficiency."
+  (declare (type single-float x1 y1 x2 y2))
+  (let ((dx (- x2 x1))
+        (dy (- y2 y1)))
+    (+ (* dx dx) (* dy dy))))
 
 (defun current-screen-height ()
   "Return the current screen height for rendering calculations.

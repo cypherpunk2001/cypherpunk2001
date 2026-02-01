@@ -100,6 +100,70 @@
   "Avoid counting exact edge contact as a blocked tile.")
 
 ;;;; ========================================================================
+;;;; SEAMLESS ZONE TRANSITION CONFIG
+;;;; Parameters controlling zone transition smoothness, preloading, and
+;;;; cross-zone visibility. See PLAN_loading_zones.md for spatial model.
+;;;; ========================================================================
+
+;;; Transition Cooldown (Step 1)
+(defparameter *zone-transition-cooldown-seconds* 1.5
+  "Post-transition suppression window in seconds. Prevents rapid re-transitions.")
+
+;;; Hysteresis Band (Step 2) — distances in tiles inward from edge
+(defparameter *zone-hysteresis-in* 6.0
+  "Arm line distance from zone edge in tiles. Crossing toward edge sets pending.")
+(defparameter *zone-hysteresis-out* 8.0
+  "Cancel line distance from zone edge in tiles. Retreating past this clears pending.
+   Must be > *zone-hysteresis-in*.")
+
+;;; Commit Margin (Step 2 refinement)
+(defparameter *zone-commit-margin-tiles* 0.5
+  "Commit triggers when player is within this many tiles of the zone edge.
+   Collision keeps the player slightly inside the boundary, so checking for
+   exact boundary crossing would require the player to 'push through' the wall.
+   0.5 tiles = half a tile of slack.")
+
+;;; Directional Gating (Step 3)
+(defparameter *zone-direction-threshold* 0.3
+  "Min normalized dot product between movement intent and edge normal.
+   Range 0.0-1.0. Lower = more permissive. 0.3 allows ~72° cone.")
+
+;;; Client Zone Cache (Step 4)
+(defparameter *client-zone-cache-capacity* 9
+  "LRU cache size for loaded zone data. 9 = current + 8 neighbors (~900KB).")
+
+;;; Proximity Preloading (Step 5)
+(defparameter *zone-preload-radius* 10.0
+  "Distance from edge in tiles to begin preloading adjacent zone. Must be >= *zone-hysteresis-in*.")
+
+;;; Cross-Zone Visibility (Step 7)
+(defparameter *zone-edge-visibility-tiles* 10.0
+  "Width of cross-zone entity/terrain strip in tiles from edge into adjacent zone.")
+
+;;; Urgent Preload (ADDENDUM 3)
+(defparameter *zone-urgent-preload-tiles* 2.0
+  "When player is within this many tiles of the commit line, pop ALL remaining
+   preload entries per frame (instead of 1) to guarantee the target zone is cached.")
+
+;;; Evaluation Metrics (Step 12)
+(defparameter *verbose-zone-transitions* nil
+  "Enable zone transition diagnostics (cooldown, hysteresis, directional gating).
+   Set via MMORPG_VERBOSE_ZONES=1 environment variable.")
+
+;;; Runtime config guard — called at server/client startup
+(defun validate-zone-config ()
+  "Assert zone config invariants at startup. Signals error on violation."
+  (unless (> *zone-hysteresis-out* *zone-hysteresis-in*)
+    (error "Zone config: *zone-hysteresis-out* (~a) must be > *zone-hysteresis-in* (~a)"
+           *zone-hysteresis-out* *zone-hysteresis-in*))
+  (unless (>= *zone-preload-radius* *zone-hysteresis-in*)
+    (error "Zone config: *zone-preload-radius* (~a) must be >= *zone-hysteresis-in* (~a)"
+           *zone-preload-radius* *zone-hysteresis-in*))
+  (unless (> *zone-commit-margin-tiles* 0.0)
+    (error "Zone config: *zone-commit-margin-tiles* (~a) must be > 0"
+           *zone-commit-margin-tiles*)))
+
+;;;; ========================================================================
 ;;;; STATIC DATA (Evaluated at load time, effectively constants)
 ;;;; These are evaluated once when the file is loaded. They cannot be
 ;;;; meaningfully changed at runtime.

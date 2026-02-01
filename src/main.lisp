@@ -40,11 +40,17 @@
                               :last-snapshot-time 0.0
                               ;; Prediction state (optional, controlled by *client-prediction-enabled*)
                               :prediction-state (when *client-prediction-enabled*
-                                                  (make-prediction-state player)))))
+                                                  (make-prediction-state player))
+                              ;; Seamless zone loading (Step 4/5)
+                              :zone-cache (make-zone-lru-cache)
+                              :preload-queue nil
+                              :edge-strips nil)))
         (log-verbose "Client game initialized: player-id=~d npcs=~d zone=~a"
                      (player-id player)
                      (length npcs)
                      (zone-label (world-zone world)))
+        ;; Step 5: Warm cache with adjacent zones on initial load
+        (cold-start-preload-adjacent game)
         game))))
 
 (defun shutdown-game (game)
@@ -97,7 +103,22 @@
     (update-ui-loading ui dt)
     (update-ui-hud-log ui dt)
     (update-click-marker player dt npcs)
-    (ensure-preview-zones world player camera editor)
+    (ensure-preview-zones world player camera editor (game-zone-cache game))
+    ;; Step 5: Client-side proximity preloading
+    (update-client-preloading game)
+    ;; ADDENDUM 3: Urgent preload — when player is close to the commit line,
+    ;; flush the entire preload queue this frame to guarantee the target zone
+    ;; is cached before transition fires. Uses proximity only (no pending flag)
+    ;; because pending is server-side state not serialized to network clients.
+    (let ((urgent (and player
+                      (game-preload-queue game)
+                      (let* ((tile-size (world-tile-dest-size world))
+                             (urgent-px (* *zone-urgent-preload-tiles* tile-size)))
+                        (player-within-urgent-preload-distance-p
+                         player world urgent-px)))))
+      (if urgent
+          (process-preload-queue game :count (length (game-preload-queue game)))
+          (process-preload-queue game)))
     ;; Clear per-frame intent at start before processing new input
     (reset-frame-intent client-intent)
     ;; Track if menu was open at frame start (for click consumption)
@@ -419,36 +440,232 @@
       (log-verbose "Client NPC zone-state synced (zone-id=~a npcs=~d)"
                    zone-id (length npcs)))))
 
-(defun handle-zone-transition (game)
-  ;; Sync client-facing state after a zone change.
-  (let* ((ui (game-ui game))
+;;;; ========================================================================
+;;;; Client-Side Proximity Preloading (Step 5)
+;;;; Monitors player distance to zone edges and queues adjacent zones for
+;;;; preloading into the LRU cache. One zone loaded per frame to avoid hitches.
+;;;; ========================================================================
+
+(defun player-near-edge-p (player world edge)
+  "Return T if PLAYER is within *zone-preload-radius* tiles of EDGE.
+   Client-only function — uses local player position."
+  (let* ((zone (world-zone world))
+         (tile-size (world-tile-dest-size world))
+         (radius-px (* *zone-preload-radius* tile-size))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (when zone
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (let ((zone-id (zone-id zone)))
+            (if (and zone-id (get-zone-wall-map zone-id))
+                (get-zone-collision-bounds zone-id tile-size half-w half-h)
+                (values (world-wall-min-x world) (world-wall-max-x world)
+                        (world-wall-min-y world) (world-wall-max-y world))))
+        (when (and min-x max-x min-y max-y)
+          (let ((dist (player-distance-to-edge player edge min-x max-x min-y max-y)))
+            (<= dist radius-px)))))))
+
+(defun player-within-urgent-preload-distance-p (player world urgent-px)
+  "Return T if PLAYER is within URGENT-PX pixels of any zone edge.
+   ADDENDUM 3: Used to detect when the preload queue should be flushed entirely."
+  (declare (type single-float urgent-px))
+  (let* ((zone (world-zone world))
+         (tile-size (world-tile-dest-size world))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (when zone
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (let ((zone-id (zone-id zone)))
+            (if (and zone-id (get-zone-wall-map zone-id))
+                (get-zone-collision-bounds zone-id tile-size half-w half-h)
+                (values (world-wall-min-x world) (world-wall-max-x world)
+                        (world-wall-min-y world) (world-wall-max-y world))))
+        (when (and min-x max-x min-y max-y)
+          (let ((px (player-x player))
+                (py (player-y player)))
+            (or (<= (- px min-x) urgent-px)
+                (<= (- max-x px) urgent-px)
+                (<= (- py min-y) urgent-px)
+                (<= (- max-y py) urgent-px))))))))
+
+(defun queue-zone-preload (game zone-lru graph target-id reason)
+  "Queue TARGET-ID for preloading if not already cached or queued."
+  (when (and target-id
+             (not (zone-cache-contains-p zone-lru target-id))
+             (not (assoc target-id (game-preload-queue game))))
+    (let ((path (world-graph-zone-path graph target-id)))
+      (when path
+        (push (cons target-id path) (game-preload-queue game))
+        (log-zone "Zone preload: queued ~a (~a)" target-id reason)))))
+
+(defun cold-start-preload-adjacent (game)
+  "Queue all spatially adjacent zones (cardinal + diagonal) for preloading.
+   Called once on initial zone load to warm the cache. Step 5."
+  (let* ((world (game-world game))
+         (zone-lru (game-zone-cache game))
+         (graph (and world (world-world-graph world)))
+         (zone (and world (world-zone world)))
+         (zone-id (and zone (zone-id zone))))
+    (when (and zone-lru graph zone-id)
+      ;; Queue cardinal neighbors
+      (dolist (exit-spec (world-graph-exits graph zone-id))
+        (when (spatial-exit-p exit-spec)
+          (let ((target-id (getf exit-spec :to))
+                (edge (getf exit-spec :edge)))
+            (queue-zone-preload game zone-lru graph target-id
+                                (format nil "cold-start ~a" edge))
+            ;; Queue diagonal neighbors (neighbor's perpendicular exits)
+            (when target-id
+              (let ((perp-edges (case edge
+                                  ((:north :south) '(:east :west))
+                                  ((:east :west) '(:north :south)))))
+                (dolist (perp perp-edges)
+                  (let ((diag-exit (find perp (world-graph-exits graph target-id)
+                                         :key (lambda (e) (getf e :edge)) :test #'eq)))
+                    (when (and diag-exit (spatial-exit-p diag-exit))
+                      (queue-zone-preload game zone-lru graph (getf diag-exit :to)
+                                          (format nil "cold-start diagonal ~a->~a" edge perp)))))))))))))
+
+(defun update-client-preloading (game)
+  "Check proximity to zone edges and queue adjacent zones for preloading.
+   Step 5: Client-only, independent of server arm/commit state machine.
+   Includes diagonal neighbors and filters non-spatial exits (teleports)."
+  (let* ((player (game-player game))
+         (world (game-world game))
+         (zone-lru (game-zone-cache game))
+         (graph (and world (world-world-graph world)))
+         (zone (and world (world-zone world)))
+         (zone-id (and zone (zone-id zone))))
+    (when (and player world zone-lru graph zone-id)
+      ;; Check each cardinal edge
+      (dolist (edge '(:north :south :east :west))
+        (when (player-near-edge-p player world edge)
+          (let ((exit (find edge (world-graph-exits graph zone-id)
+                            :key (lambda (e) (getf e :edge)) :test #'eq)))
+            (when (and exit (spatial-exit-p exit))
+              (let ((target-id (getf exit :to)))
+                (queue-zone-preload game zone-lru graph target-id
+                                    (format nil "player near ~a edge" edge))
+                ;; Diagonal neighbors: preload this neighbor's perpendicular exits
+                (when target-id
+                  (let ((perp-edges (case edge
+                                      ((:north :south) '(:east :west))
+                                      ((:east :west) '(:north :south)))))
+                    (dolist (perp perp-edges)
+                      (let ((diag-exit (find perp (world-graph-exits graph target-id)
+                                             :key (lambda (e) (getf e :edge)) :test #'eq)))
+                        (when (and diag-exit (spatial-exit-p diag-exit))
+                          (queue-zone-preload game zone-lru graph (getf diag-exit :to)
+                                              (format nil "diagonal via ~a->~a" edge perp)))))))))))))))
+
+(defun process-preload-queue (game &key (count 1))
+  "Pop up to COUNT entries from the preload queue and load them into the LRU cache.
+   Default: 1 zone per frame to avoid hitches. ADDENDUM 3: urgent mode passes
+   a higher count when the player is near the commit line."
+  (declare (type fixnum count))
+  (let ((zone-lru (game-zone-cache game)))
+    (when zone-lru
+      (loop :repeat count
+            :while (game-preload-queue game)
+            :do (let* ((entry (pop (game-preload-queue game)))
+                       (zone-id (car entry))
+                       (path (cdr entry)))
+                  ;; Skip if already cached (may have been loaded by ensure-preview-zones)
+                  (unless (zone-cache-contains-p zone-lru zone-id)
+                    (when (and path (probe-file path))
+                      (let ((zone (load-zone path)))
+                        (when zone
+                          (zone-cache-insert zone-lru zone-id zone)
+                          (log-zone "Zone preload: loaded ~a into cache" zone-id))))))))))
+
+(defun zone-transition-show-loading-p ()
+  "Return T if zone transitions should show a loading overlay.
+   Always returns nil for locomotion transitions — preloading (Step 5) ensures zones
+   are cached before the player reaches the commit line."
+  nil)
+
+(defun handle-zone-transition (game &key (old-x 0.0f0) (old-y 0.0f0))
+  "Sync client-facing state after a zone change.
+   Step 6: No loading overlay for locomotion transitions.
+   Step 12: Per-transition diagnostics (cache hit/miss, preload queue depth).
+   ADDENDUM 4: Soft reset — only clear interpolation/prediction buffers
+   when position delta exceeds *soft-reset-threshold-sq*. Small deltas
+   (typical of seamless walk-through transitions) preserve buffer continuity."
+  (let* ((t0 (when *verbose-zone-transitions* (get-internal-real-time)))
          (editor (game-editor game))
          (world (game-world game))
          (zone (and world (world-zone world)))
          (zone-id (and zone (zone-id zone)))
          (buffer (game-interpolation-buffer game))
          (pred (game-prediction-state game))
-         (player (game-player game)))
-    (ui-trigger-loading ui)
+         (player (game-player game))
+         ;; Step 12: Capture pre-transition state for diagnostics
+         (diag-from-zone (and *verbose-zone-transitions* player (player-zone-id player)))
+         (diag-cache-hits (when *verbose-zone-transitions*
+                            (let ((zl (game-zone-cache game)))
+                              (if zl (zone-cache-hits zl) 0))))
+         (diag-cache-misses (when *verbose-zone-transitions*
+                              (let ((zl (game-zone-cache game)))
+                                (if zl (zone-cache-misses zl) 0)))))
+    ;; Step 6: Only show loading overlay if predicate says so (always nil for locomotion)
+    (when (zone-transition-show-loading-p)
+      (ui-trigger-loading (game-ui game)))
     (editor-sync-zone editor world)
     ;; Sync player zone-id to world zone - compact snapshots don't set this,
     ;; and prediction uses player-zone-id for collision map lookup
     (when (and player zone-id)
       (setf (player-zone-id player) zone-id))
-    ;; Clear interpolation buffer - stale positions are invalid after zone change
-    (when buffer
-      (setf (interpolation-buffer-count buffer) 0
-            (interpolation-buffer-head buffer) 0))
-    ;; Reset prediction state - stale predicted position causes "stuck" movement
-    ;; after zone transition because old coordinates don't match new zone
-    ;; NOTE: Don't reset last-acked-sequence (leave unchanged to avoid snap spike)
-    (when (and pred player)
-      (setf (prediction-state-predicted-x pred) (player-x player)
-            (prediction-state-predicted-y pred) (player-y player)
-            (prediction-state-input-count pred) 0
-            (prediction-state-input-head pred) 0))
+    ;; ADDENDUM 4: Soft reset — check if position delta is large enough to warrant
+    ;; clearing buffers. For seamless walk-through transitions, overstep preservation
+    ;; keeps delta small and buffers can be preserved for smooth continuity.
+    (let ((large-delta-p (and player
+                              (> (position-distance-sq
+                                  old-x old-y
+                                  (player-x player) (player-y player))
+                                 *soft-reset-threshold-sq*))))
+      (when (and buffer large-delta-p)
+        ;; Clear interpolation buffer - stale positions are invalid after large jump
+        (setf (interpolation-buffer-count buffer) 0
+              (interpolation-buffer-head buffer) 0))
+      (when (and pred player large-delta-p)
+        ;; Reset prediction state - stale predicted position causes "stuck" movement
+        ;; NOTE: Don't reset last-acked-sequence (leave unchanged to avoid snap spike)
+        (setf (prediction-state-predicted-x pred) (player-x player)
+              (prediction-state-predicted-y pred) (player-y player)
+              (prediction-state-input-count pred) 0
+              (prediction-state-input-head pred) 0))
+      ;; Always update prediction position to new coords (even for small delta)
+      ;; so prediction doesn't drift. Input buffers are preserved for continuity.
+      (when (and pred player (not large-delta-p))
+        (setf (prediction-state-predicted-x pred) (player-x player)
+              (prediction-state-predicted-y pred) (player-y player))))
+    ;; Clear stale targets — old zone's NPCs are no longer valid
+    (when player
+      (setf (player-attack-target-id player) 0
+            (player-follow-target-id player) 0))
     ;; Phase 2: Sync zone-state NPCs with game-npcs so rendering matches
-    (sync-client-zone-npcs game)))
+    (sync-client-zone-npcs game)
+    ;; Step 5: Queue all adjacent zones for preloading after zone change
+    (cold-start-preload-adjacent game)
+    ;; Step 12: Post-transition log with wall-clock time
+    (when (and *verbose-zone-transitions* t0)
+      (let* ((t1 (get-internal-real-time))
+             (elapsed-ms (* (/ (float (- t1 t0) 1.0)
+                               (float internal-time-units-per-second 1.0))
+                            1000.0))
+             (zone-lru (game-zone-cache game))
+             (cache-size (if zone-lru (hash-table-count (zone-cache-entries zone-lru)) 0))
+             (cache-cap (if zone-lru (zone-cache-capacity zone-lru) 0))
+             (queue-depth (length (game-preload-queue game)))
+             (delta-sq (if player
+                           (position-distance-sq old-x old-y
+                                                 (player-x player) (player-y player))
+                           0.0)))
+        (log-zone "Zone transition: ~a -> ~a wall=~,2fms cache=~d/~d hits=~d misses=~d preload-queue=~d delta=~,1f soft-reset=~a"
+                  diag-from-zone zone-id elapsed-ms
+                  cache-size cache-cap diag-cache-hits diag-cache-misses
+                  queue-depth (sqrt delta-sq)
+                  (if (> delta-sq *soft-reset-threshold-sq*) "yes" "no"))))))
 
 (defun update-sim (game dt &optional (allow-player-control t))
   "Run one fixed-tick simulation step. Returns true on zone transition.
@@ -515,15 +732,31 @@
           (progn
             (update-object-respawns world dt)
             (update-npc-respawns npcs dt))))
-    (let ((transitioned (and allow-player-control
-                             (update-zone-transition game))))
-      (when transitioned
+    ;; Zone transition state machine: server/local only.
+    ;; Clients receive zone changes via snapshot zone-id (net.lisp apply-snapshot).
+    ;; Running this on client would cause synchronous load-zone hitching.
+    (let ((transitioned (if (and allow-player-control
+                                (not (eq (game-net-role game) :client)))
+                           (update-zone-transition game)
+                           0)))
+      (declare (type fixnum transitioned))
+      (when (plusp transitioned)
         (setf npcs (game-npcs game)
               entities (game-entities game))
         (loop :for current-player :across players
               :do (setf (player-attack-target-id current-player) 0
                         (player-follow-target-id current-player) 0))
         (reset-npc-frame-intents npcs))
+      ;; Step 12: Per-tick transition count, preload queue depth, and cache occupancy
+      (let* ((zone-lru (game-zone-cache game))
+             (cache-size (if zone-lru (hash-table-count (zone-cache-entries zone-lru)) 0))
+             (cache-cap (if zone-lru (zone-cache-capacity zone-lru) 0))
+             (cache-hits (if zone-lru (zone-cache-hits zone-lru) 0))
+             (cache-misses (if zone-lru (zone-cache-misses zone-lru) 0)))
+        (log-zone "Zone tick: transitions=~d preload-queue=~d cache=~d/~d hits=~d misses=~d"
+                     transitioned
+                     (length (game-preload-queue game))
+                     cache-size cache-cap cache-hits cache-misses))
       (when allow-player-control
         (loop :for current-player :across players
               :for player-npcs = (npc-array-for-player-zone game current-player)
@@ -618,6 +851,7 @@
   "Run the game in local/standalone mode with full editor access.
    Unlike run-client, this does not connect to a server and allows zone editing."
   (with-fatal-error-log ("Local game runtime")
+    (validate-zone-config)
     (log-verbose "Local game starting")
     ;; Set window flags before init (must be called before with-window)
     (when *window-resize-enabled*

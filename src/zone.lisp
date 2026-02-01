@@ -45,6 +45,60 @@
      :respawnable (not (eq (getf plist :respawnable t) nil))
      :snapshot-dirty nil)))
 
+;;;; ========================================================================
+;;;; Zone Cache (LRU) — Seamless Zone Loading Step 4
+;;;; Client-side cache of zone data to eliminate disk I/O on transitions.
+;;;; ========================================================================
+
+(defun make-zone-lru-cache (&optional (capacity *client-zone-cache-capacity*))
+  "Create a new zone cache with given capacity."
+  (make-zone-cache :entries (make-hash-table :test 'eq :size (1+ capacity))
+                   :order nil
+                   :capacity capacity))
+
+(defun zone-cache-lookup (cache zone-id)
+  "Look up ZONE-ID in CACHE, returning zone or nil. Promotes to LRU front on hit.
+   Tracks hit/miss counts for Step 12 diagnostics."
+  (when (and cache zone-id)
+    (let ((zone (gethash zone-id (zone-cache-entries cache))))
+      (if zone
+          (progn
+            ;; Move to front of LRU order
+            (setf (zone-cache-order cache)
+                  (cons zone-id (delete zone-id (zone-cache-order cache) :count 1)))
+            (incf (zone-cache-hits cache))
+            zone)
+          (progn
+            (incf (zone-cache-misses cache))
+            nil)))))
+
+(defun zone-cache-insert (cache zone-id zone)
+  "Insert ZONE under ZONE-ID into CACHE. Evicts LRU tail if at capacity."
+  (when (and cache zone-id zone)
+    (let ((entries (zone-cache-entries cache)))
+      ;; If already present, just update and promote
+      (when (gethash zone-id entries)
+        (setf (gethash zone-id entries) zone
+              (zone-cache-order cache)
+              (cons zone-id (delete zone-id (zone-cache-order cache) :count 1)))
+        (return-from zone-cache-insert zone))
+      ;; Evict LRU tail if at capacity
+      (when (>= (hash-table-count entries) (zone-cache-capacity cache))
+        (let ((victim (car (last (zone-cache-order cache)))))
+          (when victim
+            (remhash victim entries)
+            (setf (zone-cache-order cache)
+                  (butlast (zone-cache-order cache))))))
+      ;; Insert new entry at front
+      (setf (gethash zone-id entries) zone)
+      (push zone-id (zone-cache-order cache))
+      zone)))
+
+(defun zone-cache-contains-p (cache zone-id)
+  "Return T if ZONE-ID is in CACHE (without promoting)."
+  (and cache zone-id
+       (not (null (gethash zone-id (zone-cache-entries cache))))))
+
 (defun zone-label (zone)
   ;; Return a display label for ZONE.
   (let ((id (and zone (zone-id zone))))

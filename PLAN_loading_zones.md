@@ -175,7 +175,7 @@ This is entirely client-side — independent of the server's arm/commit/cancel s
 
 **Files:**
 - `src/main.lisp:422` (`handle-zone-transition`) — Remove the call to `(ui-trigger-loading ui)`. Keep buffer resets and NPC sync. This function is only called for locomotion zone transitions, not for teleports (which have a separate code path).
-- `src/save.lisp:1685` (`apply-game-state`) — No need to return `cache-hit-p`. Zone transition path always uses cache (preloaded by Step 5). If cache miss occurs (edge case: preload failed), load synchronously from disk but still do not show overlay — the load is fast enough (<200ms) to absorb without UX disruption.
+- `src/save.lisp:1685` (`apply-game-state`) — No need to return `cache-hit-p`. Zone transition path always uses cache (preloaded by Step 5). If cache miss occurs on a client (edge case: preload failed), the entire snapshot is dropped — applying new-zone positions into the old zone would cause desync. The next server tick will resend, and by then preload should have the zone cached. Server/local modes retain a sync disk fallback since they don't preload. See also Addendum 3 ("must not block on sync loads").
 
 **Predicate for testing:** Extract `zone-transition-show-loading-p` that always returns nil for locomotion transitions. Unit-testable without UI.
 
@@ -307,7 +307,7 @@ Each `:strip` is the same format as a normal zone snapshot. Any future entity ty
 **Files:**
 - `src/config.lisp` — `*zone-edge-visibility-tiles*` (from Step 7) controls the AOI width. No full-zone streaming.
 - `src/zone.lisp` (zone cache) — LRU eviction (Step 4) handles unloading. Capacity of 9 means at most current + 8 neighbors are cached. Moving away from a region naturally evicts old zones.
-- `src/movement.lisp:962` (`ensure-preview-zones`) — When the player moves away from an edge (beyond preload radius), remove that edge's entry from the preview lookup. The underlying zone data remains in the LRU cache (may be evicted later by LRU policy if capacity is reached). This avoids premature eviction of zones the player might return to.
+- `src/movement.lisp:962` (`ensure-preview-zones`) — Preview zone loading and unloading is driven by camera view-bounds (`view-exceeds-edge-p`), not preload radius. Previews exist for rendering, so they track what's actually visible to the camera. When the camera no longer reaches an edge, that edge's preview entry is removed from the lookup. The underlying zone data remains in the LRU cache (may be evicted later by LRU policy if capacity is reached). This avoids premature eviction of zones the player might return to.
 - `src/save.lisp` (snapshot application) — Edge strips are replaced each frame wholesale. The server unconditionally includes strips for all loaded adjacent zones (consistent with Step 7). When the player moves to the zone interior, strip entities fall outside the viewport and are culled at zero draw cost by the client. No server-side "stop sending" logic is needed — the bandwidth cost of including strips for clients who don't need them is negligible (~1.6KB worst case).
 
 **Server-side bounds:** Edge-strip streaming (Step 7) is already bounded:
@@ -442,10 +442,10 @@ Step 13 (tests)                 ─── depends on all above
 - **Tests:** Assert computed margin ≥ collision half‑width; verify edge detection triggers without wall‑push.
 
 3) **No sync load on transition**
-- **What:** Ensure the preload queue *guarantees* the target zone is in cache before commit.
-- **Where:** `src/main.lisp` preload processing.
-- **How:** When within 1–2 tiles of commit, allow multiple preload pops per frame (or immediate load of the pending edge’s target), but only on the client.
-- **Tests:** Simulate near‑edge state and assert cache hit before transition application.
+- **What:** Ensure the preload queue *guarantees* the target zone is in cache before commit. If a cache miss still occurs (edge case), drop the entire snapshot rather than sync-loading — applying new-zone positions into the old zone would cause desync. The next server tick will resend.
+- **Where:** `src/main.lisp` preload processing (urgent preload near commit). `src/save.lisp` `apply-game-state` (snapshot drop on client cache miss).
+- **How:** When within 1–2 tiles of commit, allow multiple preload pops per frame (or immediate load of the pending edge's target), but only on the client. On cache miss, `apply-game-state` returns early before `deserialize-game-state` runs, so no state is applied from the wrong zone.
+- **Tests:** Simulate near‑edge state and assert cache hit before transition application. Test cache-miss path: verify warning emitted, snapshot dropped (player position unchanged, world zone unchanged).
 
 4) **Soft reset of interpolation/prediction**
 - **What:** Only reset interpolation/prediction buffers when the delta exceeds a threshold; otherwise preserve and smooth.
