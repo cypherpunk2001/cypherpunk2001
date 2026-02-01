@@ -429,7 +429,17 @@
                 test-apply-game-state-cache-miss-warns
                 ;; ADDENDUM 4: Soft interpolation/prediction reset
                 test-soft-reset-preserves-buffers-small-delta
-                test-soft-reset-clears-buffers-large-delta)))
+                test-soft-reset-clears-buffers-large-delta
+                ;; Zone transition continuity (seam translation)
+                test-seam-translate-position-east
+                test-seam-translate-position-west
+                test-seam-translate-position-north
+                test-seam-translate-position-south
+                test-seam-translate-position-corner
+                test-seam-position-valid-p
+                test-seam-translation-used-in-transition-zone
+                test-seam-translation-blocked-uses-fallback
+                test-seam-translate-mixed-bounds)))
     (format t "~%=== Running Unit Tests ===~%")
     (dolist (test tests)
       (handler-case
@@ -10299,3 +10309,267 @@ hello
     ;; Prediction position should be updated to new coords
     (assert (< (abs (- (prediction-state-predicted-x pred) 500.0)) 0.01) ()
             "hard-reset: predicted-x should be updated to new position")))
+
+;;; ============================================================
+;;; Zone Transition Continuity — Seam Translation Tests
+;;; ============================================================
+
+(defun test-seam-translate-position-east ()
+  "Crossing east: new-x = dst-min-x + (px - src-max-x), new-y unchanged.
+   Uses collision bounds, not pixel spans."
+  ;; Zone: 64 tiles * 64px, half-w=16. Collision bounds: min=80, max=4016.
+  ;; Player at x=4020 (4px past src-max-x=4016). Dest same bounds.
+  ;; new-x = 80 + (4020 - 4016) = 84. Y unchanged.
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :east 4020.0 900.0
+                               80.0 4016.0 80.0 4016.0   ; src bounds
+                               80.0 4016.0 80.0 4016.0)  ; dst bounds
+    (assert (< (abs (- nx 84.0)) 0.01) ()
+            "seam-east: new-x should be 84, got ~,2f" nx)
+    (assert (< (abs (- ny 900.0)) 0.01) ()
+            "seam-east: new-y should be unchanged at 900, got ~,2f" ny)))
+
+(defun test-seam-translate-position-west ()
+  "Crossing west: new-x = dst-max-x + (px - src-min-x), new-y unchanged."
+  ;; Player at x=76 (4px past src-min-x=80 toward west).
+  ;; new-x = 4016 + (76 - 80) = 4012. Y unchanged.
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :west 76.0 500.0
+                               80.0 4016.0 80.0 4016.0
+                               80.0 4016.0 80.0 4016.0)
+    (assert (< (abs (- nx 4012.0)) 0.01) ()
+            "seam-west: new-x should be 4012, got ~,2f" nx)
+    (assert (< (abs (- ny 500.0)) 0.01) ()
+            "seam-west: new-y should be unchanged at 500, got ~,2f" ny)))
+
+(defun test-seam-translate-position-north ()
+  "Crossing north: new-y = dst-max-y + (py - src-min-y), new-x unchanged."
+  ;; Player at y=75 (5px past src-min-y=80 toward north).
+  ;; new-y = 4016 + (75 - 80) = 4011. X unchanged.
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :north 300.0 75.0
+                               80.0 4016.0 80.0 4016.0
+                               80.0 4016.0 80.0 4016.0)
+    (assert (< (abs (- nx 300.0)) 0.01) ()
+            "seam-north: new-x should be unchanged at 300, got ~,2f" nx)
+    (assert (< (abs (- ny 4011.0)) 0.01) ()
+            "seam-north: new-y should be 4011, got ~,2f" ny)))
+
+(defun test-seam-translate-position-south ()
+  "Crossing south: new-y = dst-min-y + (py - src-max-y), new-x unchanged."
+  ;; Player at y=4020 (4px past src-max-y=4016 toward south).
+  ;; new-y = 80 + (4020 - 4016) = 84. X unchanged.
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :south 300.0 4020.0
+                               80.0 4016.0 80.0 4016.0
+                               80.0 4016.0 80.0 4016.0)
+    (assert (< (abs (- nx 300.0)) 0.01) ()
+            "seam-south: new-x should be unchanged at 300, got ~,2f" nx)
+    (assert (< (abs (- ny 84.0)) 0.01) ()
+            "seam-south: new-y should be 84, got ~,2f" ny)))
+
+(defun test-seam-translate-position-corner ()
+  "Corner crossing: translation uses only the crossing edge axis."
+  ;; Crossing east at a corner: only x changes, y stays near south edge.
+  ;; Player at x=4020 (4px past src-max-x), y=4010 (near south edge).
+  ;; new-x = 80 + (4020 - 4016) = 84. Y unchanged at 4010.
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :east 4020.0 4010.0
+                               80.0 4016.0 80.0 4016.0
+                               80.0 4016.0 80.0 4016.0)
+    (assert (< (abs (- nx 84.0)) 0.01) ()
+            "seam-corner-east: new-x should be 84, got ~,2f" nx)
+    (assert (< (abs (- ny 4010.0)) 0.01) ()
+            "seam-corner-east: new-y should be unchanged at 4010, got ~,2f" ny)))
+
+(defun test-seam-position-valid-p ()
+  "seam-position-valid-p should correctly check destination bounds."
+  ;; Inside bounds
+  (assert (seam-position-valid-p 100.0 200.0 10.0 500.0 10.0 500.0) ()
+          "seam-valid: (100,200) should be inside (10-500, 10-500)")
+  ;; On boundary (exact)
+  (assert (seam-position-valid-p 10.0 10.0 10.0 500.0 10.0 500.0) ()
+          "seam-valid: exact min boundary should be valid")
+  (assert (seam-position-valid-p 500.0 500.0 10.0 500.0 10.0 500.0) ()
+          "seam-valid: exact max boundary should be valid")
+  ;; Outside bounds
+  (assert (not (seam-position-valid-p 5.0 200.0 10.0 500.0 10.0 500.0)) ()
+          "seam-valid: x=5 below min-x=10 should be invalid")
+  (assert (not (seam-position-valid-p 100.0 505.0 10.0 500.0 10.0 500.0)) ()
+          "seam-valid: y=505 above max-y=500 should be invalid"))
+
+(defun test-seam-translation-used-in-transition-zone ()
+  "Integration: transition-zone with seam translation produces position near seam.
+   Verifies that after crossing east, the player appears near x=0 of destination zone
+   (not teleported to an edge-spawn position)."
+  (let* ((world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-a-id :zone-a)
+         (zone-b-id :zone-b)
+         ;; Create a simple 10x10 zone with no walls
+         (wall-map (make-array '(10 10) :initial-element 0))
+         ;; Zone B struct
+         (zone-b (%make-zone :id zone-b-id :width 10 :height 10
+                             :collision-tiles nil :objects nil))
+         (player (%make-player))
+         (game (%make-game :world world :players (vector player)
+                           :npcs (vector) :entities (vector player)
+                           :net-role :server
+                           :npc-id-source (make-id-source 1000000 nil)))
+         (exit (list :to zone-b-id :spawn-edge :west)))
+    ;; Setup source zone (zone-a) state
+    (setf (gethash zone-a-id *zone-states*)
+          (make-zone-state :zone-id zone-a-id
+                           :wall-map wall-map
+                           :zone (%make-zone :id zone-a-id :width 10 :height 10
+                                             :collision-tiles nil :objects nil)))
+    ;; Setup destination zone (zone-b) state
+    (setf (gethash zone-b-id *zone-states*)
+          (make-zone-state :zone-id zone-b-id
+                           :wall-map wall-map
+                           :zone zone-b
+                           :player-grid (make-spatial-grid-for-zone 10 10 64.0)
+                           :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
+    ;; Place player just past east collision bound of zone-a
+    ;; 10-tile zone with tile-size=64, half-w=16:
+    ;;   collision min-x=80 (1*64+16), max-x=560 (9*64-16)
+    ;; Player at x=562 (2px past src-max-x=560)
+    (setf (player-x player) 562.0
+          (player-y player) 300.0
+          (player-zone-id player) zone-a-id
+          (player-intent player) (make-intent))
+    ;; Set up world bounds matching 10-tile zone collision
+    (setf (world-wall-min-x world) 80.0
+          (world-wall-max-x world) 560.0
+          (world-wall-min-y world) 80.0
+          (world-wall-max-y world) 560.0
+          (world-zone-label world) "Zone A")
+    ;; Write zone-b to a temp file so transition-zone can load it
+    (let ((tmp-path (format nil "/tmp/test-zone-b-~a.lisp" (get-universal-time))))
+      (with-open-file (out tmp-path :direction :output :if-exists :supersede)
+        (write (list :id zone-b-id :width 10 :height 10
+                     :tile-layers nil :collision-tiles nil :objects nil)
+               :stream out))
+      (let* ((paths (make-hash-table :test 'eq))
+             (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                       :zone-paths paths)))
+        (setf (gethash zone-b-id paths) tmp-path)
+        (setf (world-world-graph world) graph))
+      (unwind-protect
+           (progn
+             (transition-zone game player exit :east)
+             ;; After east crossing: new-x = dst-min-x + (562 - src-max-x)
+             ;;   = 80 + (562 - 560) = 82. Y unchanged at 300.
+             ;; This is seamless: only 2px from the destination edge.
+             (assert (< (abs (- (player-x player) 82.0)) 1.0) ()
+                     "seam-integration: player-x should be near 82, got ~,2f"
+                     (player-x player))
+             ;; Y-axis must be preserved exactly (not ratio-mapped to 0.5)
+             (assert (< (abs (- (player-y player) 300.0)) 1.0) ()
+                     "seam-integration: player-y should be unchanged at 300, got ~,2f"
+                     (player-y player))
+             (assert (eq (player-zone-id player) zone-b-id) ()
+                     "seam-integration: player should be in zone-b"))
+        (delete-file tmp-path)))))
+
+(defun test-seam-translation-blocked-uses-fallback ()
+  "When seam-translated+clamped position is blocked by a wall, fallback ratio-spawn is used."
+  (let* ((world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-a-id :zone-blk-a)
+         (zone-b-id :zone-blk-b)
+         ;; Zone B has a wall across the entire west edge (column 1)
+         ;; so clamped seam position (80, y) will be blocked
+         (wall-map-b (make-array '(10 10) :initial-element 0))
+         (zone-b (%make-zone :id zone-b-id :width 10 :height 10
+                              :collision-tiles nil :objects nil))
+         (player (%make-player))
+         (game (%make-game :world world :players (vector player)
+                           :npcs (vector) :entities (vector player)
+                           :net-role :server
+                           :npc-id-source (make-id-source 1000000 nil)))
+         (exit (list :to zone-b-id :spawn-edge :west)))
+    ;; Block column 1 (the west spawn edge area) in zone-b
+    (loop :for row :from 0 :below 10
+          :do (setf (aref wall-map-b row 1) 1))
+    ;; Source zone wall-map (no walls)
+    (let ((wall-map-a (make-array '(10 10) :initial-element 0)))
+      (setf (gethash zone-a-id *zone-states*)
+            (make-zone-state :zone-id zone-a-id
+                             :wall-map wall-map-a
+                             :zone (%make-zone :id zone-a-id :width 10 :height 10
+                                               :collision-tiles nil :objects nil)))
+      (setf (gethash zone-b-id *zone-states*)
+            (make-zone-state :zone-id zone-b-id
+                             :wall-map wall-map-b
+                             :zone zone-b
+                             :player-grid (make-spatial-grid-for-zone 10 10 64.0)
+                             :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
+      ;; Player just past east collision bound
+      (setf (player-x player) 562.0
+            (player-y player) 300.0
+            (player-zone-id player) zone-a-id
+            (player-intent player) (make-intent))
+      (setf (world-wall-min-x world) 80.0
+            (world-wall-max-x world) 560.0
+            (world-wall-min-y world) 80.0
+            (world-wall-max-y world) 560.0
+            (world-zone-label world) "Zone A")
+      (let ((tmp-path (format nil "/tmp/test-zone-blk-~a.lisp" (get-universal-time))))
+        (with-open-file (out tmp-path :direction :output :if-exists :supersede)
+          (write (list :id zone-b-id :width 10 :height 10
+                       :tile-layers nil :collision-tiles nil :objects nil)
+                 :stream out))
+        (let* ((paths (make-hash-table :test 'eq))
+               (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                         :zone-paths paths)))
+          (setf (gethash zone-b-id paths) tmp-path)
+          (setf (world-world-graph world) graph))
+        (unwind-protect
+             (progn
+               (transition-zone game player exit :east)
+               ;; Seam translation gives clamped (80, 300) which is blocked → fallback
+               ;; Fallback uses find-open-position-with-map spiral search
+               ;; Player should end up in zone-b at a non-blocked position
+               (assert (eq (player-zone-id player) zone-b-id) ()
+                       "seam-blocked: player should be in zone-b")
+               ;; Position should be positive (within zone pixel space)
+               (assert (> (player-x player) 0.0) ()
+                       "seam-blocked: player-x should be positive, got ~,2f"
+                       (player-x player))
+               ;; Should NOT be at the blocked column 1 (tile center = 96px for 64px tiles)
+               ;; Column 1 tile center = 1*64 + 32 = 96
+               (assert (not (and (>= (player-x player) 64.0)
+                                 (<= (player-x player) 128.0)
+                                 (= (aref wall-map-b
+                                          (floor (player-y player) 64.0)
+                                          (floor (player-x player) 64.0))
+                                    1)))
+                       () "seam-blocked: player should not be on a blocked tile"))
+          (delete-file tmp-path))))))
+
+(defun test-seam-translate-mixed-bounds ()
+  "Seam translation with different-sized source and destination zones.
+   Crossing east from a small zone (10 tiles) into a large zone (20 tiles).
+   Overstep distance should be preserved regardless of zone size mismatch."
+  ;; Source 10-tile zone: collision bounds min=80, max=560 (tile-size=64, half-w=16)
+  ;; Dest 20-tile zone: collision bounds min=80, max=1200 (19*64-16=1200)
+  ;; Player at x=563 (3px past src-max-x=560)
+  ;; new-x = dst-min-x + (px - src-max-x) = 80 + (563 - 560) = 83
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :east 563.0 400.0
+                               80.0 560.0 80.0 560.0    ; src (10-tile)
+                               80.0 1200.0 80.0 1200.0)  ; dst (20-tile)
+    (assert (< (abs (- nx 83.0)) 0.01) ()
+            "seam-mixed-east: new-x should be 83, got ~,2f" nx)
+    (assert (< (abs (- ny 400.0)) 0.01) ()
+            "seam-mixed-east: new-y should be unchanged at 400, got ~,2f" ny))
+  ;; Crossing west from large zone (20 tiles) into small zone (10 tiles)
+  ;; Player at x=78 (2px past src-min-x=80 toward west)
+  ;; new-x = dst-max-x + (px - src-min-x) = 560 + (78 - 80) = 558
+  (multiple-value-bind (nx ny)
+      (seam-translate-position :west 78.0 400.0
+                               80.0 1200.0 80.0 1200.0   ; src (20-tile)
+                               80.0 560.0 80.0 560.0)    ; dst (10-tile)
+    (assert (< (abs (- nx 558.0)) 0.01) ()
+            "seam-mixed-west: new-x should be 558, got ~,2f" nx)
+    (assert (< (abs (- ny 400.0)) 0.01) ()
+            "seam-mixed-west: new-y should be unchanged at 400, got ~,2f" ny)))

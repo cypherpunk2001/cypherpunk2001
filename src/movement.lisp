@@ -1263,6 +1263,36 @@
               :do (setf (aref result i) npc))
         result)))
 
+;;; Seam translation for continuous zone transitions (PLAN_zone_transition_continuity)
+
+(defun seam-translate-position (edge player-x player-y
+                                src-min-x src-max-x src-min-y src-max-y
+                                dst-min-x dst-max-x dst-min-y dst-max-y)
+  "Translate player position across a zone seam using collision bounds.
+   EDGE is the direction the player crossed (east/west/north/south).
+   SRC-MIN/MAX and DST-MIN/MAX are collision bounds for source and destination zones.
+   Maps the player's overstep distance from the source edge to the destination opposite edge.
+   Returns (values new-x new-y)."
+  (declare (type single-float player-x player-y
+                 src-min-x src-max-x src-min-y src-max-y
+                 dst-min-x dst-max-x dst-min-y dst-max-y))
+  (case edge
+    ;; East: player past src-max-x → appears at dst-min-x + overstep
+    (:east  (values (+ dst-min-x (- player-x src-max-x)) player-y))
+    ;; West: player past src-min-x → appears at dst-max-x - overstep
+    (:west  (values (+ dst-max-x (- player-x src-min-x)) player-y))
+    ;; North: player past src-min-y → appears at dst-max-y + overstep
+    (:north (values player-x (+ dst-max-y (- player-y src-min-y))))
+    ;; South: player past src-max-y → appears at dst-min-y + overstep
+    (:south (values player-x (+ dst-min-y (- player-y src-max-y))))
+    (t      (values player-x player-y))))
+
+(defun seam-position-valid-p (x y min-x max-x min-y max-y)
+  "Check if a seam-translated position is within destination zone bounds."
+  (declare (type single-float x y min-x max-x min-y max-y))
+  (and (>= x min-x) (<= x max-x)
+       (>= y min-y) (<= y max-y)))
+
 ;;; ADDENDUM 1: Overstep preservation for continuous zone transitions
 
 (defun compute-transition-overstep (edge player src-min-x src-max-x src-min-y src-max-y)
@@ -1355,10 +1385,10 @@
                                  (edge-offset-ratio src-min-x src-max-x (player-x player))
                                  (edge-offset-ratio src-min-y src-max-y (player-y player)))
                              0.5)))
-          (log-verbose "Zone transition: ~a -> ~a via ~a"
-                       current-zone-id
-                       (zone-id zone)
-                       edge)
+          (log-zone "Zone transition: ~a -> ~a edge=~a spawn-edge=~a"
+                    current-zone-id
+                    (zone-id zone)
+                    edge spawn-edge)
           ;; Only set *zone-path* and apply-zone-to-world for client/local mode
           ;; Server uses per-zone collision from zone-state instead
           (let* ((is-server (eq (game-net-role game) :server))
@@ -1382,21 +1412,62 @@
                     (get-zone-collision-bounds target-zone-id tile-size half-w half-h)
                     (values (world-wall-min-x world) (world-wall-max-x world)
                             (world-wall-min-y world) (world-wall-max-y world)))
-              ;; ADDENDUM 1: Compute overstep for continuous world-space transition
-              (let ((overstep (compute-transition-overstep
-                               edge player
-                               src-min-x src-max-x src-min-y src-max-y)))
-              (multiple-value-bind (base-x base-y)
-                  (edge-spawn-position-bounds new-min-x new-max-x new-min-y new-max-y
-                                              spawn-edge preserve-axis ratio)
-                ;; Apply overstep to transition axis for seamless positioning
-                (multiple-value-bind (raw-x raw-y)
-                    (apply-overstep-to-spawn spawn-edge overstep base-x base-y)
+              ;; PLAN_zone_transition_continuity: Seam translation as primary path
+              ;; Uses collision bounds (not pixel spans) so translated positions
+              ;; land within walkable area without multi-tile clamping.
+              (let* ((px (player-x player))
+                     (py (player-y player)))
+                ;; Step 1: Try seam translation (primary path)
+                (multiple-value-bind (trans-x trans-y)
+                    (seam-translate-position edge px py
+                                            src-min-x src-max-x src-min-y src-max-y
+                                            new-min-x new-max-x new-min-y new-max-y)
+                  ;; Step 2: Check if translated position is in bounds and not blocked
+                  (let* ((in-bounds (seam-position-valid-p trans-x trans-y
+                                                          new-min-x new-max-x
+                                                          new-min-y new-max-y))
+                         (blocked (and in-bounds
+                                       (if (and is-server target-wall-map)
+                                           (blocked-at-p-with-map target-wall-map
+                                                                  trans-x trans-y
+                                                                  half-w half-h tile-size)
+                                           nil)))
+                         (seam-valid (and in-bounds (not blocked))))
+                    (when *verbose-zone-transitions*
+                      (log-zone "Seam translation: ~a->~a edge=~a path=~a old=(~,1f,~,1f) src-bounds=(~,1f,~,1f,~,1f,~,1f) dst-bounds=(~,1f,~,1f,~,1f,~,1f) -> trans=(~,1f,~,1f) in-bounds=~a blocked=~a overstep=not-applied"
+                                current-zone-id (zone-id zone) edge
+                                (if seam-valid "seam" "fallback")
+                                px py
+                                src-min-x src-max-x src-min-y src-max-y
+                                new-min-x new-max-x new-min-y new-max-y
+                                trans-x trans-y in-bounds blocked))
+                    ;; Step 3: Use seam result if valid, otherwise fall back to ratio-spawn
+                    (multiple-value-bind (raw-x raw-y fallback-reason)
+                        (if seam-valid
+                            (values trans-x trans-y nil)
+                            ;; Fallback: ratio-based spawn + overstep (old path)
+                            (let* ((reason (if (not in-bounds) "out-of-bounds" "blocked"))
+                                   (overstep (compute-transition-overstep
+                                              edge player
+                                              src-min-x src-max-x src-min-y src-max-y)))
+                              (multiple-value-bind (base-x base-y)
+                                  (edge-spawn-position-bounds new-min-x new-max-x new-min-y new-max-y
+                                                              spawn-edge preserve-axis ratio)
+                                (multiple-value-bind (fb-x fb-y)
+                                    (apply-overstep-to-spawn spawn-edge overstep base-x base-y)
+                                  (when *verbose-zone-transitions*
+                                    (log-zone "Seam fallback: reason=~a overstep=~,2f spawn-edge=~a base=(~,1f,~,1f) result=(~,1f,~,1f)"
+                                              reason overstep spawn-edge base-x base-y fb-x fb-y))
+                                  (values fb-x fb-y reason)))))
                 (multiple-value-bind (spawn-x spawn-y)
                     (if (and is-server target-wall-map)
                         (find-open-position-with-map target-wall-map raw-x raw-y
                                                      half-w half-h tile-size)
                         (world-open-position-for world raw-x raw-y half-w half-h))
+                  (when *verbose-zone-transitions*
+                    (log-zone "Seam final: path=~a raw=(~,1f,~,1f) spawn=(~,1f,~,1f)~@[ fallback-reason=~a~]"
+                              (if fallback-reason "fallback" "seam")
+                              raw-x raw-y spawn-x spawn-y fallback-reason))
                   ;; Remove player from old zone's spatial grid and zone-players cache
                   (let ((old-zone-state (get-zone-state current-zone-id)))
                     (when old-zone-state
@@ -1431,7 +1502,7 @@
                   ;; Step 11: Downgrade to Tier-2 (dirty flag) — flushes within 30s checkpoint.
                   ;; Zone transitions are not critical enough for Tier-1 blocking save.
                   ;; Crash between transition and checkpoint → player reverts to pre-transition zone (acceptable).
-                  (mark-player-dirty (player-id player))))))
+                  (mark-player-dirty (player-id player))))))))) ; close mvb-spawn, mvb-raw, let*-seam, mvb-trans, let*-src, mvb-new-min
           ;; Step 1: Set transition cooldown
           (setf (player-zone-transition-cooldown player)
                 *zone-transition-cooldown-seconds*)
@@ -1478,7 +1549,7 @@
                   ;; Populate NPC spatial grid for proximity queries
                   (populate-npc-grid target-state merged)
                   (setf (gethash target-zone-id *zone-states*) target-state)))))
-          t)))))))))
+          t)))))))
 
 (defun update-zone-transition (game &optional (dt *sim-tick-seconds*))
   "Handle edge-based zone transitions with cooldown, hysteresis, and directional gating.
@@ -1563,8 +1634,8 @@
                                                      (float internal-time-units-per-second 1.0))))
                                          (let* ((last (player-zone-transition-last-time player))
                                                 (time-since (if (> last 0.0) (- now last) -1.0)))
-                                           (log-zone "Zone transition: COMMIT edge ~a player ~a (time-since-last=~,2fs)"
-                                                     pending (player-id player) time-since))
+                                           (log-zone "Zone transition: COMMIT edge=~a player=~a commit-margin=~,1f time-since-last=~,2fs"
+                                                     pending (player-id player) commit-margin time-since))
                                          (setf (player-zone-transition-last-time player) now))
                                        (transition-zone game player exit pending)
                                        (incf transition-count))

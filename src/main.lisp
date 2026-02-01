@@ -117,7 +117,12 @@
                         (player-within-urgent-preload-distance-p
                          player world urgent-px)))))
       (if urgent
-          (process-preload-queue game :count (length (game-preload-queue game)))
+          (let ((before-depth (length (game-preload-queue game))))
+            (process-preload-queue game :count before-depth)
+            (when *verbose-zone-transitions*
+              (let ((after-depth (length (game-preload-queue game))))
+                (log-zone "Urgent preload flush: queue-before=~d queue-after=~d"
+                          before-depth after-depth))))
           (process-preload-queue game)))
     ;; Clear per-frame intent at start before processing new input
     (reset-frame-intent client-intent)
@@ -661,11 +666,12 @@
                            (position-distance-sq old-x old-y
                                                  (player-x player) (player-y player))
                            0.0)))
-        (log-zone "Zone transition: ~a -> ~a wall=~,2fms cache=~d/~d hits=~d misses=~d preload-queue=~d delta=~,1f soft-reset=~a"
+        (log-zone "Zone transition: ~a -> ~a wall=~,2fms cache=~d/~d hits=~d misses=~d preload-queue=~d delta=~,1f soft-reset=~a threshold=~,1f"
                   diag-from-zone zone-id elapsed-ms
                   cache-size cache-cap diag-cache-hits diag-cache-misses
                   queue-depth (sqrt delta-sq)
-                  (if (> delta-sq *soft-reset-threshold-sq*) "yes" "no"))))))
+                  (if (> delta-sq *soft-reset-threshold-sq*) "yes" "no")
+                  (sqrt *soft-reset-threshold-sq*))))))
 
 (defun update-sim (game dt &optional (allow-player-control t))
   "Run one fixed-tick simulation step. Returns true on zone transition.
