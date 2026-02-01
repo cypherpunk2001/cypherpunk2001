@@ -36,6 +36,12 @@
 (defvar *auth-fail-count* 0)
 (defvar *auth-timeout-count* 0)
 (defvar *auth-drop-count* 0)
+(defvar *auth-busy-count* 0)
+
+;;; Auth latency tracking (Step 12)
+(defvar *auth-latencies* (make-array 0 :adjustable t :fill-pointer 0
+                                       :element-type 'single-float)
+  "Collected auth latencies in seconds for min/avg/max/p99 reporting.")
 
 (defparameter *target* 2000)
 (defparameter *spawn-interval* 0.5f0)
@@ -132,7 +138,8 @@
         nil))))
 
 (defun drain-auth (client now)
-  "Check for auth response on a pending client. Returns :ok, :fail, or :pending."
+  "Check for auth response on a pending client. Returns :ok, :fail, or :pending.
+   Step 12: Tracks auth latency and :server-busy responses."
   (multiple-value-bind (msg _host _port)
       (funcall *mmorpg-receive-net*
                (stress-client-socket client)
@@ -141,10 +148,20 @@
     (cond
       ((and msg (eq (getf msg :type) :auth-ok))
        (incf *auth-ok-count*)
+       ;; Step 12: Record auth latency
+       (let ((latency (- now (stress-client-last-auth-time client))))
+         (vector-push-extend (coerce latency 'single-float) *auth-latencies*))
        :ok)
       ((and msg (eq (getf msg :type) :auth-fail))
-       (incf *auth-fail-count*)
-       :fail)
+       (let ((reason (getf msg :reason)))
+         (if (eq reason :server-busy)
+             (progn
+               (incf *auth-busy-count*)
+               ;; Treat :server-busy as still pending (client can retry)
+               :pending)
+             (progn
+               (incf *auth-fail-count*)
+               :fail))))
       ((>= (- now (stress-client-last-auth-time client)) *auth-timeout*)
        (incf *auth-timeout-count*)
        :fail)
@@ -263,8 +280,20 @@
                    (setf last-report now)
                    (format t "[STRESS] Active: ~d | Pending: ~d | Spawned: ~d | Dropped: ~d~%"
                            active (length pending) total-spawned dropped)
-                   (format t "         Auth ok=~d fail=~d timeout=~d drop=~d~%"
-                           *auth-ok-count* *auth-fail-count* *auth-timeout-count* *auth-drop-count*)
+                   (format t "         Auth ok=~d fail=~d timeout=~d drop=~d busy=~d~%"
+                           *auth-ok-count* *auth-fail-count* *auth-timeout-count*
+                           *auth-drop-count* *auth-busy-count*)
+                   ;; Step 12: Print latency stats
+                   (when (> (length *auth-latencies*) 0)
+                     (let* ((n (length *auth-latencies*))
+                            (sorted (sort (copy-seq *auth-latencies*) #'<))
+                            (mn (aref sorted 0))
+                            (mx (aref sorted (1- n)))
+                            (avg (/ (reduce #'+ sorted) n))
+                            (p99-idx (min (1- n) (floor (* n 0.99))))
+                            (p99 (aref sorted p99-idx)))
+                       (format t "         Auth latency: min=~,2fs avg=~,2fs max=~,2fs p99=~,2fs (n=~d)~%"
+                               mn avg mx p99 n)))
                    (finish-output))
 
                  (sleep *tick*)))

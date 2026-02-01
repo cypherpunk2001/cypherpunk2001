@@ -528,6 +528,26 @@
 (defparameter *auth-rate-limits* (make-hash-table :test 'equal :size 256)
   "Map of IP address -> auth-rate-entry for rate limiting.")
 
+;;; Auth Metrics (Step 6) - Thread-safe atomic counters via struct slots
+;;; sb-ext:atomic-incf requires CAS-able places: struct slots with :type sb-ext:word.
+(defstruct (auth-metrics (:constructor make-auth-metrics))
+  "Atomic counters for auth throughput monitoring."
+  (queued 0 :type sb-ext:word)
+  (processed 0 :type sb-ext:word)
+  (expired 0 :type sb-ext:word)
+  (rejected-busy 0 :type sb-ext:word)
+  (success 0 :type sb-ext:word)
+  (fail 0 :type sb-ext:word))
+
+(defvar *auth-metrics* (make-auth-metrics)
+  "Global auth metrics counters (atomic on SBCL).")
+
+;;; Convenience accessors matching old *auth-metric-* names
+(defmacro auth-metric-incf (slot)
+  "Atomically increment an auth metric counter (SBCL), or plain incf otherwise."
+  #+sbcl `(sb-ext:atomic-incf (,(intern (format nil "AUTH-METRICS-~a" slot)) *auth-metrics*))
+  #-sbcl `(incf (,(intern (format nil "AUTH-METRICS-~a" slot)) *auth-metrics*)))
+
 ;;; Thread-safe auth rate limit access
 #+sbcl
 (defvar *auth-rate-limits-lock* (sb-thread:make-mutex :name "auth-rate-limits-lock")
@@ -677,8 +697,13 @@
 ;;;; to avoid blocking the main game loop with DB operations and retries.
 
 (defstruct auth-queue
-  "Thread-safe queue for auth work items."
-  (items nil :type list)
+  "Thread-safe queue for auth work items.
+   Uses two-list FIFO: push-list for producers, pop-list for consumers.
+   O(1) amortized push/pop instead of O(n) last/butlast."
+  (push-list nil :type list)   ; Producers push here
+  (pop-list nil :type list)    ; Consumers pop from here
+  (count 0 :type fixnum)       ; Current depth for backpressure
+  (max-depth 200 :type fixnum) ; Max items before rejecting (0 = unlimited)
   (lock nil)
   (condvar nil))
 
@@ -706,42 +731,74 @@
   (error-reason nil)  ; :bad-credentials, :username-taken, etc.
   (zone-id nil))
 
-(defun make-auth-queue-instance ()
-  "Create a new thread-safe auth queue."
+(defun make-auth-queue-instance (&key (max-depth *auth-queue-max-depth*))
+  "Create a new thread-safe auth queue with bounded depth."
   #+sbcl
-  (make-auth-queue :items nil
+  (make-auth-queue :push-list nil
+                   :pop-list nil
+                   :count 0
+                   :max-depth max-depth
                    :lock (sb-thread:make-mutex :name "auth-queue-lock")
                    :condvar (sb-thread:make-waitqueue :name "auth-queue-condvar"))
   #-sbcl
-  (make-auth-queue :items nil :lock nil :condvar nil))
+  (make-auth-queue :push-list nil :pop-list nil :count 0 :max-depth max-depth
+                   :lock nil :condvar nil))
 
 (defun auth-queue-push (queue item)
-  "Thread-safe push ITEM to QUEUE. Signals waiting threads."
+  "Thread-safe push ITEM to QUEUE (unbounded). Signals waiting threads."
   #+sbcl
   (sb-thread:with-mutex ((auth-queue-lock queue))
-    (push item (auth-queue-items queue))
+    (push item (auth-queue-push-list queue))
+    (incf (auth-queue-count queue))
     (sb-thread:condition-notify (auth-queue-condvar queue)))
   #-sbcl
-  (push item (auth-queue-items queue)))
+  (progn
+    (push item (auth-queue-push-list queue))
+    (incf (auth-queue-count queue))))
 
-(defun auth-queue-pop-blocking (queue)
-  "Block until an item is available, then pop and return it.
-   Used by worker thread."
+(defun auth-queue-try-push (queue item)
+  "Thread-safe push ITEM if queue is below max depth. Returns T on success, NIL if full."
   #+sbcl
   (sb-thread:with-mutex ((auth-queue-lock queue))
-    (loop :while (null (auth-queue-items queue))
+    (when (or (zerop (auth-queue-max-depth queue))
+              (< (auth-queue-count queue) (auth-queue-max-depth queue)))
+      (push item (auth-queue-push-list queue))
+      (incf (auth-queue-count queue))
+      (sb-thread:condition-notify (auth-queue-condvar queue))
+      t))
+  #-sbcl
+  (when (or (zerop (auth-queue-max-depth queue))
+            (< (auth-queue-count queue) (auth-queue-max-depth queue)))
+    (push item (auth-queue-push-list queue))
+    (incf (auth-queue-count queue))
+    t))
+
+(defun auth-queue-pop-blocking (queue)
+  "Block until an item is available, then pop and return it (FIFO).
+   O(1) amortized via two-list technique. Used by worker thread."
+  #+sbcl
+  (sb-thread:with-mutex ((auth-queue-lock queue))
+    (loop :while (and (null (auth-queue-pop-list queue))
+                      (null (auth-queue-push-list queue)))
           :do (sb-thread:condition-wait (auth-queue-condvar queue)
                                          (auth-queue-lock queue)))
-    (let ((item (car (last (auth-queue-items queue)))))
-      (setf (auth-queue-items queue) (butlast (auth-queue-items queue)))
+    ;; Transfer push-list to pop-list if pop-list is empty
+    (when (null (auth-queue-pop-list queue))
+      (setf (auth-queue-pop-list queue) (nreverse (auth-queue-push-list queue)))
+      (setf (auth-queue-push-list queue) nil))
+    (let ((item (pop (auth-queue-pop-list queue))))
+      (decf (auth-queue-count queue))
       item))
   #-sbcl
   (progn
-    ;; Non-SBCL: busy wait (not ideal, but keeps code working)
-    (loop :while (null (auth-queue-items queue))
+    (loop :while (and (null (auth-queue-pop-list queue))
+                      (null (auth-queue-push-list queue)))
           :do (sleep 0.01))
-    (let ((item (car (last (auth-queue-items queue)))))
-      (setf (auth-queue-items queue) (butlast (auth-queue-items queue)))
+    (when (null (auth-queue-pop-list queue))
+      (setf (auth-queue-pop-list queue) (nreverse (auth-queue-push-list queue)))
+      (setf (auth-queue-push-list queue) nil))
+    (let ((item (pop (auth-queue-pop-list queue))))
+      (decf (auth-queue-count queue))
       item)))
 
 (defun auth-queue-drain-nonblocking (queue)
@@ -749,127 +806,117 @@
    Returns items in FIFO order (oldest first)."
   #+sbcl
   (sb-thread:with-mutex ((auth-queue-lock queue))
-    (let ((items (nreverse (auth-queue-items queue))))
-      (setf (auth-queue-items queue) nil)
+    (let* ((popped (auth-queue-pop-list queue))
+           (pushed (nreverse (auth-queue-push-list queue)))
+           (items (nconc popped pushed)))
+      (setf (auth-queue-push-list queue) nil)
+      (setf (auth-queue-pop-list queue) nil)
+      (setf (auth-queue-count queue) 0)
       items))
   #-sbcl
-  (let ((items (nreverse (auth-queue-items queue))))
-    (setf (auth-queue-items queue) nil)
+  (let* ((popped (auth-queue-pop-list queue))
+         (pushed (nreverse (auth-queue-push-list queue)))
+         (items (nconc popped pushed)))
+    (setf (auth-queue-push-list queue) nil)
+    (setf (auth-queue-pop-list queue) nil)
+    (setf (auth-queue-count queue) 0)
     items))
+
+(defun auth-queue-depth (queue)
+  "Return current queue depth. Thread-safe."
+  #+sbcl
+  (sb-thread:with-mutex ((auth-queue-lock queue))
+    (auth-queue-count queue))
+  #-sbcl
+  (auth-queue-count queue))
 
 (defun process-register-async (request world id-source)
   "Process registration on worker thread. Returns auth-result.
-   Performs DB operations that may block with retries."
+   Step 10: Reordered flow - spawn player first, then pipelined account creation.
+   Reduces 4-5 Redis connections to 1 per registration."
   (let* ((username (auth-request-username request))
          (password (auth-request-password request))
          (host (auth-request-host request))
          (port (auth-request-port request))
          (client (auth-request-client request))
          (timestamp (auth-request-timestamp request)))
-    ;; Re-check rate limit (host may have been locked out while queued)
-    (unless (auth-rate-check host timestamp)
-      (log-verbose "Registration rejected - host ~a became rate-limited while queued" host)
-      (return-from process-register-async
-        (make-auth-result :type :register
-                          :success nil
-                          :host host
-                          :port port
-                          :username username
-                          :client client
-                          :error-reason :rate-limited)))
-    ;; Try to create account (blocking DB operation with retry)
+    (declare (ignorable timestamp))
+    ;; Step 9: Rate limit check removed from worker - main thread is authoritative gate.
+    ;; Step 10: Spawn player FIRST to get character-id for pipelined account creation
     (handler-case
-        (if (with-retry-exponential (created (lambda () (db-create-account username password))
-                                      :max-retries 3
-                                      :initial-delay 50
-                                      :max-delay 200)
-              created)
-            ;; Account created - spawn player and link to account
-            (let* ((player (handler-case
-                               (spawn-player-at-world world id-source)
-                             (error (e)
-                               ;; ID allocation failed - rollback account creation
-                               (warn "Registration failed: ID allocation error for ~a: ~a" username e)
-                               (with-retry-exponential
-                                   (deleted (lambda () (db-delete-account username))
-                                    :max-retries 3
-                                    :initial-delay 50
-                                    :max-delay 200
-                                    :on-final-fail (lambda (e2)
-                                                     (warn "CRITICAL: Failed to delete account ~a after spawn failure: ~a"
-                                                           username e2)))
-                                 deleted)
-                               (return-from process-register-async
-                                 (make-auth-result :type :register
-                                                   :success nil
-                                                   :host host
-                                                   :port port
-                                                   :username username
-                                                   :client client
-                                                   :error-reason :internal-error))))))
-              (unless player
-                (return-from process-register-async
-                  (make-auth-result :type :register
-                                    :success nil
-                                    :host host
-                                    :port port
-                                    :username username
-                                    :client client
-                                    :error-reason :internal-error)))
-              (let* ((player-id (player-id player))
-                     (zone (world-zone world))
-                     (zone-id (and zone (zone-id zone))))
-                ;; Link account to character (with retry)
-                (let ((linked (with-retry-exponential
-                                (set-result (lambda () (db-set-character-id username player-id))
-                                 :max-retries 3
-                                 :initial-delay 50
-                                 :max-delay 200
-                                 :on-final-fail (lambda (e)
-                                                  (warn "Failed to set character-id for ~a: ~a" username e)))
-                              set-result)))
-                (if linked
-                    ;; Register session atomically in worker thread (prevents race with concurrent logins)
-                    (progn
-                      (session-try-register username client)
-                      ;; Return success result
-                      (make-auth-result :type :register
-                                        :success t
-                                        :host host
-                                        :port port
-                                        :username username
-                                        :client client
-                                        :player player
-                                        :player-id player-id
-                                        :zone-id zone-id))
-                    (progn
-                      (warn "Registration rollback: unable to link character for ~a" username)
-                      (with-retry-exponential
-                          (deleted (lambda () (db-delete-account username))
-                           :max-retries 3
-                           :initial-delay 50
-                           :max-delay 200
-                           :on-final-fail (lambda (e)
-                                            (warn "CRITICAL: Failed to delete account ~a after link failure: ~a"
-                                                  username e)))
-                        deleted)
-                      (make-auth-result :type :register
-                                        :success nil
-                                        :host host
-                                        :port port
-                                        :username username
-                                        :client client
-                                        :error-reason :internal-error))))))
-            ;; Username taken
-            (progn
-              (log-verbose "Registration failed from ~a:~d - username ~a already taken" host port username)
+        (let* ((player (handler-case
+                           (spawn-player-at-world world id-source)
+                         (error (e)
+                           (warn "Registration failed: ID allocation error for ~a: ~a" username e)
+                           (return-from process-register-async
+                             (make-auth-result :type :register
+                                               :success nil
+                                               :host host
+                                               :port port
+                                               :username username
+                                               :client client
+                                               :error-reason :internal-error))))))
+          (unless player
+            (return-from process-register-async
               (make-auth-result :type :register
                                 :success nil
                                 :host host
                                 :port port
                                 :username username
                                 :client client
-                                :error-reason :username-taken)))
+                                :error-reason :internal-error)))
+          (let* ((player-id (player-id player))
+                 (zone (world-zone world))
+                 (zone-id (and zone (zone-id zone))))
+            ;; Step 10: Pipelined account creation - EXISTS + hash + SET + RENAME in 1 connection
+            ;; db-create-account-pipelined returns:
+            ;;   T              = success
+            ;;   :USERNAME-TAKEN = username already exists (not an error)
+            ;;   signals        = infra error (with-retry-exponential retries, returns NIL if exhausted)
+            (let ((result (with-retry-exponential
+                              (r (lambda ()
+                                   (db-create-account-pipelined username password player-id))
+                               :max-retries 3
+                               :initial-delay 50
+                               :max-delay 200)
+                            r)))
+              (cond
+                ((eq result t)
+                 ;; Account created with character-id already linked
+                 (session-try-register username client)
+                 ;; Step 5: Register DB session (ownership, online set, leaderboards) in worker
+                 (register-player-session-db player-id player)
+                 (make-auth-result :type :register
+                                   :success t
+                                   :host host
+                                   :port port
+                                   :username username
+                                   :client client
+                                   :player player
+                                   :player-id player-id
+                                   :zone-id zone-id))
+                ((eq result :username-taken)
+                 ;; Username taken (player ID wasted but IDs are cheap)
+                 (log-verbose "Registration failed from ~a:~d - username ~a already taken"
+                              host port username)
+                 (make-auth-result :type :register
+                                   :success nil
+                                   :host host
+                                   :port port
+                                   :username username
+                                   :client client
+                                   :error-reason :username-taken))
+                (t
+                 ;; NIL = retries exhausted (infra failure)
+                 (warn "Registration failed from ~a:~d - infrastructure error for ~a"
+                       host port username)
+                 (make-auth-result :type :register
+                                   :success nil
+                                   :host host
+                                   :port port
+                                   :username username
+                                   :client client
+                                   :error-reason :internal-error))))))
       (error (e)
         (warn "Registration error for ~a: ~a" username e)
         (auth-rate-record-failure host timestamp)
@@ -883,7 +930,7 @@
 
 (defun process-login-async (request world id-source)
   "Process login on worker thread. Returns auth-result.
-   Performs DB operations that may block with retries."
+   Step 10: Uses db-verify-and-load-account to load account once instead of twice."
   (let* ((username (auth-request-username request))
          (password (auth-request-password request))
          (host (auth-request-host request))
@@ -892,52 +939,43 @@
          (timestamp (auth-request-timestamp request))
          (zone (world-zone world))
          (zone-id (and zone (zone-id zone))))
-    ;; Re-check rate limit (host may have been locked out while queued)
-    (unless (auth-rate-check host timestamp)
-      (log-verbose "Login rejected - host ~a became rate-limited while queued" host)
-      (return-from process-login-async
-        (make-auth-result :type :login
-                          :success nil
-                          :host host
-                          :port port
-                          :username username
-                          :client client
-                          :error-reason :rate-limited)))
+    (declare (ignorable timestamp zone-id))
+    ;; Step 9: Rate limit check removed from worker - main thread is authoritative gate.
     (handler-case
-        (cond
-          ;; Verify credentials (blocking DB operation)
-          ((not (with-retry-exponential (verified (lambda () (db-verify-credentials username password))
-                                          :max-retries 3
-                                          :initial-delay 50
-                                          :max-delay 200)
-                  verified))
-           (auth-rate-record-failure host timestamp)
-           (log-verbose "Login failed from ~a:~d - bad credentials for ~a" host port username)
-           (make-auth-result :type :login
-                             :success nil
-                             :host host
-                             :port port
-                             :username username
-                             :client client
-                             :error-reason :bad-credentials))
-          ;; Check session availability (already thread-safe)
-          ((not (session-try-register username client))
-           (log-verbose "Login rejected: session-try-register failed for ~a" username)
-           (make-auth-result :type :login
-                             :success nil
-                             :host host
-                             :port port
-                             :username username
-                             :client client
-                             :error-reason :already-logged-in))
-          ;; Credentials valid, session available - load or create character
-          (t
-           (let* ((character-id (with-retry-exponential (id (lambda () (db-get-character-id username))
-                                                           :max-retries 3
-                                                           :initial-delay 50
-                                                           :max-delay 200)
-                                  id))
-                  (player nil))
+        ;; Step 10: Verify credentials AND get character-id in one account load
+        (multiple-value-bind (character-id verified-p)
+            (with-retry-exponential
+                (result (lambda ()
+                          (multiple-value-list (db-verify-and-load-account username password)))
+                 :max-retries 3
+                 :initial-delay 50
+                 :max-delay 200)
+              (values (first result) (second result)))
+          (cond
+            ;; Bad credentials or account not found
+            ((not verified-p)
+             (auth-rate-record-failure host timestamp)
+             (log-verbose "Login failed from ~a:~d - bad credentials for ~a" host port username)
+             (make-auth-result :type :login
+                               :success nil
+                               :host host
+                               :port port
+                               :username username
+                               :client client
+                               :error-reason :bad-credentials))
+            ;; Check session availability (already thread-safe)
+            ((not (session-try-register username client))
+             (log-verbose "Login rejected: session-try-register failed for ~a" username)
+             (make-auth-result :type :login
+                               :success nil
+                               :host host
+                               :port port
+                               :username username
+                               :client client
+                               :error-reason :already-logged-in))
+            ;; Credentials valid, session available - load or create character
+            (t
+             (let ((player nil))
              (cond
                ;; Existing character - load from DB with Phase 6 validation
                (character-id
@@ -1061,6 +1099,12 @@
                  (setf (player-zone-id player) *starting-zone-id*)
                  (setf player-zone *starting-zone-id*)
                  (mark-player-dirty (player-id player)))  ; Persist the fix
+               ;; Step 5: Register DB session (online set, leaderboards) in worker
+               ;; Ownership already claimed above for existing characters;
+               ;; for new characters, claim it now
+               (unless character-id
+                 (claim-session-ownership (player-id player)))
+               (register-player-session-db (player-id player) player)
                ;; Return success with player's zone-id (now guaranteed non-nil)
                (make-auth-result :type :login
                                  :success t
@@ -1070,7 +1114,7 @@
                                  :client client
                                  :player player
                                  :player-id (player-id player)
-                                 :zone-id player-zone)))))
+                                 :zone-id player-zone))))))
       (error (e)
         (warn "Login error for ~a: ~a" username e)
         ;; Clean up session registration on error
@@ -1086,62 +1130,100 @@
 
 (defun auth-worker-loop (request-queue result-queue game)
   "Main loop for auth worker thread.
-   Blocks on request-queue, processes DB operations, pushes to result-queue."
+   Blocks on request-queue, processes DB operations, pushes to result-queue.
+   Includes stale request expiry: requests older than *auth-request-max-age* are
+   skipped to avoid wasting worker time on clients that have already timed out.
+   Step 10c: Opens a persistent Redis connection per worker (if Redis backend)."
   (let ((world (game-world game))
         (id-source (game-id-source game)))
+    (flet ((worker-main-loop ()
     (loop
       (let ((request (auth-queue-pop-blocking request-queue)))
         ;; Check for stop signal
         (when (auth-request-stop-signal request)
           (log-verbose "Auth worker received stop signal, exiting")
           (return))
-        ;; Process based on request type
-        (let ((result (handler-case
-                          (case (auth-request-type request)
-                            (:register (process-register-async request world id-source))
-                            (:login (process-login-async request world id-source))
-                            (otherwise
-                             (warn "Auth worker: unknown request type ~a" (auth-request-type request))
-                             nil))
-                        (error (e)
-                          (warn "Auth worker: unhandled error processing ~a: ~a"
-                                (auth-request-type request) e)
-                          (make-auth-result :type (auth-request-type request)
-                                            :success nil
-                                            :host (auth-request-host request)
-                                            :port (auth-request-port request)
-                                            :username (auth-request-username request)
-                                            :client (auth-request-client request)
-                                            :error-reason :internal-error)))))
-          ;; Push result for main thread to integrate
-          (when result
-            (auth-queue-push result-queue result)))))))
+        ;; Step 4: Check if request is stale (client likely timed out)
+        (let* ((now-rt (/ (get-internal-real-time)
+                          (float internal-time-units-per-second 1.0d0)))
+               (age (- now-rt (auth-request-timestamp request))))
+          (if (> age (float *auth-request-max-age* 1.0d0))
+              ;; Stale - skip processing, return expired result
+              (progn
+                (auth-metric-incf expired)
+                (auth-queue-push result-queue
+                  (make-auth-result :type (auth-request-type request)
+                                    :success nil
+                                    :host (auth-request-host request)
+                                    :port (auth-request-port request)
+                                    :username (auth-request-username request)
+                                    :client (auth-request-client request)
+                                    :error-reason :request-expired)))
+              ;; Fresh - process normally
+              (let ((result (handler-case
+                                (case (auth-request-type request)
+                                  (:register (process-register-async request world id-source))
+                                  (:login (process-login-async request world id-source))
+                                  (otherwise
+                                   (warn "Auth worker: unknown request type ~a" (auth-request-type request))
+                                   nil))
+                              (error (e)
+                                (warn "Auth worker: unhandled error processing ~a: ~a"
+                                      (auth-request-type request) e)
+                                (make-auth-result :type (auth-request-type request)
+                                                  :success nil
+                                                  :host (auth-request-host request)
+                                                  :port (auth-request-port request)
+                                                  :username (auth-request-username request)
+                                                  :client (auth-request-client request)
+                                                  :error-reason :internal-error)))))
+                (auth-metric-incf processed)
+                ;; Push result for main thread to integrate
+                (when result
+                  (auth-queue-push result-queue result)))))))))
+      ;; Step 10c: Wrap in persistent Redis connection if using Redis backend
+      (if (and *storage* (typep *storage* 'redis-storage))
+          (redis:with-persistent-connection (:host (redis-storage-host *storage*)
+                                             :port (redis-storage-port *storage*))
+            (worker-main-loop))
+          (worker-main-loop)))))
 
-(defun start-auth-worker (request-queue result-queue game)
+(defun start-auth-worker (request-queue result-queue game &key (name "auth-worker"))
   "Start auth worker thread. Returns thread object."
   #+sbcl
   ;; Capture special variables in closure to ensure visibility in child thread
   ;; (works around SBCL special variable visibility edge cases in some contexts)
   (let ((sessions *active-sessions*)
-        (lock *session-lock*))
+        (lock *session-lock*)
+        (storage *storage*))
     (sb-thread:make-thread
      (lambda ()
        ;; Re-bind for thread-local access
        (let ((*active-sessions* sessions)
-             (*session-lock* lock))
+             (*session-lock* lock)
+             (*storage* storage))
          (auth-worker-loop request-queue result-queue game)))
-     :name "auth-worker"))
+     :name name))
   #-sbcl
   nil)
 
-(defun stop-auth-worker (request-queue worker-thread)
-  "Stop auth worker thread gracefully."
-  ;; Send stop signal
-  (auth-queue-push request-queue (make-auth-request :stop-signal t))
-  ;; Wait for thread to exit
+(defun start-auth-workers (request-queue result-queue game count)
+  "Start COUNT auth worker threads. Returns list of thread objects."
+  (loop :for i :from 1 :to count
+        :collect (start-auth-worker request-queue result-queue game
+                                    :name (format nil "auth-worker-~d" i))))
+
+(defun stop-auth-workers (request-queue worker-threads)
+  "Stop all auth worker threads gracefully."
+  ;; Send one stop signal per worker
+  (dolist (wt worker-threads)
+    (declare (ignore wt))
+    (auth-queue-push request-queue (make-auth-request :stop-signal t)))
+  ;; Wait for all threads to exit
   #+sbcl
-  (when worker-thread
-    (sb-thread:join-thread worker-thread :timeout 5.0))
+  (dolist (wt worker-threads)
+    (when wt
+      (sb-thread:join-thread wt :timeout 5.0)))
   #-sbcl
   nil)
 
@@ -1163,6 +1245,7 @@
         (cond
           ;; Success - integrate player into game
           (success
+           (auth-metric-incf success)
            ;; For login: remove any existing player with same ID (stale session)
            (when (and (eq (auth-result-type result) :login) player)
              (let ((existing (find player-id (game-players game) :key #'player-id)))
@@ -1180,9 +1263,9 @@
              ;; Phase 5: Initialize zone tracking - first snapshot is always full
              (setf (net-client-zone-id client) zone-id)
              (setf (net-client-needs-full-resync client) t)
-             ;; Register for persistence (session was already registered in worker thread)
-             (register-player-session player :zone-id zone-id
-                                      :username (string-downcase username))
+             ;; Step 5: Register local session only (DB calls moved to worker thread)
+             (register-player-session-local player :zone-id zone-id
+                                            :username (string-downcase username))
              (queue-private-state client player)
              (setf (player-inventory-dirty player) nil
                    (player-hud-stats-dirty player) nil)
@@ -1199,6 +1282,7 @@
                          username host port player-id)))
           ;; Failure - send error response
           (t
+           (auth-metric-incf fail)
            ;; Clean up session registration for login failures (was registered in worker)
            (when (and (eq (auth-result-type result) :login)
                       (not (eq error-reason :already-logged-in))
@@ -2379,8 +2463,10 @@
 (defun handle-register-request (client host port message socket game elapsed)
   "Handle account registration request.
    Supports both encrypted and plaintext credentials."
-  ;; Rate limiting check
-  (unless (auth-rate-check host elapsed)
+  ;; Rate limiting check (use wall-clock time, not sim elapsed)
+  (let ((now-rt (/ (get-internal-real-time) (float internal-time-units-per-second 1.0))))
+    (declare (ignorable now-rt))
+  (unless (auth-rate-check host now-rt)
     (send-net-message-with-retry socket
                                  (list :type :auth-fail :reason :rate-limited)
                                  :host host :port port
@@ -2397,7 +2483,7 @@
                                     :host host :port port
                                     :max-retries 3
                                     :delay 50)
-       (auth-rate-record-failure host elapsed)
+       (auth-rate-record-failure host now-rt)
        (log-verbose "Registration failed from ~a:~d - missing credentials" host port))
       ((with-retry-exponential (created (lambda () (db-create-account username password))
                                  :max-retries 3
@@ -2489,14 +2575,17 @@
                                     :max-retries 3
                                     :delay 50)
        (log-verbose "Registration failed from ~a:~d - username ~a already taken"
-                   host port username)))))
+                   host port username))))))
 
 (defun handle-login-request (client host port message socket game clients elapsed)
   "Handle account login request.
    Supports both encrypted and plaintext credentials."
   (declare (ignore clients))
+  ;; Use wall-clock time for rate limiting (elapsed is sim-time, wrong timebase)
+  (let ((now-rt (/ (get-internal-real-time) (float internal-time-units-per-second 1.0))))
+    (declare (ignorable now-rt))
   ;; Rate limiting check
-  (unless (auth-rate-check host elapsed)
+  (unless (auth-rate-check host now-rt)
     (send-net-message-with-retry socket
                                  (list :type :auth-fail :reason :rate-limited)
                                  :host host :port port
@@ -2513,7 +2602,7 @@
                                     :host host :port port
                                     :max-retries 3
                                     :delay 50)
-       (auth-rate-record-failure host elapsed)
+       (auth-rate-record-failure host now-rt)
        (log-verbose "Login failed from ~a:~d - missing credentials" host port))
       ;; Verify credentials first (with retry for transient DB failures)
       ((not (with-retry-exponential (verified (lambda () (db-verify-credentials username password))
@@ -2527,7 +2616,7 @@
                                     :max-retries 3
                                     :delay 50)
        ;; Bad credentials - count toward rate limit
-       (auth-rate-record-failure host elapsed)
+       (auth-rate-record-failure host now-rt)
        (log-verbose "Login failed from ~a:~d - bad credentials for ~a"
                    host port username))
       ;; Atomically try to register session (prevents double-login race)
@@ -2686,7 +2775,7 @@
                                         :max-retries 3
                                         :delay 50)
            (log-verbose "Login successful: ~a (~a:~d) -> player-id=~d"
-                       username host port (player-id player))))))))
+                       username host port (player-id player)))))))))
 
 (defun handle-logout-request (client host port game)
   "Handle logout request from authenticated client."
@@ -2827,6 +2916,33 @@
               *gc-last-time* 0.0)
         (format t "~&SERVER: Strategic GC scheduling enabled (~,0fs interval)~%"
                 *gc-interval-seconds*)))
+    ;; Auth throughput: configurable worker count, queue depth, message cap
+    (let ((auth-workers-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_AUTH_WORKERS")
+                                #-sbcl (uiop:getenv "MMORPG_AUTH_WORKERS")))
+          (auth-queue-max-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_AUTH_QUEUE_MAX")
+                                  #-sbcl (uiop:getenv "MMORPG_AUTH_QUEUE_MAX")))
+          (max-msg-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_MAX_MESSAGES_PER_TICK")
+                           #-sbcl (uiop:getenv "MMORPG_MAX_MESSAGES_PER_TICK"))))
+      (when auth-workers-str
+        (let ((n (parse-integer auth-workers-str :junk-allowed t)))
+          (when (and n (> n 0) (<= n 32))
+            (setf *auth-worker-count* n))))
+      (when auth-queue-max-str
+        (let ((n (parse-integer auth-queue-max-str :junk-allowed t)))
+          (when (and n (>= n 0))
+            (setf *auth-queue-max-depth* n))))
+      (when max-msg-str
+        (let ((n (parse-integer max-msg-str :junk-allowed t)))
+          (when (and n (> n 0))
+            (setf *max-messages-per-tick* n)))))
+    ;; Step 11: Configurable PBKDF2 iteration count
+    (let ((hash-iter-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_PASSWORD_HASH_ITERATIONS")
+                              #-sbcl (uiop:getenv "MMORPG_PASSWORD_HASH_ITERATIONS"))))
+      (when hash-iter-str
+        (let ((n (parse-integer hash-iter-str :junk-allowed t)))
+          (when (and n (>= n 1000) (<= n 1000000))
+            (setf *password-hash-iterations* n)
+            (format t "~&SERVER: PBKDF2 iterations set to ~d~%" n)))))
     ;; Clear any stale session state from previous REPL runs
     ;; (Important when restarting server without restarting the Lisp process)
     (log-verbose "Clearing stale sessions (active=~d, player=~d)"
@@ -2852,20 +2968,23 @@
            (stop-reason nil)
            (last-flush-time 0.0)
            (last-ownership-refresh-time 0.0)
-           ;; Auth worker thread for non-blocking login/registration
+           (last-auth-metrics-time 0.0)
+           ;; Auth worker threads for non-blocking login/registration
            (auth-request-queue (make-auth-queue-instance))
-           (auth-result-queue (make-auth-queue-instance))
-           (auth-worker (start-auth-worker auth-request-queue auth-result-queue game)))
+           (auth-result-queue (make-auth-queue-instance :max-depth 0)) ; result queue unbounded
+           (auth-workers (start-auth-workers auth-request-queue auth-result-queue
+                                             game *auth-worker-count*)))
       ;; Set global admin variables
       (setf *server-game* game)
       (setf *server-socket* socket)
       (setf *server-clients* clients)
       (setf *server-start-time* (get-internal-real-time))
       (setf *server-total-saves* 0)
-      (format t "~&SERVER: listening on ~a:~d (worker-threads=~d, auth-worker=~:[disabled~;enabled~])~%"
-              host port worker-threads auth-worker)
-      (log-verbose "Server config: tick=~,3fs buffer=~d workers=~d"
-                   *sim-tick-seconds* *net-buffer-size* worker-threads)
+      (format t "~&SERVER: listening on ~a:~d (worker-threads=~d, auth-workers=~d, queue-max=~d)~%"
+              host port worker-threads *auth-worker-count* *auth-queue-max-depth*)
+      (log-verbose "Server config: tick=~,3fs buffer=~d workers=~d auth-workers=~d max-msg/tick=~d"
+                   *sim-tick-seconds* *net-buffer-size* worker-threads
+                   *auth-worker-count* *max-messages-per-tick*)
       (finish-output)
       (unwind-protect
            (handler-case
@@ -2883,12 +3002,19 @@
                                      (>= frames max-frames)))
                      :do ;; Track frame start time for accurate sleep
                          (let ((frame-start (get-internal-real-time)))
-                         ;; 1. Receive all pending intents (non-blocking UDP receive)
+                         ;; 1. Receive pending intents (non-blocking UDP receive)
+                         ;; Step 7: Cap messages per tick to prevent starvation
+                         (let ((msg-count 0)
+                               (now-rt (/ (float (get-internal-real-time) 1.0d0)
+                                          (float internal-time-units-per-second 1.0d0))))
                          (loop
+                           (when (>= msg-count *max-messages-per-tick*)
+                             (return))
                            (multiple-value-bind (message host port)
                                (receive-net-message socket recv-buffer)
                              (unless message
                                (return))
+                             (incf msg-count)
                              (multiple-value-bind (client next-clients _new)
                                  (register-net-client game clients host port
                                                       :timestamp elapsed)
@@ -2902,46 +3028,62 @@
                                   (send-net-message socket (list :type :hello-ack)
                                                     :host host :port port))
                                  (:register
-                                  ;; Queue for async processing - main loop continues
-                                  (if (auth-rate-check host elapsed)
+                                  ;; Queue for async processing with backpressure (Steps 3, 6)
+                                  (if (auth-rate-check host now-rt)
                                       (multiple-value-bind (username password)
                                           (extract-auth-credentials message)
                                         (if (and username password)
-                                            (auth-queue-push auth-request-queue
+                                            ;; Step 3: try-push with backpressure
+                                            (if (auth-queue-try-push auth-request-queue
                                                              (make-auth-request :type :register
                                                                                 :host host
                                                                                 :port port
                                                                                 :username username
                                                                                 :password password
                                                                                 :client client
-                                                                                :timestamp elapsed))
+                                                                                :timestamp (float now-rt 1.0)))
+                                                (auth-metric-incf queued)
+                                                ;; Queue full - immediate rejection
+                                                (progn
+                                                  (auth-metric-incf rejected-busy)
+                                                  (send-net-message-with-retry socket
+                                                    (list :type :auth-fail :reason :server-busy)
+                                                    :host host :port port :max-retries 3 :delay 50)))
                                             (progn
                                               (send-net-message-with-retry socket
                                                                            (list :type :auth-fail :reason :missing-credentials)
                                                                            :host host :port port :max-retries 3 :delay 50)
-                                              (auth-rate-record-failure host elapsed))))
+                                              (auth-rate-record-failure host now-rt))))
                                       (send-net-message-with-retry socket
                                                                    (list :type :auth-fail :reason :rate-limited)
                                                                    :host host :port port :max-retries 3 :delay 50)))
                                  (:login
-                                  ;; Queue for async processing - main loop continues
-                                  (if (auth-rate-check host elapsed)
+                                  ;; Queue for async processing with backpressure (Steps 3, 6)
+                                  (if (auth-rate-check host now-rt)
                                       (multiple-value-bind (username password)
                                           (extract-auth-credentials message)
                                         (if (and username password)
-                                            (auth-queue-push auth-request-queue
+                                            ;; Step 3: try-push with backpressure
+                                            (if (auth-queue-try-push auth-request-queue
                                                              (make-auth-request :type :login
                                                                                 :host host
                                                                                 :port port
                                                                                 :username username
                                                                                 :password password
                                                                                 :client client
-                                                                                :timestamp elapsed))
+                                                                                :timestamp (float now-rt 1.0)))
+                                                (auth-metric-incf queued)
+                                                ;; Queue full - immediate rejection
+                                                (progn
+                                                  (auth-metric-incf rejected-busy)
+                                                  (send-net-message-with-retry socket
+                                                    (list :type :auth-fail :reason :server-busy)
+                                                    :host host :port port :max-retries 3 :delay 50)))
                                             (progn
                                               (send-net-message-with-retry socket
                                                                            (list :type :auth-fail :reason :missing-credentials)
                                                                            :host host :port port :max-retries 3 :delay 50)
-                                              (auth-rate-record-failure host elapsed))))
+                                              (auth-rate-record-failure host now-rt))))
                                       (send-net-message-with-retry socket
                                                                    (list :type :auth-fail :reason :rate-limited)
                                                                    :host host :port port :max-retries 3 :delay 50)))
@@ -2964,7 +3106,7 @@
                                        payload))))
                                  (t
                                   (log-verbose "Unknown message type from ~a:~d -> ~s"
-                                               host port (getf message :type)))))))
+                                               host port (getf message :type))))))))
                          ;; 1b. Integrate completed auth results (non-blocking)
                          ;; This adds newly authenticated players to the game
                          (integrate-auth-results auth-result-queue socket game elapsed)
@@ -2984,6 +3126,19 @@
                          (when (>= (- elapsed last-flush-time) *batch-flush-interval*)
                            (flush-dirty-players)
                            (setf last-flush-time elapsed))
+                         ;; 3b2. Periodic auth metrics logging (every 30s)
+                         (when (>= (- elapsed last-auth-metrics-time) 30.0)
+                           (when (> (auth-metrics-queued *auth-metrics*) 0)
+                             (format t "[AUTH] queued=~d processed=~d success=~d fail=~d expired=~d rejected=~d queue-depth=~d~%"
+                                     (auth-metrics-queued *auth-metrics*)
+                                     (auth-metrics-processed *auth-metrics*)
+                                     (auth-metrics-success *auth-metrics*)
+                                     (auth-metrics-fail *auth-metrics*)
+                                     (auth-metrics-expired *auth-metrics*)
+                                     (auth-metrics-rejected-busy *auth-metrics*)
+                                     (auth-queue-count auth-request-queue))
+                             (finish-output))
+                           (setf last-auth-metrics-time elapsed))
                          ;; 3c. Periodic session ownership refresh (every ~30s, half of TTL)
                          (when (>= (- elapsed last-ownership-refresh-time) *ownership-refresh-interval*)
                            (let ((lost-sessions (refresh-all-session-ownerships)))
@@ -3064,8 +3219,8 @@
         (when stop-reason
           (format t "~&SERVER: shutdown requested (~a).~%" stop-reason)
           (finish-output))
-        ;; Stop auth worker thread
-        (stop-auth-worker auth-request-queue auth-worker)
+        ;; Stop auth worker threads
+        (stop-auth-workers auth-request-queue auth-workers)
         ;; Graceful shutdown: flush all dirty players and close storage
         (db-shutdown-flush)
         (usocket:socket-close socket)))))
@@ -3097,6 +3252,12 @@
                    :with frames = 0
                    :with auto-login-attempted = nil
                    :with auto-login-register-failed = nil
+                   :with busy-retry-count = 0       ; Step 8: server-busy retry counter
+                   :with busy-retry-time = 0.0      ; Step 8: when to retry after :server-busy
+                   :with busy-retry-type = nil       ; :register or :login
+                   :with busy-retry-username = nil
+                   :with busy-retry-password = nil
+                   :with last-auth-type = nil        ; Tracks last sent auth type for busy retry
                    :with last-snapshot-seq = nil  ; Delta compression: last received seq
                    :with chunk-buf = (make-chunk-buffer)  ; UDP fragmentation: reassembly buffer
                    :until (or (raylib:window-should-close)
@@ -3134,10 +3295,25 @@
                                   (progn
                                     (send-auth-message socket :register
                                                        auto-login-username auto-login-password)
-                                    (setf auto-login-attempted t)
+                                    (setf auto-login-attempted t
+                                          last-auth-type :register)
                                     (log-verbose "Auto-login: attempting register for ~a" auto-login-username))
                                 (error ()
                                   (setf (ui-server-status ui) :offline))))
+                            ;; Step 8: Retry auth after :server-busy with exponential backoff
+                            (when (and busy-retry-type
+                                      (> busy-retry-time 0.0)
+                                      (>= elapsed busy-retry-time)
+                                      (<= busy-retry-count 3))
+                              (handler-case
+                                  (progn
+                                    (send-auth-message socket busy-retry-type
+                                                       busy-retry-username busy-retry-password)
+                                    (log-verbose "Retrying ~a after server-busy (attempt ~d)"
+                                                busy-retry-type busy-retry-count))
+                                (error ()
+                                  (setf (ui-server-status ui) :offline)))
+                              (setf busy-retry-time 0.0)) ; Clear so we don't resend
                             ;; Update login input
                             (update-login-input ui)
                             ;; F11 toggles fullscreen on login screen
@@ -3154,7 +3330,8 @@
                                         (send-auth-message socket :login
                                                            (ui-username-buffer ui)
                                                            (ui-username-buffer ui))
-                                        (setf (ui-auth-error-message ui) nil)
+                                        (setf (ui-auth-error-message ui) nil
+                                              last-auth-type :login)
                                         (log-verbose "Sending login request for ~a (Enter key)" (ui-username-buffer ui)))
                                     (error ()
                                       (setf (ui-server-status ui) :offline
@@ -3188,20 +3365,45 @@
                                                (eq reason :username-taken))
                                        (send-auth-message socket :login
                                                           auto-login-username auto-login-password)
-                                       (setf auto-login-register-failed t)
+                                       (setf auto-login-register-failed t
+                                             last-auth-type :login)
                                        (log-verbose "Auto-login: register failed, trying login for ~a"
                                                    auto-login-username))
-                                     (setf (ui-auth-error-message ui)
-                                           (case reason
-                                             (:bad-credentials "Invalid username or password")
-                                             (:username-taken "Username already taken")
-                                             (:already-logged-in "Account already logged in")
-                                             (:missing-credentials "Missing username or password")
-                                             (:wrong-zone (let ((zone-id (getf message :zone-id)))
-                                                            (if zone-id
-                                                                (format nil "Wrong server for this character (zone: ~a)" zone-id)
-                                                                "Wrong server for this character")))
-                                             (t "Authentication failed")))
+                                     ;; Step 8: Handle :server-busy with exponential backoff retry
+                                     (when (eq reason :server-busy)
+                                       (if (< busy-retry-count 3)
+                                           (let* ((delay (expt 2.0 busy-retry-count)) ; 1s, 2s, 4s
+                                                  ;; Re-derive credentials for retry
+                                                  ;; MVP: password = username (ui-password-buffer unused)
+                                                  (uname (or auto-login-username
+                                                             (ui-username-buffer ui)))
+                                                  (pwd (or auto-login-password
+                                                           (ui-username-buffer ui))))
+                                             (setf busy-retry-time (+ elapsed delay))
+                                             (incf busy-retry-count)
+                                             ;; Use last-auth-type to retry the same action
+                                             (setf busy-retry-type (or last-auth-type :login))
+                                             (setf busy-retry-username uname
+                                                   busy-retry-password pwd)
+                                             (setf (ui-auth-error-message ui)
+                                                   (format nil "Server busy, retrying (~d/3)..." busy-retry-count))
+                                             (log-verbose "Server busy, retry ~d in ~,1fs" busy-retry-count delay))
+                                           ;; Max retries exceeded
+                                           (setf (ui-auth-error-message ui)
+                                                 "Server is too busy. Please try again later.")))
+                                     (unless (eq reason :server-busy)
+                                       (setf (ui-auth-error-message ui)
+                                             (case reason
+                                               (:bad-credentials "Invalid username or password")
+                                               (:username-taken "Username already taken")
+                                               (:already-logged-in "Account already logged in")
+                                               (:missing-credentials "Missing username or password")
+                                               (:request-expired "Request timed out, please try again")
+                                               (:wrong-zone (let ((zone-id (getf message :zone-id)))
+                                                              (if zone-id
+                                                                  (format nil "Wrong server for this character (zone: ~a)" zone-id)
+                                                                  "Wrong server for this character")))
+                                               (t "Authentication failed"))))
                                      (log-verbose "Authentication failed: ~a" reason)))
                                   (:private-state
                                    (apply-private-state game
@@ -3235,11 +3437,13 @@
                                             (case action
                                               (:login
                                                (send-auth-message socket :login username username)
-                                               (setf (ui-auth-error-message ui) nil)
+                                               (setf (ui-auth-error-message ui) nil
+                                                     last-auth-type :login)
                                                (log-verbose "Sending login request for ~a" username))
                                               (:register
                                                (send-auth-message socket :register username username)
-                                               (setf (ui-auth-error-message ui) nil)
+                                               (setf (ui-auth-error-message ui) nil
+                                                     last-auth-type :register)
                                                (log-verbose "Sending register request for ~a" username)))
                                           (error ()
                                             (setf (ui-server-status ui) :offline

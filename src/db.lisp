@@ -417,7 +417,7 @@
   "Load data from Redis. Returns plist or NIL if not found."
   (handler-case
       (with-redis-timing (:load)
-        (redis:with-connection (:host (redis-storage-host storage)
+        (redis:with-recursive-connection (:host (redis-storage-host storage)
                                 :port (redis-storage-port storage))
           (let ((raw (red:get key)))
             (when raw
@@ -436,7 +436,7 @@
   (handler-case
       (with-redis-timing (:save)
         (let ((temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
-          (redis:with-connection (:host (redis-storage-host storage)
+          (redis:with-recursive-connection (:host (redis-storage-host storage)
                                   :port (redis-storage-port storage))
             ;; Write to temporary key
             (red:set temp-key (prin1-to-string data))
@@ -453,7 +453,7 @@
 (defmethod storage-delete ((storage redis-storage) key)
   "Delete key from Redis. Returns T if existed."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (> (red:del key) 0))
     (error (e)
@@ -463,7 +463,7 @@
 (defmethod storage-exists-p ((storage redis-storage) key)
   "Check if key exists in Redis."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:exists key)))
           (if (numberp result)
@@ -476,7 +476,7 @@
 (defmethod storage-keys ((storage redis-storage) pattern)
   "Return list of keys matching PATTERN from Redis."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:keys pattern))
     (error (e)
@@ -486,7 +486,7 @@
 (defmethod storage-flush ((storage redis-storage))
   "Trigger Redis BGSAVE for immediate snapshot."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:bgsave)
         (log-verbose "Redis BGSAVE triggered")
@@ -506,7 +506,7 @@
       (let ((temp-keys nil)
             (count (length key-data-pairs))
             (timestamp (get-internal-real-time)))
-        (redis:with-connection (:host (redis-storage-host storage)
+        (redis:with-recursive-connection (:host (redis-storage-host storage)
                                 :port (redis-storage-port storage))
           ;; Phase 1: Write all data to temp keys (pipelined)
           (redis:with-pipelining
@@ -534,7 +534,7 @@
   "SET if Not eXists with TTL. Returns T if set, NIL if key exists.
    Uses SETNX + EXPIRE (not atomic but sufficient for session ownership)."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         ;; SETNX returns T or 1 if set, NIL or 0 if key exists (cl-redis varies)
         (let ((result (red:setnx key value)))
@@ -549,7 +549,7 @@
 (defmethod storage-refresh-ttl ((storage redis-storage) key ttl-seconds)
   "Refresh TTL on KEY. Returns T if key exists, NIL otherwise."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         ;; EXPIRE returns 1 if key exists and TTL was set, 0 otherwise
         (let ((result (red:expire key ttl-seconds)))
@@ -563,7 +563,7 @@
    Returns NIL if key not found. Signals STORAGE-ERROR on failure
    (Phase 1: enables retry logic and distinguishes error from not-found)."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:get key))
     (error (e)
@@ -576,7 +576,7 @@
 (defmethod storage-incr ((storage redis-storage) key)
   "Increment counter at KEY. Returns new value."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:incr key))
     (error (e)
@@ -586,7 +586,7 @@
 (defmethod storage-save-with-ttl ((storage redis-storage) key data ttl-seconds)
   "Save DATA at KEY with TTL expiration."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:setex key ttl-seconds (prin1-to-string data))
         t)
@@ -599,7 +599,7 @@
 (defmethod storage-zadd ((storage redis-storage) key score member)
   "Add member to sorted set with score."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:zadd key score member)
         t)
@@ -610,7 +610,7 @@
 (defmethod storage-zincrby ((storage redis-storage) key increment member)
   "Increment member's score in sorted set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:zincrby key increment member)))
           (if (stringp result)
@@ -623,7 +623,7 @@
 (defmethod storage-zrevrange ((storage redis-storage) key start stop &key withscores)
   "Get members in descending score order."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (if withscores
             ;; ZREVRANGE returns alternating member/score when WITHSCORES
@@ -641,7 +641,7 @@
 (defmethod storage-zrank ((storage redis-storage) key member)
   "Get rank of member (ascending order, 0-based)."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:zrank key member))
     (error (e)
@@ -651,7 +651,7 @@
 (defmethod storage-zrevrank ((storage redis-storage) key member)
   "Get rank of member (descending order, 0-based)."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:zrevrank key member))
     (error (e)
@@ -661,7 +661,7 @@
 (defmethod storage-zscore ((storage redis-storage) key member)
   "Get score of member in sorted set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:zscore key member)))
           (when result
@@ -677,7 +677,7 @@
 (defmethod storage-sadd ((storage redis-storage) key member)
   "Add member to set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:sadd key member)))
           (and (numberp result) (> result 0))))
@@ -688,7 +688,7 @@
 (defmethod storage-srem ((storage redis-storage) key member)
   "Remove member from set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:srem key member)))
           (and (numberp result) (> result 0))))
@@ -699,7 +699,7 @@
 (defmethod storage-scard ((storage redis-storage) key)
   "Get count of members in set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((result (red:scard key)))
           (if (numberp result) result 0)))
@@ -710,7 +710,7 @@
 (defmethod storage-smembers ((storage redis-storage) key)
   "Get all members of set."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (red:smembers key))
     (error (e)
@@ -723,7 +723,7 @@
   "Load a Lua script into Redis and cache its SHA.
    Also caches the script body for NOSCRIPT recovery."
   (handler-case
-      (redis:with-connection (:host (redis-storage-host storage)
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
                               :port (redis-storage-port storage))
         (let ((sha (red:script-load script-body)))
           (setf (gethash script-name *redis-script-shas*) sha)
@@ -743,7 +743,7 @@
       (warn "Script ~a not loaded - call storage-script-load first" script-name)
       (return-from storage-eval-script nil))
     (handler-case
-        (redis:with-connection (:host (redis-storage-host storage)
+        (redis:with-recursive-connection (:host (redis-storage-host storage)
                                 :port (redis-storage-port storage))
           ;; EVALSHA sha numkeys key1 key2 ... arg1 arg2 ...
           (let* ((num-keys (length keys))
@@ -759,7 +759,7 @@
                     (progn
                       (log-verbose "Script ~a evicted, reloading..." script-name)
                       (handler-case
-                          (redis:with-connection (:host (redis-storage-host storage)
+                          (redis:with-recursive-connection (:host (redis-storage-host storage)
                                                   :port (redis-storage-port storage))
                             (let ((new-sha (red:script-load script-body)))
                               (setf (gethash script-name *redis-script-shas*) new-sha)
@@ -1725,6 +1725,36 @@
     (log-verbose "Registered session for player ~a in zone ~a" player-id zone-id)
     t))
 
+(defun register-player-session-local (player &key (zone-id nil) (username nil))
+  "Register local session state only (no DB calls). For main-thread use.
+   Step 5: Split of register-player-session - in-memory part only."
+  (let ((player-id (player-id player)))
+    (with-player-sessions-lock
+      (setf (gethash player-id *player-sessions*)
+            (make-player-session :player player
+                                 :zone-id zone-id
+                                 :username username
+                                 :dirty-p nil
+                                 :last-flush (float (get-internal-real-time) 1.0)
+                                 :tier1-pending nil)))
+    (log-verbose "Registered local session for player ~a in zone ~a" player-id zone-id)
+    t))
+
+(defun register-player-session-db (player-id player)
+  "Register session in DB: ownership, online set, leaderboards. For worker-thread use.
+   Step 5: Split of register-player-session - DB part only.
+   Returns T on success, NIL if session ownership rejected."
+  (unless (claim-session-ownership player-id)
+    (warn "Double-login rejected for player ~a - session owned elsewhere" player-id)
+    (return-from register-player-session-db nil))
+  (db-add-online-player player-id)
+  (db-update-leaderboard-xp player-id (player-lifetime-xp player))
+  (let ((level (combat-level (player-stats player))))
+    (db-update-leaderboard-level player-id level))
+  (db-update-leaderboard-deaths player-id (player-deaths player))
+  (log-verbose "Registered DB session for player ~a" player-id)
+  t)
+
 (defun update-player-session-zone (player-id zone-id)
   "Update the zone-id for a player session (called on zone transitions). Thread-safe."
   (with-player-sessions-lock
@@ -1880,12 +1910,10 @@
 
 ;;;; Password Hashing (using ironclad PBKDF2-SHA256)
 
-(defparameter *password-hash-iterations* 100000
-  "Number of PBKDF2 iterations for password hashing.
-   Higher = more secure but slower. 100k is industry standard as of 2024.")
+;;; Password hashing parameters are defined in config-server.lisp:
+;;;   *password-hash-iterations*, *password-legacy-iterations*, *password-salt-bytes*
 
-(defparameter *password-salt-bytes* 16
-  "Salt length in bytes. 16 bytes = 128 bits, sufficient for security.")
+
 
 (defun generate-salt ()
   "Generate a cryptographically secure random salt."
@@ -1893,7 +1921,7 @@
 
 (defun derive-password-key (password salt)
   "Derive a key from PASSWORD using PBKDF2-SHA256 with SALT.
-   Returns the derived key as a byte vector."
+   Uses current *password-hash-iterations*. Returns the derived key as a byte vector."
   (let ((password-bytes (ironclad:ascii-string-to-byte-array password)))
     (ironclad:derive-key
      (ironclad:make-kdf 'ironclad:pbkdf2 :digest 'ironclad:sha256)
@@ -1901,6 +1929,17 @@
      salt
      *password-hash-iterations*
      32)))  ; 32 bytes = 256 bits output
+
+(defun derive-password-key-with-iterations (password salt iterations)
+  "Derive a key from PASSWORD using PBKDF2-SHA256 with SALT and explicit ITERATIONS.
+   Step 11: Used for verifying hashes with specific iteration counts."
+  (let ((password-bytes (ironclad:ascii-string-to-byte-array password)))
+    (ironclad:derive-key
+     (ironclad:make-kdf 'ironclad:pbkdf2 :digest 'ironclad:sha256)
+     password-bytes
+     salt
+     iterations
+     32)))
 
 (defun bytes-to-hex (bytes)
   "Convert byte vector to lowercase hex string."
@@ -1910,31 +1949,67 @@
   "Convert hex string to byte vector."
   (ironclad:hex-string-to-byte-array hex-string))
 
+(defun split-hash-string (stored-hash)
+  "Split a stored hash string on '$' delimiters.
+   Returns a list of parts. 2 parts = legacy format, 3 parts = new format."
+  (let ((parts nil)
+        (start 0))
+    (loop :for i :from 0 :below (length stored-hash)
+          :when (char= (char stored-hash i) #\$)
+          :do (push (subseq stored-hash start i) parts)
+              (setf start (1+ i)))
+    (push (subseq stored-hash start) parts)
+    (nreverse parts)))
+
 (defun hash-password (password)
   "Hash PASSWORD using PBKDF2-SHA256 with random salt.
-   Returns a string in format 'salt$hash' for storage."
+   Step 11: Returns 3-part format 'salt$iterations$hash' for storage.
+   The iteration count is embedded so verify-password uses the correct count."
   (let* ((salt (generate-salt))
          (key (derive-password-key password salt))
          (salt-hex (bytes-to-hex salt))
          (key-hex (bytes-to-hex key)))
-    (concatenate 'string salt-hex "$" key-hex)))
+    (format nil "~a$~d$~a" salt-hex *password-hash-iterations* key-hex)))
 
 (defun verify-password (password stored-hash)
-  "Verify PASSWORD against STORED-HASH (format: 'salt$hash').
+  "Verify PASSWORD against STORED-HASH.
+   Step 11: Handles both formats:
+   - 3-part 'salt$iterations$hash' (new, uses embedded iteration count)
+   - 2-part 'salt$hash' (legacy, assumes *password-legacy-iterations*)
    Returns T if password matches, NIL otherwise."
-  (let* ((dollar-pos (position #\$ stored-hash)))
-    (unless dollar-pos
-      ;; Invalid hash format
-      (return-from verify-password nil))
-    (let* ((salt-hex (subseq stored-hash 0 dollar-pos))
-           (stored-key-hex (subseq stored-hash (1+ dollar-pos)))
-           (salt (hex-to-bytes salt-hex))
-           (computed-key (derive-password-key password salt))
-           (computed-key-hex (bytes-to-hex computed-key)))
-      ;; Constant-time comparison to prevent timing attacks
-      (ironclad:constant-time-equal
-       (ironclad:ascii-string-to-byte-array computed-key-hex)
-       (ironclad:ascii-string-to-byte-array stored-key-hex)))))
+  (let ((parts (split-hash-string stored-hash)))
+    (cond
+      ;; New format: salt$iterations$hash
+      ((= (length parts) 3)
+       (let* ((salt-hex (first parts))
+              (iterations (handler-case
+                              (parse-integer (second parts) :junk-allowed nil)
+                            (error () (return-from verify-password nil))))
+              (stored-key-hex (third parts))
+              (salt (hex-to-bytes salt-hex))
+              (computed-key (derive-password-key-with-iterations password salt iterations))
+              (computed-key-hex (bytes-to-hex computed-key)))
+         ;; Constant-time comparison to prevent timing attacks
+         (ironclad:constant-time-equal
+          (ironclad:ascii-string-to-byte-array computed-key-hex)
+          (ironclad:ascii-string-to-byte-array stored-key-hex))))
+      ;; Legacy format: salt$hash (assumes 100k iterations)
+      ((= (length parts) 2)
+       (let* ((salt-hex (first parts))
+              (stored-key-hex (second parts))
+              (salt (hex-to-bytes salt-hex))
+              (computed-key (derive-password-key-with-iterations
+                             password salt *password-legacy-iterations*))
+              (computed-key-hex (bytes-to-hex computed-key)))
+         (ironclad:constant-time-equal
+          (ironclad:ascii-string-to-byte-array computed-key-hex)
+          (ironclad:ascii-string-to-byte-array stored-key-hex))))
+      ;; Invalid format
+      (t nil))))
+
+(defun legacy-hash-format-p (stored-hash)
+  "Return T if STORED-HASH uses the legacy 2-part format (salt$hash)."
+  (= (length (split-hash-string stored-hash)) 2))
 
 ;;;; Network Encryption (X25519 + AES-256-GCM)
 ;;;;
@@ -2074,10 +2149,11 @@
 
 ;;;; Account Management
 
-(defparameter *account-schema-version* 2
+(defparameter *account-schema-version* 3
   "Current schema version for account records.
    v1: plaintext passwords
-   v2: PBKDF2-SHA256 hashed passwords (salt$hash format)")
+   v2: PBKDF2-SHA256 hashed passwords (salt$hash format, 100k iterations)
+   v3: PBKDF2-SHA256 with embedded iteration count (salt$iterations$hash format, 10k default)")
 
 (defun account-key (username)
   "Return storage key for account USERNAME."
@@ -2128,12 +2204,22 @@
   t)
 
 (defun db-verify-credentials (username password)
-  "Verify username/password. Returns T if credentials are valid, NIL otherwise."
+  "Verify username/password. Returns T if credentials are valid, NIL otherwise.
+   Step 11: Re-hashes legacy accounts on successful login (transparent migration)."
   (let ((account (db-load-account username)))
     (when account
       (let ((stored-hash (getf account :password-hash)))
-        (when stored-hash
-          (verify-password password stored-hash))))))
+        (when (and stored-hash (verify-password password stored-hash))
+          ;; Step 11: Transparent re-hash migration for legacy accounts
+          (when (legacy-hash-format-p stored-hash)
+            (let ((new-hash (hash-password password)))
+              (handler-case
+                  (db-save-account username new-hash (getf account :character-id))
+                (error (e)
+                  ;; Re-hash failure is non-critical; login still succeeds
+                  (warn "Failed to re-hash legacy account ~a: ~a" username e))))
+            (log-verbose "Re-hashed legacy account ~a to new format" username))
+          t)))))
 
 (defun db-get-character-id (username)
   "Get character-id for account USERNAME. Returns character-id or NIL."
@@ -2148,6 +2234,67 @@
       (let ((password-hash (getf account :password-hash)))
         (when password-hash
           (db-save-account username password-hash character-id))))))
+
+;;;; Pipelined Auth Operations (Step 10: Reduce Redis round-trips)
+
+(defun db-create-account-pipelined (username password character-id)
+  "Create account, hash password, and link character-id in one Redis connection.
+   Reduces 4-5 separate connections to 1 connection + 3 Redis commands.
+   Returns T on success, :USERNAME-TAKEN if username exists.
+   Signals on Redis infrastructure errors (does not swallow them).
+   Falls back to sequential calls for non-Redis storage."
+  (unless *storage*
+    (return-from db-create-account-pipelined nil))
+  (if (typep *storage* 'redis-storage)
+      ;; Redis: single connection with pipelining
+      (let ((key (account-key username)))
+        (redis:with-recursive-connection (:host (redis-storage-host *storage*)
+                                :port (redis-storage-port *storage*))
+          ;; Phase 1: Check existence (must be synchronous - conditional on result)
+          (let ((exists (red:exists key)))
+            (when (or (eq exists t) (and (numberp exists) (plusp exists)))
+              (log-verbose "Account creation failed: username ~a already exists" username)
+              (return-from db-create-account-pipelined :username-taken)))
+          ;; Phase 2: Hash password (CPU work while connection is idle)
+          (let* ((password-hash (hash-password password))
+                 (data (list :version *account-schema-version*
+                             :username (string-downcase username)
+                             :password-hash password-hash
+                             :character-id character-id))
+                 (temp-key (format nil "temp:~a:~a" key (get-internal-real-time))))
+            ;; Phase 3: Save account with pipelining (SET + RENAME atomic)
+            (redis:with-pipelining
+              (red:set temp-key (prin1-to-string data))
+              (red:rename temp-key key))
+            (log-verbose "Created new account: ~a (pipelined)" username)
+            t)))
+      ;; Non-Redis: fall back to sequential calls
+      (if (db-create-account username password)
+          (progn
+            (db-set-character-id username character-id)
+            t)
+          :username-taken)))
+
+(defun db-verify-and-load-account (username password)
+  "Verify credentials and return character-id in one operation.
+   Loads the account record once instead of twice (eliminates redundant
+   db-load-account call between db-verify-credentials and db-get-character-id).
+   Step 11: Also re-hashes legacy accounts on successful login.
+   Returns (values character-id T) on success,
+   (values nil nil) on bad credentials or not found."
+  (let ((account (db-load-account username)))
+    (when account
+      (let ((stored-hash (getf account :password-hash)))
+        (when (and stored-hash (verify-password password stored-hash))
+          ;; Step 11: Transparent re-hash migration for legacy accounts
+          (when (legacy-hash-format-p stored-hash)
+            (let ((new-hash (hash-password password)))
+              (handler-case
+                  (db-save-account username new-hash (getf account :character-id))
+                (error (e)
+                  (warn "Failed to re-hash legacy account ~a: ~a" username e))))
+            (log-verbose "Re-hashed legacy account ~a to new format" username))
+          (values (getf account :character-id) t))))))
 
 ;;;; Graceful Shutdown
 

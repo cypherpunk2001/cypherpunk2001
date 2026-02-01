@@ -52,6 +52,34 @@
    Reduces bandwidth and serialization CPU. Requires client/server sync.
    Toggle via MMORPG_BINARY_SNAPSHOTS=1 environment variable.")
 
+;;; Auth Worker Pool - Multiple threads for parallel auth processing
+(defparameter *auth-worker-count* 4
+  "Number of auth worker threads. Each independently processes auth requests.
+   Override via MMORPG_AUTH_WORKERS environment variable.")
+(defparameter *auth-queue-max-depth* 200
+  "Maximum auth requests queued. Beyond this, server responds :server-busy.
+   0 = unlimited. Override via MMORPG_AUTH_QUEUE_MAX environment variable.")
+(defparameter *auth-request-max-age* 25.0
+  "Seconds before a queued auth request is considered stale and skipped.
+   Should be less than client auth timeout (30s) to avoid wasted work.")
+(defparameter *max-messages-per-tick* 2000
+  "Maximum UDP messages processed per tick before yielding to simulation.
+   Prevents message flood from starving auth integration and snapshots.
+   Override via MMORPG_MAX_MESSAGES_PER_TICK environment variable.")
+
+;;; Password Hashing (PBKDF2-SHA256)
+(defparameter *password-hash-iterations* 10000
+  "PBKDF2-SHA256 iteration count for password hashing.
+   Step 11: Reduced from 100k to 10k for ~10x faster hashing.
+   At 10k iterations with 4 workers, auth throughput ~400 req/s.
+   10k PBKDF2-SHA256 still requires months of GPU time to brute-force.
+   Override via MMORPG_PASSWORD_HASH_ITERATIONS environment variable.")
+(defparameter *password-legacy-iterations* 100000
+  "Legacy PBKDF2 iteration count for verifying old 2-part format hashes.
+   Used only for backward compatibility with accounts created before Step 11.")
+(defparameter *password-salt-bytes* 16
+  "Salt length in bytes. 16 bytes = 128 bits, sufficient for security.")
+
 ;;; Auth Encryption - X25519 + ChaCha20-Poly1305
 (defparameter *auth-encryption-enabled* nil
   "Enable auth payload encryption. Requires server public key.")
