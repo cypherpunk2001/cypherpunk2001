@@ -7,9 +7,9 @@
 
 ## Requirements
 
-1. **Zero loading screens** — no "loading..." overlay ever, including first entry to any zone.
-2. **Boundary invisibility** — as a player approaches an edge, they see truthful content from the adjacent zone: terrain, players, NPCs, items/objects. No blind boundaries.
-3. **Preserve zone architecture** — server authority, per-zone simulation, horizontal scaling (one process per zone).
+1. **Zero loading screens for zone transitions** — no "loading..." overlay when walking across zone boundaries, including first entry to any zone. (Teleports and initial login are out of scope — they may use a brief fade/overlay since they are intentional, non-locomotion events and the destination zone is not predictable for preloading.)
+2. **Boundary invisibility** — as a player approaches an edge, they see truthful content from the adjacent zone: terrain, players, NPCs, items/objects. No blind boundaries. **Single-process scope for entity visibility**: edge-strip entity streaming (Steps 7-9) requires local access to adjacent zone-states, which only works when all zones run in one process. Multi-process deployment delivers boundary invisibility for *terrain* (client-side tile preloading works regardless of server topology) but not for *entities* until the cross-zone AOI exchange protocol is implemented (see Future Work). This is acceptable for the current development phase — the codebase runs single-process today.
+3. **Preserve zone architecture** — server authority, per-zone simulation. Horizontal scaling (one process per zone) is architecturally preserved — nothing in this plan prevents multi-process deployment. Edge-strip entity streaming degrades gracefully: in multi-process mode, terrain is still seamless and entity edge-strips are simply absent until the cross-zone AOI protocol is added.
 4. **Continuous gameplay** — the world feels seamless while zones remain the unit of design, content, and tooling.
 
 ---
@@ -138,53 +138,63 @@ Zone interior   Cancel(8t)  Arm(6t)  Preload/AOI(10t from edge)     Edge(0t)
 
 ---
 
-### Step 5: Arm-triggered preloading (zero first-entry loading)
+### Step 5: Client-side proximity preloading (zero first-entry loading)
 
-**What:** When the hysteresis arm fires (Step 2), immediately preload the target zone into the client cache. By the time the player reaches the commit line (zone edge), the zone is already cached. This eliminates loading screens even on first entry to a zone.
+**What:** The client monitors the local player's distance to each zone edge. When within `*zone-preload-radius*` of any edge, the client queues that edge's adjacent zone for preloading into the LRU cache. By the time the player reaches the commit line (zone edge), the zone is already cached. This eliminates loading screens even on first entry to a zone.
 
-This replaces the old "preload after transition" design. Preloading now happens *before* the transition, triggered by the arm event.
+This is entirely client-side — independent of the server's arm/commit/cancel state machine (Step 2). The preload radius is configured to be >= the hysteresis arm distance so preloading starts before or at the same distance as arming, but the two systems do not communicate.
 
 **Files:**
-- `src/config.lisp` — Add `*zone-preload-radius*` (default 10.0 tiles from edge). When the player is within this distance of any edge, queue preloading for that edge's target zone. This is >= `*zone-hysteresis-in*` so preloading starts at or before arming.
+- `src/config.lisp` — Add `*zone-preload-radius*` (default 10.0 tiles from edge). When the player is within this distance of any edge, queue preloading for that edge's target zone. This is >= `*zone-hysteresis-in*` (6.0) so preloading starts well before the player reaches the arm line.
 - `src/types.lisp` — Add `preload-queue` field to game struct (list of `(zone-id . path)` pairs).
-- `src/movement.lisp:1298` (`update-zone-transition`) — When arm fires (pending set), also check if target zone is in client cache. If not, add to `preload-queue`. Additionally, when the player enters the preload radius on *any* edge (even without arming — e.g., walking parallel near an edge), queue that edge's neighbor for preload.
-- `src/main.lisp` (client update loop) — Each frame, if `preload-queue` is non-empty, pop one entry, call `load-zone`, insert into cache. One zone per frame to avoid hitches.
+- `src/main.lisp` — Add `update-client-preloading (game)`, called from the **client** update loop (NOT from `update-zone-transition`, which runs on the server). This function:
+  1. Checks the local player's distance to each zone edge.
+  2. If within `*zone-preload-radius*` of any edge, looks up the adjacent zone-id from the world-graph and queues it for preload if not already in cache.
+  3. This is client-only logic — uses the client's local player position and the client's zone cache. The server never sees or processes preload queues.
+- `src/main.lisp` (client update loop) — Each frame, call `update-client-preloading`. Then, if `preload-queue` is non-empty, pop one entry, call `load-zone`, insert into cache. One zone per frame to avoid hitches.
 - `src/main.lisp` — On initial client startup / first zone load, also queue all adjacent zones immediately (cold start preload).
+
+**Server/client separation:** `update-zone-transition` (movement.lisp) handles arm/commit/cancel on the server only. Preload triggering is entirely client-side in `update-client-preloading` (main.lisp). The two are independent — the server doesn't know about the client cache, and the client doesn't execute the arm/commit state machine.
 
 **Preload scope:** Filter by spatial adjacency only — cardinal edges with `:preserve-x`/`:preserve-y` offset. Skip teleports/dungeon entrances. Include diagonal neighbors (neighbors-of-neighbors) for corner coverage.
 
 **Tests:**
-- Unit test: arm event queues target zone for preload.
-- Unit test: entering preload radius without arming still queues neighbor.
+- Unit test: player within preload radius of edge → adjacent zone queued for preload.
+- Unit test: player outside preload radius → no preload queued.
 - Unit test: already-cached zones not re-queued.
 - Unit test: diagonal neighbors included in initial preload.
 - Unit test: teleport edges filtered out.
 
 ---
 
-### Step 6: Remove loading overlay entirely
+### Step 6: Remove loading overlay from zone transitions
 
-**What:** The loading overlay is no longer needed. With arm-triggered preloading (Step 5), zones are always cached before the player reaches the commit line. Remove the overlay unconditionally — `ui-trigger-loading` is never called during zone transitions.
+**What:** Zone transitions no longer show the loading overlay. With proximity-based preloading (Step 5), zones are always cached before the player reaches the commit line. Remove the overlay call from the zone transition path.
+
+**Scope:** This applies to locomotion-based zone transitions (walking across boundaries) only. Teleports and initial login are out of scope — they may still use `ui-trigger-loading` since the destination is not predictable for preloading. The `ui-trigger-loading` and `update-ui-loading` functions remain in the codebase for these other uses.
 
 **Files:**
-- `src/main.lisp:422` (`handle-zone-transition`) — Remove the call to `(ui-trigger-loading ui)` entirely. Keep buffer resets and NPC sync.
-- `src/ui.lisp` — `ui-trigger-loading` and `update-ui-loading` remain in codebase (may be used for other purposes like teleports or initial login), but are not called from zone transitions.
+- `src/main.lisp:422` (`handle-zone-transition`) — Remove the call to `(ui-trigger-loading ui)`. Keep buffer resets and NPC sync. This function is only called for locomotion zone transitions, not for teleports (which have a separate code path).
 - `src/save.lisp:1685` (`apply-game-state`) — No need to return `cache-hit-p`. Zone transition path always uses cache (preloaded by Step 5). If cache miss occurs (edge case: preload failed), load synchronously from disk but still do not show overlay — the load is fast enough (<200ms) to absorb without UX disruption.
 
-**Predicate for testing:** Extract `zone-transition-show-loading-p` that always returns nil. Unit-testable without UI.
+**Predicate for testing:** Extract `zone-transition-show-loading-p` that always returns nil for locomotion transitions. Unit-testable without UI.
 
 **Tests:**
-- Unit test: `zone-transition-show-loading-p` always returns nil (no loading overlay ever).
-- Unit test: `handle-zone-transition` does NOT call `ui-trigger-loading` under any circumstance.
-- Visual validation (manual): walk through multiple zone transitions, including first-visit zones — no overlay.
+- Unit test: `zone-transition-show-loading-p` returns nil for locomotion transitions.
+- Unit test: `handle-zone-transition` does NOT call `ui-trigger-loading`.
+- Visual validation (manual): walk through multiple zone transitions, including first-visit zones — no overlay. Teleport transitions may still show an overlay (out of scope).
 
 ---
 
 ### Step 7: Server-side edge-strip streaming (boundary AOI)
 
-**What:** When a player is within `*zone-edge-visibility-tiles*` of a zone edge, the server includes a spatially-filtered snapshot of the adjacent zone in their snapshot. This makes boundaries truthful — the player sees the real world across the boundary.
+**What:** The server includes spatially-filtered snapshots of adjacent zones in the zone's broadcast snapshot. This makes boundaries truthful — players near an edge see real entities from the neighboring zone.
 
-**Design principle: type-agnostic edge data.** The edge strip is NOT a separate per-type system (no `:edge-players`, `:edge-npcs`, `:edge-objects`, etc.). Instead, the server builds a mini-snapshot of the adjacent zone using the *same serialization path* it already uses for normal zone snapshots, just spatially filtered to the strip. Any entity type that appears in a normal snapshot automatically appears in the edge strip. When new entity types are added in the future (projectiles, pets, vehicles, etc.), they appear in edge strips for free — no new edge-specific code needed.
+**Design principle: type-agnostic edge data.** The edge strip is NOT a separate per-type system. Instead, the server builds a mini-snapshot of each adjacent zone using the *same serialization path* it already uses for normal zone snapshots, just spatially filtered to the strip. Any entity type that appears in a normal snapshot automatically appears in the edge strip. When new entity types are added in the future (projectiles, pets, vehicles, etc.), they appear in edge strips for free — no new edge-specific code needed.
+
+**Per-zone broadcast (not per-player).** The current architecture serializes ONE snapshot per zone and broadcasts it to all clients in that zone (`serialize-game-state-for-zone` has no per-player context). Edge strips follow this same model: the zone snapshot unconditionally includes edge strips for ALL edges that have an adjacent zone with loaded state (up to 4 strips). Clients near an edge render the relevant strip; clients in the zone interior ignore them (viewport culling discards off-screen entities naturally). The extra bandwidth is bounded: at most 4 strips × ~5 entities × ~80 bytes = ~1.6KB per snapshot — negligible compared to the main zone data.
+
+**Single-process scope.** Edge strips require reading the adjacent zone's `zone-state` from `*zone-states*`. This works in single-process mode (all zone-states are in the same process's memory). In multi-process deployment (one process per zone), adjacent zone-states live on other servers and are not accessible locally. **This plan scopes edge-strip streaming to single-process mode.** Multi-process cross-zone AOI requires an inter-process exchange protocol (e.g., each zone server publishes its edge strips to a shared bus or gateway, adjacent zone servers subscribe). That is future work — see "What This Plan Does NOT Cover."
 
 **Spatial model:** The edge strip extends `*zone-edge-visibility-tiles*` (default 10) tiles into the adjacent zone from the shared boundary. Only entities within this strip are included. This is NOT full-zone streaming — it's a bounded AOI extension.
 
@@ -194,11 +204,13 @@ This replaces the old "preload after transition" design. Preloading now happens 
   1. Determine the spatial bounds of the strip within the adjacent zone (e.g., for a `:south` strip of an adjacent zone to the north: `y >= (zone-height - strip-width)` in that zone's local coords).
   2. Call the *existing* per-zone serialization logic but with a spatial bounding box filter. Reuse `serialize-game-state-for-zone` (or extract its core into a shared helper) with an additional `:bounds` parameter that filters entities by position.
   3. Return a plist in the same format as a normal zone snapshot (`:players`, `:npcs`, `:objects`, etc.) — just spatially clipped.
-- `src/save.lisp:1280` (`serialize-game-state-for-zone`) — After building the main zone's snapshot, check if the receiving player is within `*zone-edge-visibility-tiles*` of any edge. For each such edge:
-  1. Look up adjacent zone-state via world-graph.
-  2. Call `serialize-edge-strip` for that adjacent zone-state.
-  3. Append the result to the snapshot under a single `:edge-strips` key — a list of `(:edge :north :zone-id :zone-X :strip <mini-snapshot>)` entries.
-- `src/save.lisp:1401` (delta variant) — Same logic. Delta edge strips only include entities that changed.
+- `src/save.lisp:1280` (`serialize-game-state-for-zone`) — After building the main zone's snapshot, unconditionally append edge strips for all edges that have a loaded adjacent zone-state in `*zone-states*`:
+  1. For each of the zone's 4 edges, look up adjacent zone-id from world-graph.
+  2. Check if `(gethash adjacent-zone-id *zone-states*)` exists (loaded = has players or was recently visited).
+  3. If loaded, call `serialize-edge-strip` for that adjacent zone-state.
+  4. Append result under `:edge-strips` key.
+  5. If not loaded (no one has visited that zone), skip — no strip for that edge. This is acceptable: an unloaded zone has no entities to show.
+- `src/save.lisp:1401` (delta variant) — Edge strips are always sent in **full** (not as deltas), even when the main zone snapshot uses delta encoding. Rationale: edge strips are small (~1.6KB worst case), ephemeral (replaced wholesale each frame on the client), and span a foreign zone whose change-tracking state is not available to the current zone's delta system. Delta optimization for edge strips would require cross-zone dirty tracking for negligible bandwidth savings. The client's `game-edge-strips` is replaced each frame regardless, so full-vs-delta is invisible to the receiver.
 
 **Snapshot structure (extended):**
 ```lisp
@@ -207,37 +219,29 @@ This replaces the old "preload after transition" design. Preloading now happens 
  :players #(...)          ; main zone entities (unchanged)
  :npcs #(...)
  :objects (...)
- :edge-strips (           ; NEW — list of adjacent zone strips
+ :edge-strips (           ; NEW — unconditionally included for all loaded adjacent zones
    (:edge :north :zone-id :zone-2 :strip (:players #(...) :npcs #(...) :objects (...)))
    (:edge :east  :zone-id :zone-5 :strip (:players #(...) :npcs #(...) :objects (...)))))
 ```
 
-Each `:strip` is the same format as a normal zone snapshot. Any future entity type added to normal snapshots (projectiles, pets, etc.) automatically appears in edge strips because they share the same serialization path.
-
-**Per-edge check (server, per player per tick):**
-```
-for each edge in (:north :south :east :west):
-  if player is within *zone-edge-visibility-tiles* of that edge:
-    adjacent-zone-state = lookup from world-graph
-    if adjacent-zone-state exists:
-      strip = serialize-edge-strip(adjacent-zone-state, opposite-edge, strip-width)
-      append (:edge edge :zone-id adj-id :strip strip) to edge-strips
-```
+Each `:strip` is the same format as a normal zone snapshot. Any future entity type added to normal snapshots automatically appears in edge strips because they share the same serialization path. Strips for edges with no loaded adjacent zone are simply absent (not included, not empty).
 
 **Performance bounds:**
-- Only triggered for players near edges (most players in zone interior — no cost).
+- At most 4 edge strips per zone snapshot (one per cardinal edge).
 - Spatial grid queries are O(cells-in-strip), not O(all-entities).
 - Edge-strip data is small: ~10 tiles wide × zone-height × entity-density. Typical: 0-5 extra entities per edge.
-- Bandwidth: ~20-80 extra bytes per edge entity per snapshot. Negligible at 20-30 Hz snapshot rate.
-- Serialization reuse: no new serialization code per entity type — the existing path handles everything.
+- Bandwidth overhead: worst case ~1.6KB per snapshot (4 edges × 5 entities × 80 bytes). Negligible at 20-30 Hz.
+- Serialization reuse: no new serialization code per entity type.
+- Clients in zone interior: strip entities are outside viewport → culled during rendering at zero draw cost.
 
 **Tests:**
-- Unit test: player in zone interior → no edge strips in snapshot.
-- Unit test: player near north edge → snapshot includes strip from adjacent zone's south band.
+- Unit test: zone with no loaded adjacent zones → no edge strips in snapshot.
+- Unit test: zone with loaded adjacent zone to north → snapshot includes strip from adjacent zone's south band.
 - Unit test: edge-strip entities are spatially filtered — only those within strip width, not entire adjacent zone.
 - Unit test: edge strip from non-existent adjacent zone (world boundary) → no strip entry, no error.
 - Unit test: edge-strip entity count is bounded (AOI limit respected).
 - Unit test: adding a new entity type to normal snapshot automatically appears in edge strip (no edge-specific code).
+- Unit test: edge strips included unconditionally (not per-player filtered).
 
 ---
 
@@ -257,7 +261,7 @@ for each edge in (:north :south :east :west):
   2. Compute the world-space offset for this edge using `preview-zone-offset` logic.
   3. Store in `game-edge-strips`.
   Replace (not accumulate) each frame — edge strips are ephemeral view state.
-- `src/save.lisp:1472` (delta variant) — Same for delta path. Delta edge strips update in-place.
+- `src/save.lisp:1472` (delta variant) — Same for delta path. Edge strips are always full snapshots (not deltas) per Step 7's policy — the client replaces `game-edge-strips` wholesale each frame.
 
 **Client-side zone filtering:** The existing defense-in-depth zone-hash check (save.lisp:1500-1503) must NOT reject edge-strip entities — they intentionally have a different zone-hash. Edge strips are deserialized through a separate code path (keyed by `:edge-strips`) so the main zone-hash check is not involved.
 
@@ -273,12 +277,12 @@ for each edge in (:north :south :east :west):
 
 **What:** Render adjacent-zone tiles and edge-strip entities in the overlap region near zone boundaries. The rendering is type-agnostic — it iterates the edge-strip's entity vectors using the same draw functions as the main zone.
 
-**Terrain rendering:** Already partially implemented via `ensure-preview-zones` (movement.lisp:962) and `draw-zone-preview` (rendering.lisp:1134). This step ensures it's always active when the player is near an edge.
+**Terrain rendering:** Already partially implemented via `ensure-preview-zones` (movement.lisp:962) and `draw-zone-preview` (rendering.lisp:1134). This step ensures it's always active when the player is near an edge, and unifies the preview zone cache with the LRU cache from Step 4 to avoid duplicate loads.
 
 **Entity rendering:** New — for each entry in `game-edge-strips`, render its players, NPCs, objects (and any future entity types) with the stored world-space offset applied.
 
 **Files:**
-- `src/movement.lisp:962` (`ensure-preview-zones`) — Ensure this runs whenever the player is within `*zone-edge-visibility-tiles*` of any edge. Tie trigger to `*zone-preload-radius*`.
+- `src/movement.lisp:962` (`ensure-preview-zones`) — Refactor to consult the LRU zone cache (Step 4) before calling `load-zone`. If the adjacent zone is already in the LRU cache, use it directly instead of loading from disk into a separate preview hash table. This eliminates duplicate I/O and ensures the preview system benefits from arm-triggered preloading (Step 5). The existing `world-zone-preview-cache` hash table becomes a lightweight view layer that stores references to zones already in the LRU cache (or loads into the LRU cache on miss). Ensure this runs whenever the player is within `*zone-edge-visibility-tiles*` of any edge.
 - `src/rendering.lisp:1243` (preview zone rendering in `draw-world`) — Ensure preview zone tiles rendered for all nearby edges. Already works; verify corners.
 - `src/rendering.lisp:113` (`draw-entities-with-spatial-culling`) — After rendering main-zone entities, iterate `game-edge-strips`. For each strip:
   1. Apply `offset-x`/`offset-y` to transform strip entity positions into world space.
@@ -298,23 +302,25 @@ for each edge in (:north :south :east :west):
 
 ### Step 10: Zone-aware culling and unloading
 
-**What:** Ensure only nearby cross-zone data is streamed. Far zones stay unloaded. The cache and preview system clean up zones the player has moved away from.
+**What:** Ensure only nearby cross-zone data is streamed. Far zones stay unloaded. The unified cache handles cleanup.
 
 **Files:**
 - `src/config.lisp` — `*zone-edge-visibility-tiles*` (from Step 7) controls the AOI width. No full-zone streaming.
 - `src/zone.lisp` (zone cache) — LRU eviction (Step 4) handles unloading. Capacity of 9 means at most current + 8 neighbors are cached. Moving away from a region naturally evicts old zones.
-- `src/movement.lisp:962` (`ensure-preview-zones`) — Add cache cleanup: when the player moves away from an edge (beyond preload radius), remove that edge's zone from the preview cache. This frees memory for zones the player isn't near.
-- `src/save.lisp` (snapshot application) — Edge strips are replaced each frame, so moving away from an edge naturally clears them (server stops sending strips for that edge).
+- `src/movement.lisp:962` (`ensure-preview-zones`) — When the player moves away from an edge (beyond preload radius), remove that edge's entry from the preview lookup. The underlying zone data remains in the LRU cache (may be evicted later by LRU policy if capacity is reached). This avoids premature eviction of zones the player might return to.
+- `src/save.lisp` (snapshot application) — Edge strips are replaced each frame wholesale. The server unconditionally includes strips for all loaded adjacent zones (consistent with Step 7). When the player moves to the zone interior, strip entities fall outside the viewport and are culled at zero draw cost by the client. No server-side "stop sending" logic is needed — the bandwidth cost of including strips for clients who don't need them is negligible (~1.6KB worst case).
 
 **Server-side bounds:** Edge-strip streaming (Step 7) is already bounded:
-- Only triggered for players near edges.
+- Strips included unconditionally but only for loaded adjacent zones.
 - Only includes entities within strip width.
 - Server never sends full adjacent zone data.
+- Clients in zone interior discard strip entities via viewport culling.
 
 **Tests:**
-- Unit test: moving away from edge clears preview cache entry.
-- Unit test: edge strips cleared when player moves to zone interior (server sends no strips).
+- Unit test: moving away from edge removes preview lookup entry (zone stays in LRU cache).
+- Unit test: edge strips present in snapshot whenever adjacent zone is loaded (unconditional per Step 7); client culls off-screen strips via viewport.
 - Unit test: LRU cache evicts oldest zone when capacity exceeded.
+- Unit test: preview zone lookup consults LRU cache (no duplicate load for same zone-id).
 
 ---
 
@@ -378,10 +384,10 @@ All existing tests must pass. All new tests from Steps 1-12 must pass.
 |------|---------|
 | `src/types.lisp` | Add `zone-transition-cooldown`, `zone-transition-pending` to player. Add `zone-cache` struct. Add `preload-queue`, `edge-strips` to game. |
 | `src/config.lisp` | Add `*zone-transition-cooldown-seconds*`, `*zone-hysteresis-in*` (6.0), `*zone-hysteresis-out*` (8.0), `*zone-direction-threshold*` (0.3), `*client-zone-cache-capacity*` (9), `*zone-preload-radius*` (10.0), `*zone-edge-visibility-tiles*` (10.0), `*verbose-zone-transitions*`. |
-| `src/movement.lisp` | Modify `world-exit-edge-with-bounds` (hysteresis + directional gating). Modify `update-zone-transition` (cooldown, arm/commit/cancel state machine, preload trigger). Modify `transition-zone` (set cooldown, downgrade save). Modify `ensure-preview-zones` (preload-radius trigger, cache cleanup). |
+| `src/movement.lisp` | Modify `world-exit-edge-with-bounds` (hysteresis + directional gating). Modify `update-zone-transition` (cooldown, arm/commit/cancel state machine — server only). Modify `transition-zone` (set cooldown, downgrade save). Modify `ensure-preview-zones` (consult LRU cache, preload-radius trigger, cache cleanup). |
 | `src/zone.lisp` | Add `zone-cache-lookup`, `zone-cache-insert`. |
 | `src/save.lisp` | Modify `apply-game-state` (cache lookup). Add `serialize-edge-strip`. Modify `serialize-game-state-for-zone` + delta variant (append `:edge-strips`). Modify `deserialize-game-state-compact` + delta variant (process `:edge-strips` using shared deserializer). |
-| `src/main.lisp` | Modify `handle-zone-transition` (remove loading overlay, trigger preload). Add per-frame preload processing. Initialize zone cache. |
+| `src/main.lisp` | Modify `handle-zone-transition` (remove loading overlay). Add `update-client-preloading` (client-only proximity-based preload trigger). Add per-frame preload queue processing. Initialize zone cache. |
 | `src/net.lisp` | No structural changes (serialization handles edge-strip inclusion). |
 | `src/rendering.lisp` | Add edge-entity rendering in `draw-entities-with-spatial-culling`. Verify preview-zone tile rendering covers all edges. |
 | `src/ui.lisp` | No changes (loading overlay stays for other uses, just never called from zone transitions). |
@@ -396,7 +402,7 @@ Step 1  (cooldown)              ─── independent
 Step 2  (hysteresis)            ─── independent
 Step 3  (directional gating)    ─── independent (same function as Step 2)
 Step 4  (zone cache)            ─── independent
-Step 5  (arm-triggered preload) ─── depends on Step 2 (arm event) + Step 4 (cache)
+Step 5  (proximity preload)     ─── depends on Step 4 (cache)
 Step 6  (remove overlay)        ─── depends on Step 5 (preload guarantees cache warm)
 Step 7  (edge-strip server)     ─── independent (server-side only)
 Step 8  (edge-strip client rx)  ─── depends on Step 7 (needs server data)
@@ -432,6 +438,8 @@ Step 13 (tests)                 ─── depends on all above
 
 ## What This Plan Does NOT Cover (Future Work)
 
+- **Multi-process edge-strip exchange**: Edge strips (Step 7) require local access to `*zone-states*`, which only works in single-process mode. In multi-process deployment (one process per zone), adjacent zone-states live on other servers. A cross-zone AOI protocol is needed: each zone server publishes its edge strips to a shared bus or gateway, and adjacent zone servers subscribe. This is the primary scaling constraint of the current plan.
+- **Teleport/login seamlessness**: Teleports and initial login may still show a brief overlay. The destination zone is not predictable for preloading. A future optimization could preload the teleport destination during a cast/channel animation.
 - **Intersection buffer zones** (Option G from findings): data-only world-graph change, add selectively if playtesting reveals problem spots.
 - **Larger zone dimensions** (Option C): 128x128 or 256x256 with chunk streaming. Only if the world design outgrows current tile budget.
 - **Portal/threshold transitions** (Option E): skipped per findings (wrong vibe for open-world MMO).
