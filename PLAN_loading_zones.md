@@ -413,6 +413,46 @@ Step 12 (metrics)               ─── depends on Steps 1-3, 7 (logs their de
 Step 13 (tests)                 ─── depends on all above
 ```
 
+---
+
+## ADDENDUM — Zone Transition Continuity (No Push, No Pop, No Hitch)
+
+**Problem:** Some transitions still feel like a brief collision “push,” a visible positional jump (~1–2 tiles), or a hitch. This addendum targets continuous motion and seamless feel.
+
+### Requirements
+1. **No push‑against‑edge:** The player should not need to press into the wall to trigger a transition.
+2. **No positional pop:** Crossing the boundary must not teleport the player forward by a noticeable amount.
+3. **No hitch:** Transition must not block on sync loads or full buffer resets.
+
+### Concrete Next‑Steps
+
+1) **Carry‑through spawn (continuous world‑space)**
+- **What:** Preserve the player’s “overstep distance” past the boundary and apply it into the destination zone so the movement is continuous across the seam.
+- **Where:** `src/movement.lisp` inside `transition-zone`.
+- **How (conceptual):**
+  - Compute `overstep` in pixels relative to the source zone edge at commit time (signed, along the edge normal).
+  - Apply spawn position *at the target edge plus overstep* rather than snapping to the edge.
+  - Keep existing preserve‑axis ratio for the orthogonal axis.
+- **Tests:** Add unit test for overstep preservation (north/south/east/west).
+
+2) **Commit margin tied to collision size**
+- **What:** Derive commit margin from collision half‑width (or a fraction thereof), not a fixed 0.5 tiles.
+- **Where:** `src/movement.lisp` in `update-zone-transition` when computing `commit-margin`.
+- **How:** `commit-margin = max(collision-half-width, collision-half-height) * <factor>`.
+- **Tests:** Assert computed margin ≥ collision half‑width; verify edge detection triggers without wall‑push.
+
+3) **No sync load on transition**
+- **What:** Ensure the preload queue *guarantees* the target zone is in cache before commit.
+- **Where:** `src/main.lisp` preload processing.
+- **How:** When within 1–2 tiles of commit, allow multiple preload pops per frame (or immediate load of the pending edge’s target), but only on the client.
+- **Tests:** Simulate near‑edge state and assert cache hit before transition application.
+
+4) **Soft reset of interpolation/prediction**
+- **What:** Only reset interpolation/prediction buffers when the delta exceeds a threshold; otherwise preserve and smooth.
+- **Where:** `src/main.lisp` in `handle-zone-transition` / `net.lisp` teleport detection.
+- **How:** If position delta < threshold (e.g., 1 tile), retain buffers; otherwise reset.
+- **Tests:** Threshold‑based reset behavior for small vs large deltas.
+
 **Parallelizable groups:**
 - Steps 1, 2, 3 together (all movement.lisp, server-side thrash prevention).
 - Step 4 in parallel with Steps 1-3 (client cache, independent).
