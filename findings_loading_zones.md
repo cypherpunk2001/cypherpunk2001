@@ -1,3 +1,31 @@
+**Updated Requirements**
+
+Zero loading screens, including on first entry to a zone; transitions must be seamless with no “loading…” overlay ever.
+Boundary invisibility: as a player approaches an edge, they must see truthful nearby content in the adjacent zone (players, NPCs, items/objects, projectiles, terrain), not a “blind” boundary.
+Preserve zone‑based architecture and scaling (server authority, per‑zone simulation), while avoiding major performance penalties by only streaming nearby adjacent‑zone data and unloading far‑off data.
+Maintain the ability to reason about the world in zones (design, content, tooling), while making the gameplay feel continuous.
+
+**Recommended Changes (to make PLAN meet requirements)**
+
+Add a Phase 1.5: Seamless First‑Entry + Cross‑Zone Truth section to the plan (before or alongside current Phase 1):
+Preload before crossing: Trigger zone data preload when the player enters the arm band (not after transition). This removes first‑entry loading screens.
+Boundary AOI streaming: Server sends a narrow “edge strip” of adjacent‑zone entities when a player is within N tiles of a boundary (e.g., 6–10 tiles). This includes players/NPCs/items/projectiles/objects. Only the strip is shared, not the whole zone.
+Client multi‑zone rendering: Client renders the adjacent zone’s strip in the overlap region so the edge view is truthful. This does not require full‑zone rendering, just a bounded band.
+Zone‑aware culling: Maintain strict AOI limits so only nearby cross‑zone entities are streamed; far zones stay unloaded.
+Update the existing plan steps to align:
+Step 2 (hysteresis) becomes the arm band trigger for preloading + edge‑strip streaming (not just pending/commit logic).
+Step 4/5 (client cache + preload) moves earlier in the flow: preload starts at arm, not after transition.
+Step 6 (fast‑path overlay skip) becomes “overlay removed entirely”; the UI no longer uses a loading overlay at all.
+Add config knobs (so performance is controlled):
+*zone-edge-visibility-tiles* (width of cross‑zone strip).
+*zone-preload-radius* (how early we begin streaming).
+Add tests/metrics explicitly for:
+“No loading overlay ever” (predicate always false).
+Edge‑strip truthfulness (adjacent zone entities included when near boundary).
+AOI/culling limits (no full‑zone streaming).
+
+---
+
 # Zone Loading Analysis & Recommendations
 
 ## The Problem
