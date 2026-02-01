@@ -1,13 +1,38 @@
 # PLAN: Seamless Zone Loading
 
 **Source:** `findings_loading_zones.md` (consolidated analysis)
-**Scope:** Phase 1 only (Options B + D + F). Phase 2/3 deferred to future plans.
+**Scope:** Full seamless experience — zero loading screens, truthful cross-zone visibility, zone architecture preserved.
 
 ---
 
-## Goal
+## Requirements
 
-Eliminate visible "loading..." screens for cached zone transitions, and reduce transition frequency at zone boundaries by 60-80%. After Phase 1, a player running through previously-visited zones should experience near-instant (<50ms) transitions with no loading overlay. The 4-zone intersection circle problem should be fully resolved.
+1. **Zero loading screens** — no "loading..." overlay ever, including first entry to any zone.
+2. **Boundary invisibility** — as a player approaches an edge, they see truthful content from the adjacent zone: terrain, players, NPCs, items/objects. No blind boundaries.
+3. **Preserve zone architecture** — server authority, per-zone simulation, horizontal scaling (one process per zone).
+4. **Continuous gameplay** — the world feels seamless while zones remain the unit of design, content, and tooling.
+
+---
+
+## Spatial Model (all steps reference this)
+
+All distances measured inward from the zone edge. Larger value = further from edge = deeper into zone interior.
+
+```
+Zone interior   Cancel(8t)  Arm(6t)  Preload/AOI(10t from edge)     Edge(0t)
+|               |           |        |                              |
+|               |<-dead 2t->|<---------- arm-to-edge (6t) -------->|
+|               |           |        |<-- edge strip (10t) ------->|
+|               |           |        |                              |
+| player runs ->|      [arm]|        | [see adjacent zone here]    |[commit]
+|       <-- retreat past cancel = pending cleared                   |
+```
+
+- **Edge-strip region** (`*zone-edge-visibility-tiles*`, default 10): width of the cross-zone visibility band. Server streams adjacent-zone entities in this strip. Client renders adjacent-zone tiles in this strip. Measured from the edge into the adjacent zone.
+- **Preload trigger** (`*zone-preload-radius*`, default 10 tiles from edge = same as arm band entry): when the player is this close to an edge, client begins preloading adjacent zone terrain data into cache.
+- **Arm line** (`*zone-hysteresis-in*`, default 6 tiles from edge): crossing this toward the edge sets `zone-transition-pending`. No transition yet.
+- **Cancel line** (`*zone-hysteresis-out*`, default 8 tiles from edge): retreating past this clears pending. Dead band (2 tiles) between cancel and arm prevents flicker.
+- **Commit line** (the zone edge itself, 0 tiles): player with pending reaches edge → `transition-zone` fires.
 
 ---
 
@@ -18,7 +43,7 @@ Eliminate visible "loading..." screens for cached zone transitions, and reduce t
 **What:** After `transition-zone` executes, record a timestamp on the player. `update-zone-transition` skips any player whose cooldown hasn't expired.
 
 **Files:**
-- `src/types.lisp` — Add `zone-transition-cooldown` field to player struct (single-float, default 0.0). This is ephemeral (not saved to DB).
+- `src/types.lisp` — Add `zone-transition-cooldown` field to player struct (single-float, default 0.0). Ephemeral (not saved to DB).
 - `src/movement.lisp:1298` (`update-zone-transition`) — At the top of the per-player loop, check `(> (player-zone-transition-cooldown player) 0.0)` and skip if true. Decrement by dt each tick (or set to absolute time and compare with game clock).
 - `src/movement.lisp:1127` (`transition-zone`) — After successful transition, set `(setf (player-zone-transition-cooldown player) *zone-transition-cooldown-seconds*)`.
 - `src/config.lisp` — Add `*zone-transition-cooldown-seconds*` (default 1.5).
@@ -32,223 +57,318 @@ Eliminate visible "loading..." screens for cached zone transitions, and reduce t
 
 ---
 
-### Step 2: Add asymmetric hysteresis band
+### Step 2: Add asymmetric hysteresis band (arm/commit/cancel)
 
-**What:** Add a two-phase arm/commit model to zone transitions. Instead of transitioning the instant the player touches the zone edge, the system arms a pending transition when the player enters a band near the edge, then commits only when they reach the edge itself. If the player retreats before reaching the edge, the pending is cancelled. This creates a window where the player can change their mind without triggering a load.
+**What:** Two-phase arm/commit model. The system arms a pending transition when the player enters the arm band, commits only when they reach the zone edge. If they retreat past the cancel line, pending is cleared.
 
-**Spatial model (critical — all code must follow this):**
-
-All distances are measured inward from the zone edge. A larger value = further from edge = deeper into zone interior.
-
-```
-  Zone interior    Cancel line (6 tiles)   Arm line (4 tiles)   Edge (0 tiles)
-  |                |                       |                    |
-  |                |<--- dead band (2t) -->|<--- arm zone (4t)->|
-  |                |                       |                    |
-  |  player runs ->|                  [arm]|            [commit]|
-  |        <-- retreats past cancel = pending cleared           |
-```
-
-- **Arm line** (`*zone-hysteresis-in*`, default 4 tiles inward from edge): When the player crosses this line moving toward the edge, `zone-transition-pending` is set to that edge. **No transition fires yet.**
-- **Commit line** (the zone edge itself, 0 tiles — the existing boundary check): When a player with a pending transition reaches the zone edge (existing `y <= min-y` check), `transition-zone` fires. The player never crosses the boundary — handoff happens at the edge and `find-open-position-with-map` places them in the target zone.
-- **Cancel line** (`*zone-hysteresis-out*`, default 6 tiles inward from edge — further from edge than the arm line): If the player retreats past this line, pending is cleared. The 2-tile dead band between cancel (6t) and arm (4t) prevents rapid re-arming — the player must move 2 tiles past the arm line before they can re-enter the arm zone.
-
-The player **never leaves valid collision space**. The arm and cancel lines exist within the zone interior; the commit line is the existing zone boundary where collision already handles the edge.
+**Spatial model:** See top-level diagram. Arm at 6 tiles, cancel at 8 tiles, commit at edge (0 tiles).
 
 **Files:**
-- `src/config.lisp` — Add two parameters (both measured in tiles inward from edge; larger value = further from edge):
-  - `*zone-hysteresis-in*` (default 4.0) — arm line distance. Player crossing this toward the edge sets pending.
-  - `*zone-hysteresis-out*` (default 6.0) — cancel line distance. Player retreating past this clears pending. Must be > `*zone-hysteresis-in*` (cancel line is further from edge than arm line).
-- `src/types.lisp` — Add `zone-transition-pending` field to player struct (keyword or nil, e.g. `:east`). Tracks which edge the player is approaching. Ephemeral.
-- `src/movement.lisp:799` (`world-exit-edge-with-bounds`) — Add a second detection mode for the arm line. For the north edge: arm when `y <= (+ min-y hysteresis-in-px)` (N tiles inside the zone). Similarly for other edges. The existing edge check (`y <= min-y`) remains unchanged as the commit line.
+- `src/config.lisp` — Add two parameters (both measured in tiles inward from edge; larger = further from edge):
+  - `*zone-hysteresis-in*` (default 6.0) — arm line distance.
+  - `*zone-hysteresis-out*` (default 8.0) — cancel line distance. Must be > `*zone-hysteresis-in*`.
+- `src/types.lisp` — Add `zone-transition-pending` field to player struct (keyword or nil, e.g. `:east`). Ephemeral.
+- `src/movement.lisp:799` (`world-exit-edge-with-bounds`) — Add detection for the arm line. For the north edge: arm when `y <= (+ min-y hysteresis-in-px)`. The existing edge check (`y <= min-y`) remains unchanged as the commit line.
 - `src/movement.lisp:1298` (`update-zone-transition`) — Two-phase state machine:
   - **No pending + player crosses arm line** → set `zone-transition-pending` to that edge. Do NOT transition.
   - **Pending + player reaches commit line (zone edge)** → call `transition-zone`, clear pending.
-  - **Pending + player retreats past cancel line** → clear pending (player reversed). Cancel line for north edge is at `(+ min-y hysteresis-out-px)` (6 tiles from edge, further inside zone than the arm line at `(+ min-y hysteresis-in-px)`).
+  - **Pending + player retreats past cancel line** → clear pending. Cancel line for north edge is at `(+ min-y hysteresis-out-px)`.
   - **Pending + edge changes** → clear pending (player changed direction).
   - **Pending + intent drops below `*zone-direction-threshold*`** → clear pending.
 
-**Implementation note:** The hysteresis values are in *tiles* but the edge detection works in *pixels*. Convert at the point of comparison: `(* *zone-hysteresis-in* (float *tile-size*))`. Assert at config load time that `*zone-hysteresis-out*` > `*zone-hysteresis-in*` (cancel line at 6 tiles is further from edge than arm line at 4 tiles). The dead band between them (default 2 tiles) prevents flicker at the arm line.
+**Implementation note:** Convert tiles to pixels at point of comparison: `(* *zone-hysteresis-in* (float *tile-size*))`. Assert at config load that `*zone-hysteresis-out*` > `*zone-hysteresis-in*`.
 
-**Corner / 4-way intersection handling:** `world-exit-edge-with-bounds` can detect two edges simultaneously at corners (e.g., player at northeast corner has both north and east candidates). The existing code picks the edge with the highest movement-weight (strongest intent component). The `zone-transition-pending` field locks to a single edge once armed. Resolution rules:
-1. If no pending edge → pick edge with highest directional weight (existing behavior). Arm as pending.
-2. If pending edge is set → only that edge is evaluated for commit. Other edges are ignored until pending is cleared.
-3. Pending is cleared when: (a) player retreats past the cancel line, (b) player's intent toward the pending edge drops below `*zone-direction-threshold*`, or (c) the transition commits.
-This prevents corner thrash — once the player is armed toward an edge, they must either commit at the zone edge or fully retreat before a different edge can be considered.
+**Corner / 4-way intersection handling:** `zone-transition-pending` locks to a single edge once armed:
+1. No pending → pick edge with highest directional weight. Arm as pending.
+2. Pending set → only that edge evaluated for commit. Others ignored.
+3. Pending cleared when: (a) retreat past cancel line, (b) intent drops below direction threshold, or (c) transition commits.
 
 **Tests:**
 - Unit test: player in zone interior (outside arm line) → no pending, no transition.
 - Unit test: player crosses arm line toward edge → pending is set, no transition yet.
 - Unit test: player with pending reaches zone edge → transition fires, pending cleared.
 - Unit test: player crosses arm line then retreats past cancel line → pending cleared, no transition.
-- Unit test: player crosses arm line, retreats into dead band (between cancel and arm) → pending still set (not yet cancelled).
-- Unit test: asymmetry — `*zone-hysteresis-out*` (6) > `*zone-hysteresis-in*` (4), cancel line is further from edge than arm line.
-- Unit test: at corner with two edges, pending locks to dominant edge; other edge ignored.
-- Unit test: pending edge cleared when intent drops below direction threshold.
+- Unit test: player in dead band (between cancel and arm) → pending still set.
+- Unit test: `*zone-hysteresis-out*` (8) > `*zone-hysteresis-in*` (6).
+- Unit test: at corner, pending locks to dominant edge; other edge ignored.
+- Unit test: pending cleared when intent drops below direction threshold.
 
 ---
 
 ### Step 3: Add directional gating
 
-**What:** Only trigger transitions when the player's movement intent has a significant component toward the new zone. This prevents tangential movement along a boundary from firing transitions.
+**What:** Only trigger arm/transitions when the player's movement intent has a significant component toward the zone edge. Prevents tangential movement along a boundary from arming.
 
 **Files:**
-- `src/config.lisp` — Add `*zone-direction-threshold*` (default 0.3, range 0.0-1.0). This is the minimum normalized dot product between movement intent and edge normal required to trigger.
-- `src/movement.lisp:799` (`world-exit-edge-with-bounds`) — Already partially does this (checks `dx > 0.0` for east edge, etc.), but the check is binary. Strengthen it: compute the dot product of `(player-dx, player-dy)` with the edge normal, normalize by movement magnitude, and reject if below threshold. For example, for the east edge: `(/ dx (max 0.001 (sqrt (+ (* dx dx) (* dy dy)))))` must be >= `*zone-direction-threshold*`.
+- `src/config.lisp` — Add `*zone-direction-threshold*` (default 0.3, range 0.0-1.0). Minimum normalized dot product between movement intent and edge normal.
+- `src/movement.lisp:799` (`world-exit-edge-with-bounds`) — Compute dot product of `(player-dx, player-dy)` with edge normal, normalize by movement magnitude: `(/ dx (max 0.001 (sqrt (+ (* dx dx) (* dy dy)))))` must be >= `*zone-direction-threshold*`.
 
-**Zero-vector fallback:** If movement magnitude is below a minimum epsilon (e.g., `(< (+ (abs dx) (abs dy)) 0.001)`), treat it as "no transition" — return nil immediately. A stationary or near-stationary player should never trigger a zone transition. This avoids division-by-near-zero instability in the dot product normalization.
+**Zero-vector fallback:** If movement magnitude is below epsilon (e.g., `(< (+ (abs dx) (abs dy)) 0.001)`), return nil immediately. Stationary players never trigger transitions.
 
 **Tests:**
-- Unit test: player moving due east at east edge → transition allowed.
-- Unit test: player moving northeast at east edge (45°) → allowed (dot ~0.707 > 0.3).
-- Unit test: player moving mostly north along east edge (10° off north) → rejected (dot ~0.17 < 0.3).
-- Unit test: player with zero movement vector at edge → no transition (not a division error).
+- Unit test: moving due east at east edge → allowed.
+- Unit test: moving northeast (45°) → allowed (dot ~0.707 > 0.3).
+- Unit test: moving mostly north along east edge (10° off) → rejected (dot ~0.17 < 0.3).
+- Unit test: zero movement vector → no transition, no division error.
 
 ---
 
 ### Step 4: Client-side zone cache (LRU)
 
-**What:** The client currently reloads zones from disk on every transition (`apply-game-state` calls `load-zone` on every zone-id change). Add an LRU cache so previously-visited zones are served from memory.
+**What:** Add an LRU cache so zone data is served from memory. Eliminates disk I/O from the transition path.
 
 **Files:**
-- `src/types.lisp` — Add a `zone-cache` struct:
+- `src/types.lisp` — Add `zone-cache` struct:
   ```lisp
   (defstruct zone-cache
-    (entries (make-hash-table :test 'eq :size 16) :type hash-table)  ; zone-id → zone
-    (order nil :type list)    ; LRU order, most recent first
-    (capacity 9 :type fixnum)) ; current + 8 neighbors
+    (entries (make-hash-table :test 'eq :size 16) :type hash-table)
+    (order nil :type list)
+    (capacity 9 :type fixnum))
   ```
-- `src/config.lisp` — Add `*client-zone-cache-capacity*` (default 9). **Sizing rationale:** Each zone struct holds a 64x64 tile grid with chunked layers (8x8 chunks), a collision hash table, and object/spawn lists. Estimated memory per zone: ~50-100KB (tile data dominates — 4096 tiles * ~16 bytes per tile per layer * 2-3 layers). At capacity 9, worst-case memory is ~900KB — negligible on any modern system. The capacity is a config parameter so it can be tuned up (e.g., 16-25 for larger worlds) or down (for memory-constrained clients) without code changes.
-- `src/zone.lisp` — Add `zone-cache-lookup` and `zone-cache-insert` functions:
-  - `zone-cache-lookup (cache zone-id)` → zone struct or nil. Moves zone-id to front of LRU order.
-  - `zone-cache-insert (cache zone-id zone)` → stores zone, evicts LRU entry if at capacity.
-- `src/save.lisp:1685` (`apply-game-state`) — Before calling `(load-zone path)`, check the cache:
-  ```lisp
-  (let ((cached (and *client-zone-cache* (zone-cache-lookup *client-zone-cache* zone-id))))
-    (if cached
-        (progn
-          (apply-zone-to-world world cached)
-          (when *client-zone-change-hook*
-            (funcall *client-zone-change-hook* (zone-id cached)))
-          (setf zone-loaded t))
-        ;; existing load-zone path
-        (let ((zone (load-zone path)))
-          (when zone
-            (zone-cache-insert *client-zone-cache* zone-id zone)
-            (apply-zone-to-world world zone)
-            ...))))
-  ```
-- `src/main.lisp` — Initialize `*client-zone-cache*` at client startup (in `run-client` or equivalent init).
+- `src/config.lisp` — Add `*client-zone-cache-capacity*` (default 9). **Sizing:** ~50-100KB per zone (4096 tiles * ~16 bytes * 2-3 layers + collision + objects). 9 zones ≈ ~900KB. Tunable via config.
+- `src/zone.lisp` — Add `zone-cache-lookup (cache zone-id)` → zone or nil (moves to LRU front). Add `zone-cache-insert (cache zone-id zone)` → stores, evicts LRU tail if full.
+- `src/save.lisp:1685` (`apply-game-state`) — Check cache before `load-zone`. On miss, load from disk and insert into cache.
+- `src/main.lisp` — Initialize `*client-zone-cache*` at client startup.
 
 **Tests:**
-- Unit test: insert + lookup returns the zone.
-- Unit test: LRU eviction at capacity — oldest entry is evicted.
-- Unit test: lookup moves entry to front of LRU.
+- Unit test: insert + lookup returns zone.
+- Unit test: LRU eviction at capacity.
+- Unit test: lookup promotes to front.
 - Unit test: cache miss returns nil.
 
 ---
 
-### Step 5: Client-side adjacent zone preloading
+### Step 5: Arm-triggered preloading (zero first-entry loading)
 
-**What:** When the client enters a new zone, preload all adjacent zones (from world-graph edges) into the cache. This ensures the next transition is a cache hit.
+**What:** When the hysteresis arm fires (Step 2), immediately preload the target zone into the client cache. By the time the player reaches the commit line (zone edge), the zone is already cached. This eliminates loading screens even on first entry to a zone.
+
+This replaces the old "preload after transition" design. Preloading now happens *before* the transition, triggered by the arm event.
 
 **Files:**
-- `src/zone.lisp` or `src/net.lisp` — Add `preload-adjacent-zones (world-graph zone-id cache)`:
-  1. Look up edges for `zone-id` in the world-graph.
-  2. For each neighboring zone-id, if not already in cache, call `load-zone` and insert.
-  3. Also preload diagonal neighbors (zones that share a corner but not an edge) by looking up neighbors-of-neighbors. **Filter by spatial adjacency only** — skip any edge that represents a teleport or non-spatial link (e.g., dungeon entrances). Only preload zones whose edges are cardinal (`:north`, `:south`, `:east`, `:west`) with `:offset` of `:preserve-x` or `:preserve-y`. This avoids wasting I/O on teleport destinations the player is unlikely to visit.
-- `src/main.lisp:422` (`handle-zone-transition`) — After zone transition completes, call `preload-adjacent-zones`. This runs after the current zone is loaded, so it doesn't block the transition itself.
+- `src/config.lisp` — Add `*zone-preload-radius*` (default 10.0 tiles from edge). When the player is within this distance of any edge, queue preloading for that edge's target zone. This is >= `*zone-hysteresis-in*` so preloading starts at or before arming.
+- `src/types.lisp` — Add `preload-queue` field to game struct (list of `(zone-id . path)` pairs).
+- `src/movement.lisp:1298` (`update-zone-transition`) — When arm fires (pending set), also check if target zone is in client cache. If not, add to `preload-queue`. Additionally, when the player enters the preload radius on *any* edge (even without arming — e.g., walking parallel near an edge), queue that edge's neighbor for preload.
+- `src/main.lisp` (client update loop) — Each frame, if `preload-queue` is non-empty, pop one entry, call `load-zone`, insert into cache. One zone per frame to avoid hitches.
+- `src/main.lisp` — On initial client startup / first zone load, also queue all adjacent zones immediately (cold start preload).
 
-**Performance note:** Preloading 4-8 zones means 4-8 file reads. Each is 100-200ms. To avoid frame hitches, this should NOT happen in the render thread's hot path. Two options:
-- (a) Spread across frames: preload one zone per frame over 4-8 frames.
-- (b) Accept a one-time hit since it only happens on zone entry (not per-tick).
-
-Option (a) is cleaner. Add a `preload-queue` (list of zone-ids to load) and process one per frame in the client update loop.
-
-**Files (for frame-spread approach):**
-- `src/types.lisp` — Add `preload-queue` field to the game or world struct (list of `(zone-id . path)` pairs).
-- `src/main.lisp` (client update loop) — Each frame, if `preload-queue` is non-empty, pop one entry, call `load-zone`, insert into cache.
+**Preload scope:** Filter by spatial adjacency only — cardinal edges with `:preserve-x`/`:preserve-y` offset. Skip teleports/dungeon entrances. Include diagonal neighbors (neighbors-of-neighbors) for corner coverage.
 
 **Tests:**
-- Unit test: after preloading, all adjacent zone-ids are in cache.
-- Unit test: diagonal neighbors are included.
-- Unit test: already-cached zones are not re-loaded.
+- Unit test: arm event queues target zone for preload.
+- Unit test: entering preload radius without arming still queues neighbor.
+- Unit test: already-cached zones not re-queued.
+- Unit test: diagonal neighbors included in initial preload.
+- Unit test: teleport edges filtered out.
 
 ---
 
-### Step 6: Fast-path transition (skip loading overlay)
+### Step 6: Remove loading overlay entirely
 
-**What:** When a zone transition hits the client cache, skip the "loading..." overlay. Only show it on cache misses (cold transitions).
+**What:** The loading overlay is no longer needed. With arm-triggered preloading (Step 5), zones are always cached before the player reaches the commit line. Remove the overlay unconditionally — `ui-trigger-loading` is never called during zone transitions.
 
 **Files:**
-- `src/save.lisp:1685` (`apply-game-state`) — Return an additional value indicating whether the zone was loaded from cache or disk. Change return to `(values zone-id zone-loaded cache-hit-p)`.
-- `src/net.lisp` (`apply-snapshot`) — Pass `cache-hit-p` through to `handle-zone-transition`.
-- `src/main.lisp:422` (`handle-zone-transition`) — Accept a `cache-hit-p` parameter. If cache hit:
-  - Skip `(ui-trigger-loading ui)`.
-  - Still reset interpolation/prediction buffers (these must always reset — stale positions from the old zone are invalid).
-  - Still call `sync-client-zone-npcs`.
+- `src/main.lisp:422` (`handle-zone-transition`) — Remove the call to `(ui-trigger-loading ui)` entirely. Keep buffer resets and NPC sync.
+- `src/ui.lisp` — `ui-trigger-loading` and `update-ui-loading` remain in codebase (may be used for other purposes like teleports or initial login), but are not called from zone transitions.
+- `src/save.lisp:1685` (`apply-game-state`) — No need to return `cache-hit-p`. Zone transition path always uses cache (preloaded by Step 5). If cache miss occurs (edge case: preload failed), load synchronously from disk but still do not show overlay — the load is fast enough (<200ms) to absorb without UX disruption.
+
+**Predicate for testing:** Extract `zone-transition-show-loading-p` that always returns nil. Unit-testable without UI.
 
 **Tests:**
-- Unit test: `handle-zone-transition` with `cache-hit-p t` does NOT call `ui-trigger-loading`. Extract the loading-overlay decision into a pure predicate `zone-transition-show-loading-p (cache-hit-p)` that returns nil on cache hit, t on miss. Unit test the predicate directly — no UI/rendering dependency.
-- Unit test: `handle-zone-transition` with `cache-hit-p nil` DOES call `ui-trigger-loading`.
-- Visual validation (manual, not CI): confirm cached transition shows no overlay, cold transition shows overlay.
+- Unit test: `zone-transition-show-loading-p` always returns nil (no loading overlay ever).
+- Unit test: `handle-zone-transition` does NOT call `ui-trigger-loading` under any circumstance.
+- Visual validation (manual): walk through multiple zone transitions, including first-visit zones — no overlay.
 
 ---
 
-### Step 7: Downgrade zone-transition DB save from Tier-1 to Tier-2
+### Step 7: Server-side edge-strip streaming (boundary AOI)
 
-**What:** The current Tier-1 immediate save in `transition-zone` (100-500ms with retry) blocks the server tick. Zone transitions are not as critical as death/trade/level-up — the player's position is already covered by the Tier-2 dirty-flag batch system. Downgrade to `mark-player-dirty`.
+**What:** When a player is within `*zone-edge-visibility-tiles*` of a zone edge, the server includes a spatially-filtered snapshot of the adjacent zone in their snapshot. This makes boundaries truthful — the player sees the real world across the boundary.
+
+**Design principle: type-agnostic edge data.** The edge strip is NOT a separate per-type system (no `:edge-players`, `:edge-npcs`, `:edge-objects`, etc.). Instead, the server builds a mini-snapshot of the adjacent zone using the *same serialization path* it already uses for normal zone snapshots, just spatially filtered to the strip. Any entity type that appears in a normal snapshot automatically appears in the edge strip. When new entity types are added in the future (projectiles, pets, vehicles, etc.), they appear in edge strips for free — no new edge-specific code needed.
+
+**Spatial model:** The edge strip extends `*zone-edge-visibility-tiles*` (default 10) tiles into the adjacent zone from the shared boundary. Only entities within this strip are included. This is NOT full-zone streaming — it's a bounded AOI extension.
 
 **Files:**
-- `src/movement.lisp:1247` (`transition-zone`) — Replace:
-  ```lisp
-  (with-retry-exponential (saved (lambda () (db-save-player-immediate player)) ...)
-    saved)
-  ```
-  With:
-  ```lisp
-  (mark-player-dirty (player-id player))
-  ```
-  The dirty-flag system will flush within the next 30-second checkpoint.
+- `src/config.lisp` — Add `*zone-edge-visibility-tiles*` (default 10.0). Width of cross-zone entity strip.
+- `src/save.lisp` — Add `serialize-edge-strip (zone-state edge strip-width-px)`:
+  1. Determine the spatial bounds of the strip within the adjacent zone (e.g., for a `:south` strip of an adjacent zone to the north: `y >= (zone-height - strip-width)` in that zone's local coords).
+  2. Call the *existing* per-zone serialization logic but with a spatial bounding box filter. Reuse `serialize-game-state-for-zone` (or extract its core into a shared helper) with an additional `:bounds` parameter that filters entities by position.
+  3. Return a plist in the same format as a normal zone snapshot (`:players`, `:npcs`, `:objects`, etc.) — just spatially clipped.
+- `src/save.lisp:1280` (`serialize-game-state-for-zone`) — After building the main zone's snapshot, check if the receiving player is within `*zone-edge-visibility-tiles*` of any edge. For each such edge:
+  1. Look up adjacent zone-state via world-graph.
+  2. Call `serialize-edge-strip` for that adjacent zone-state.
+  3. Append the result to the snapshot under a single `:edge-strips` key — a list of `(:edge :north :zone-id :zone-X :strip <mini-snapshot>)` entries.
+- `src/save.lisp:1401` (delta variant) — Same logic. Delta edge strips only include entities that changed.
 
-**Risk assessment:** If the server crashes between a zone transition and the next checkpoint, the player reverts to their pre-transition zone. This is acceptable — they just re-enter the zone on reconnect. Compare with death (gold/XP loss) or trade (item duplication) where Tier-1 is genuinely critical.
+**Snapshot structure (extended):**
+```lisp
+(:format :compact-v5
+ :zone-id :zone-1
+ :players #(...)          ; main zone entities (unchanged)
+ :npcs #(...)
+ :objects (...)
+ :edge-strips (           ; NEW — list of adjacent zone strips
+   (:edge :north :zone-id :zone-2 :strip (:players #(...) :npcs #(...) :objects (...)))
+   (:edge :east  :zone-id :zone-5 :strip (:players #(...) :npcs #(...) :objects (...)))))
+```
+
+Each `:strip` is the same format as a normal zone snapshot. Any future entity type added to normal snapshots (projectiles, pets, etc.) automatically appears in edge strips because they share the same serialization path.
+
+**Per-edge check (server, per player per tick):**
+```
+for each edge in (:north :south :east :west):
+  if player is within *zone-edge-visibility-tiles* of that edge:
+    adjacent-zone-state = lookup from world-graph
+    if adjacent-zone-state exists:
+      strip = serialize-edge-strip(adjacent-zone-state, opposite-edge, strip-width)
+      append (:edge edge :zone-id adj-id :strip strip) to edge-strips
+```
+
+**Performance bounds:**
+- Only triggered for players near edges (most players in zone interior — no cost).
+- Spatial grid queries are O(cells-in-strip), not O(all-entities).
+- Edge-strip data is small: ~10 tiles wide × zone-height × entity-density. Typical: 0-5 extra entities per edge.
+- Bandwidth: ~20-80 extra bytes per edge entity per snapshot. Negligible at 20-30 Hz snapshot rate.
+- Serialization reuse: no new serialization code per entity type — the existing path handles everything.
+
+**Tests:**
+- Unit test: player in zone interior → no edge strips in snapshot.
+- Unit test: player near north edge → snapshot includes strip from adjacent zone's south band.
+- Unit test: edge-strip entities are spatially filtered — only those within strip width, not entire adjacent zone.
+- Unit test: edge strip from non-existent adjacent zone (world boundary) → no strip entry, no error.
+- Unit test: edge-strip entity count is bounded (AOI limit respected).
+- Unit test: adding a new entity type to normal snapshot automatically appears in edge strip (no edge-specific code).
+
+---
+
+### Step 8: Client-side edge-strip reception and storage
+
+**What:** The client receives `:edge-strips` from snapshots and stores them as a list of mini-snapshots. These are render-only — no interaction, no intent processing, no stat updates. The storage is type-agnostic: whatever entity types the strip contains are stored and rendered generically.
+
+**Files:**
+- `src/types.lisp` (game struct) — Add one field:
+  ```lisp
+  (edge-strips nil :type list)
+  ;; List of (:edge <kw> :zone-id <kw> :offset-x <float> :offset-y <float> :strip <deserialized-snapshot>)
+  ```
+  Each entry contains the edge direction, source zone-id, computed world-space offset for rendering, and the deserialized entity data (same struct types as main zone — player/NPC/object vectors).
+- `src/save.lisp:1331` (`deserialize-game-state-compact`) — After processing main zone data, process `:edge-strips`. For each strip entry:
+  1. Deserialize `:strip` using the *same* deserialization path as a normal snapshot (reuse existing compact/delta deserializer).
+  2. Compute the world-space offset for this edge using `preview-zone-offset` logic.
+  3. Store in `game-edge-strips`.
+  Replace (not accumulate) each frame — edge strips are ephemeral view state.
+- `src/save.lisp:1472` (delta variant) — Same for delta path. Delta edge strips update in-place.
+
+**Client-side zone filtering:** The existing defense-in-depth zone-hash check (save.lisp:1500-1503) must NOT reject edge-strip entities — they intentionally have a different zone-hash. Edge strips are deserialized through a separate code path (keyed by `:edge-strips`) so the main zone-hash check is not involved.
+
+**Tests:**
+- Unit test: edge strips deserialized into `game-edge-strips`, not mixed with main entities.
+- Unit test: edge strips replaced (not accumulated) each snapshot.
+- Unit test: empty `:edge-strips` → empty `game-edge-strips` (no stale data).
+- Unit test: strip deserialization reuses normal snapshot format (same entity types present).
+
+---
+
+### Step 9: Client-side multi-zone rendering (edge strip)
+
+**What:** Render adjacent-zone tiles and edge-strip entities in the overlap region near zone boundaries. The rendering is type-agnostic — it iterates the edge-strip's entity vectors using the same draw functions as the main zone.
+
+**Terrain rendering:** Already partially implemented via `ensure-preview-zones` (movement.lisp:962) and `draw-zone-preview` (rendering.lisp:1134). This step ensures it's always active when the player is near an edge.
+
+**Entity rendering:** New — for each entry in `game-edge-strips`, render its players, NPCs, objects (and any future entity types) with the stored world-space offset applied.
+
+**Files:**
+- `src/movement.lisp:962` (`ensure-preview-zones`) — Ensure this runs whenever the player is within `*zone-edge-visibility-tiles*` of any edge. Tie trigger to `*zone-preload-radius*`.
+- `src/rendering.lisp:1243` (preview zone rendering in `draw-world`) — Ensure preview zone tiles rendered for all nearby edges. Already works; verify corners.
+- `src/rendering.lisp:113` (`draw-entities-with-spatial-culling`) — After rendering main-zone entities, iterate `game-edge-strips`. For each strip:
+  1. Apply `offset-x`/`offset-y` to transform strip entity positions into world space.
+  2. Call the same draw functions used for main-zone entities (draw-player, draw-npc, draw-object, etc.).
+  3. Apply viewport culling identically.
+  Because the strip contains the same entity structs as a normal snapshot, the draw functions work without modification. When new entity types are added (e.g., projectiles), they need a draw function for normal rendering — edge-strip rendering picks it up automatically.
+
+**Coordinate mapping:** Edge-strip entities arrive in their home zone's local coordinates (0-origin). The client applies the same offset used by `draw-zone-preview` / `preview-zone-offset` for the corresponding edge. This offset is computed once per strip during deserialization (Step 8) and stored in the strip entry.
+
+**Tests:**
+- Unit test: edge-strip entity world-position computed correctly with zone offset.
+- Unit test: edge-strip entity outside viewport is culled.
+- Unit test: edge strips from multiple edges rendered simultaneously (corner case).
+- Visual validation (manual): walk near zone edge, confirm adjacent-zone NPCs/players visible.
+
+---
+
+### Step 10: Zone-aware culling and unloading
+
+**What:** Ensure only nearby cross-zone data is streamed. Far zones stay unloaded. The cache and preview system clean up zones the player has moved away from.
+
+**Files:**
+- `src/config.lisp` — `*zone-edge-visibility-tiles*` (from Step 7) controls the AOI width. No full-zone streaming.
+- `src/zone.lisp` (zone cache) — LRU eviction (Step 4) handles unloading. Capacity of 9 means at most current + 8 neighbors are cached. Moving away from a region naturally evicts old zones.
+- `src/movement.lisp:962` (`ensure-preview-zones`) — Add cache cleanup: when the player moves away from an edge (beyond preload radius), remove that edge's zone from the preview cache. This frees memory for zones the player isn't near.
+- `src/save.lisp` (snapshot application) — Edge strips are replaced each frame, so moving away from an edge naturally clears them (server stops sending strips for that edge).
+
+**Server-side bounds:** Edge-strip streaming (Step 7) is already bounded:
+- Only triggered for players near edges.
+- Only includes entities within strip width.
+- Server never sends full adjacent zone data.
+
+**Tests:**
+- Unit test: moving away from edge clears preview cache entry.
+- Unit test: edge strips cleared when player moves to zone interior (server sends no strips).
+- Unit test: LRU cache evicts oldest zone when capacity exceeded.
+
+---
+
+### Step 11: Downgrade zone-transition DB save from Tier-1 to Tier-2
+
+**What:** The current Tier-1 immediate save in `transition-zone` (100-500ms with retry) blocks the server tick. Zone transitions are not critical enough for Tier-1 — the player's position is covered by Tier-2 dirty-flag batching.
+
+**Files:**
+- `src/movement.lisp:1247` (`transition-zone`) — Replace `with-retry-exponential` / `db-save-player-immediate` with `(mark-player-dirty (player-id player))`. Flushes within the next 30-second checkpoint.
+
+**Risk:** Server crash between transition and checkpoint → player reverts to pre-transition zone. Acceptable (they just re-enter). Compare with death/trade where Tier-1 is genuinely critical.
 
 **Tests:**
 - Unit test: after transition-zone, player is marked dirty (not immediately saved).
-- Existing persistence tests should still pass.
+- Existing persistence tests still pass.
 
 ---
 
-### Step 8: Add evaluation metrics
+### Step 12: Add evaluation metrics
 
-**What:** Instrument the transition system to measure the metrics from the findings doc, so we can validate Phase 1 improvements.
+**What:** Instrument the system to validate all requirements.
 
 **Files:**
-- `src/config.lisp` — Add `*verbose-zone-transitions*` flag (default nil, enabled by environment variable `MMORPG_VERBOSE_ZONES=1`).
+- `src/config.lisp` — Add `*verbose-zone-transitions*` flag (default nil, env `MMORPG_VERBOSE_ZONES=1`).
 - `src/movement.lisp` (`update-zone-transition`) — When verbose, log:
   - Transition count per tick.
-  - Time since last transition for this player (thrash detection).
-  - Whether cooldown suppressed a transition.
-  - Whether hysteresis prevented a transition.
-  - Whether directional gating rejected a transition.
+  - Time since last transition per player (thrash detection).
+  - Cooldown suppressions, hysteresis arms/cancels/commits, directional gating rejections.
+  - Edge-strip entity counts per edge.
 - `src/main.lisp` (`handle-zone-transition`) — When verbose, log:
   - Cache hit vs miss.
-  - Wall-clock time of transition (from snapshot receipt to gameplay resume).
-  - Whether loading overlay was shown.
+  - Wall-clock transition time.
+  - Preload queue depth.
+- `src/rendering.lisp` — When verbose, log edge entity render counts.
 
-**Tests:** No unit tests needed for logging — validated by manual inspection with `MMORPG_VERBOSE_ZONES=1`.
+**Validation metrics (from findings doc):**
+- Time between transitions: target >60s normal running.
+- Transitions per 5 minutes: target <2 visible disruptions (now target 0).
+- Thrash rate (5s window): target 0-1 (was 4+).
+- Loading overlay shown: **never** (predicate always false).
+- Edge-strip truthfulness: adjacent entities visible when near boundary.
+- AOI bounds: no full-zone streaming (edge-entity count bounded).
+
+**Tests:** No unit tests for logging — validated manually with `MMORPG_VERBOSE_ZONES=1`.
 
 ---
 
-### Step 9: Run all tests and validate
-
-**What:** Run the full test suite to ensure nothing is broken.
+### Step 13: Run all tests and validate
 
 ```bash
 make tests
 ```
 
-All existing tests must pass. New tests from Steps 1-7 must pass.
+All existing tests must pass. All new tests from Steps 1-12 must pass.
 
 ---
 
@@ -256,46 +376,64 @@ All existing tests must pass. New tests from Steps 1-7 must pass.
 
 | File | Changes |
 |------|---------|
-| `src/types.lisp` | Add `zone-transition-cooldown`, `zone-transition-pending` to player. Add `zone-cache` struct. Add `preload-queue` to game/world. |
-| `src/config.lisp` | Add `*zone-transition-cooldown-seconds*`, `*zone-hysteresis-in*`, `*zone-hysteresis-out*`, `*zone-direction-threshold*`, `*client-zone-cache-capacity*`, `*verbose-zone-transitions*`. |
-| `src/movement.lisp` | Modify `world-exit-edge-with-bounds` (hysteresis + directional gating). Modify `update-zone-transition` (cooldown check, hysteresis state machine). Modify `transition-zone` (set cooldown, downgrade save to Tier-2). |
+| `src/types.lisp` | Add `zone-transition-cooldown`, `zone-transition-pending` to player. Add `zone-cache` struct. Add `preload-queue`, `edge-strips` to game. |
+| `src/config.lisp` | Add `*zone-transition-cooldown-seconds*`, `*zone-hysteresis-in*` (6.0), `*zone-hysteresis-out*` (8.0), `*zone-direction-threshold*` (0.3), `*client-zone-cache-capacity*` (9), `*zone-preload-radius*` (10.0), `*zone-edge-visibility-tiles*` (10.0), `*verbose-zone-transitions*`. |
+| `src/movement.lisp` | Modify `world-exit-edge-with-bounds` (hysteresis + directional gating). Modify `update-zone-transition` (cooldown, arm/commit/cancel state machine, preload trigger). Modify `transition-zone` (set cooldown, downgrade save). Modify `ensure-preview-zones` (preload-radius trigger, cache cleanup). |
 | `src/zone.lisp` | Add `zone-cache-lookup`, `zone-cache-insert`. |
-| `src/save.lisp` | Modify `apply-game-state` (check cache before load-zone, return cache-hit-p). |
-| `src/main.lisp` | Modify `handle-zone-transition` (skip loading on cache hit, trigger preload). Add per-frame preload processing. Initialize `*client-zone-cache*`. |
-| `src/net.lisp` | Pass cache-hit-p from `apply-snapshot` to `handle-zone-transition`. |
-| `src/ui.lisp` | No changes (loading overlay logic stays, just called less often). |
-| `tests/unit-test.lisp` | Add tests for cooldown, hysteresis, directional gating, zone cache LRU, preloading, fast-path transition, Tier-2 save downgrade. |
+| `src/save.lisp` | Modify `apply-game-state` (cache lookup). Add `serialize-edge-strip`. Modify `serialize-game-state-for-zone` + delta variant (append `:edge-strips`). Modify `deserialize-game-state-compact` + delta variant (process `:edge-strips` using shared deserializer). |
+| `src/main.lisp` | Modify `handle-zone-transition` (remove loading overlay, trigger preload). Add per-frame preload processing. Initialize zone cache. |
+| `src/net.lisp` | No structural changes (serialization handles edge-strip inclusion). |
+| `src/rendering.lisp` | Add edge-entity rendering in `draw-entities-with-spatial-culling`. Verify preview-zone tile rendering covers all edges. |
+| `src/ui.lisp` | No changes (loading overlay stays for other uses, just never called from zone transitions). |
+| `tests/unit-test.lisp` | Tests for all steps: cooldown, hysteresis, directional gating, LRU cache, preloading, loading predicate, edge-strip spatial filtering/serialization/deserialization/rendering coords, AOI bounds, cache cleanup, type-agnostic strip pass-through. |
 
 ---
 
 ## Dependency Order
 
-Steps must be implemented in this order due to dependencies:
-
 ```
-Step 1 (cooldown)           ─── independent
-Step 2 (hysteresis)         ─── independent (but builds on same area as Step 1)
-Step 3 (directional gating) ─── independent (modifies same function as Step 2)
-Step 4 (zone cache)         ─── independent
-Step 5 (preloading)         ─── depends on Step 4 (needs cache to insert into)
-Step 6 (fast-path)          ─── depends on Step 4 (needs cache-hit detection)
-Step 7 (Tier-2 downgrade)   ─── independent
-Step 8 (metrics)            ─── depends on Steps 1-3 (logs their decisions)
-Step 9 (tests)              ─── depends on all above
+Step 1  (cooldown)              ─── independent
+Step 2  (hysteresis)            ─── independent
+Step 3  (directional gating)    ─── independent (same function as Step 2)
+Step 4  (zone cache)            ─── independent
+Step 5  (arm-triggered preload) ─── depends on Step 2 (arm event) + Step 4 (cache)
+Step 6  (remove overlay)        ─── depends on Step 5 (preload guarantees cache warm)
+Step 7  (edge-strip server)     ─── independent (server-side only)
+Step 8  (edge-strip client rx)  ─── depends on Step 7 (needs server data)
+Step 9  (edge-strip rendering)  ─── depends on Step 8 (needs client data)
+Step 10 (culling/unloading)     ─── depends on Steps 4, 9 (cache + preview)
+Step 11 (Tier-2 downgrade)      ─── independent
+Step 12 (metrics)               ─── depends on Steps 1-3, 7 (logs their decisions)
+Step 13 (tests)                 ─── depends on all above
 ```
 
-Steps 1, 2, 3 can be implemented together (all in movement.lisp).
-Step 4 can be done in parallel with Steps 1-3.
-Steps 5 and 6 follow Step 4.
-Step 7 is independent and can be done anytime.
-Step 8 follows Steps 1-3.
-Step 9 is always last.
+**Parallelizable groups:**
+- Steps 1, 2, 3 together (all movement.lisp, server-side thrash prevention).
+- Step 4 in parallel with Steps 1-3 (client cache, independent).
+- Step 7 in parallel with Steps 4-6 (server edge-strip, independent of client cache work).
+- Step 11 anytime (independent).
 
 ---
 
-## What This Plan Does NOT Cover (Future Phases)
+## Config Knob Summary
 
-- **Phase 2:** Seamless multi-zone tile rendering, crossfade, deferred handoff, interpolation buffer preservation across transitions.
-- **Phase 2.5:** Intersection buffer zones (world-graph data changes).
-- **Phase 3:** Larger zone dimensions, chunk-based streaming.
-- **Option E:** Portal/threshold transitions (skipped per findings).
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `*zone-transition-cooldown-seconds*` | 1.5 | Post-transition suppression window |
+| `*zone-hysteresis-in*` | 6.0 tiles | Arm line distance from edge |
+| `*zone-hysteresis-out*` | 8.0 tiles | Cancel line distance from edge (must be > in) |
+| `*zone-direction-threshold*` | 0.3 | Min dot product for directional gating |
+| `*client-zone-cache-capacity*` | 9 | LRU cache size (current + 8 neighbors) |
+| `*zone-preload-radius*` | 10.0 tiles | Distance from edge to begin preloading |
+| `*zone-edge-visibility-tiles*` | 10.0 tiles | Width of cross-zone entity/terrain strip |
+| `*verbose-zone-transitions*` | nil | Enable transition diagnostics logging |
+
+---
+
+## What This Plan Does NOT Cover (Future Work)
+
+- **Intersection buffer zones** (Option G from findings): data-only world-graph change, add selectively if playtesting reveals problem spots.
+- **Larger zone dimensions** (Option C): 128x128 or 256x256 with chunk streaming. Only if the world design outgrows current tile budget.
+- **Portal/threshold transitions** (Option E): skipped per findings (wrong vibe for open-world MMO).
+- **Cross-zone interaction**: Edge entities are render-only. Players cannot attack/trade/interact with entities in the adjacent zone strip. This would require cross-zone message routing (future work if needed).
+- **Cross-zone projectile continuity**: Projectiles (and any future entity types) that exist in an adjacent zone's edge strip are *visible* automatically via the type-agnostic strip system. However, a projectile that originates in one zone and needs to *continue* into another zone (gameplay continuity, not just visibility) requires cross-zone simulation routing — that's future work.
