@@ -1,4 +1,4 @@
-.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests profile server-prod
+.PHONY: ci smoke server client local checkparens checkdocs test-unit stress tests profile server-prod notify
 SMOKE_TIMEOUT ?= 5s
 MMORPG_SMOKE_SECONDS ?= 2.0
 STRESS_CLIENTS ?= 10
@@ -41,3 +41,6 @@ stress:
 
 profile:
 	MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 sbcl --script scripts/server.lisp
+
+notify:
+	@notify-send -a "MMORPG" "$(MSG)"

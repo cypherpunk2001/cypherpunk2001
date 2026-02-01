@@ -22,6 +22,21 @@ Common Lisp + raylib MMORPG prototype with a clean client/server UDP architectur
 make tests              # Run ALL tests including smoke test (recommended)
 ```
 
+## MANDATORY: Desktop Notification on Completion (DO NOT SKIP)
+
+**This is NON-NEGOTIABLE. Every single time ALL tasks are done, run this command:**
+
+```bash
+make notify MSG="All jobs are complete and ready for review"
+```
+
+**Rules:**
+1. When ALL work is finished (code written, `make tests` passing, nothing left to do), you MUST run `make notify`. No exceptions. Do not forget. Do not skip. Do not assume the user saw your text output — they are not watching the terminal.
+2. This applies to EVERY type of completed work: code changes, review-only tasks, research tasks, anything the user asked you to do.
+3. Do NOT notify mid-work or between sub-tasks, UNLESS the user explicitly asked you to stop for review between steps.
+4. If you are unsure whether you already notified, run `make notify` again. A duplicate notification is always better than a missing one.
+5. The user relies on `notify-send` to know when to come back. If you forget, they are left waiting with no signal. This wastes their time and is unacceptable.
+
 **CRITICAL TEST ORDER**: The first three tests MUST run in this exact order:
 1. `make checkparens` - Verify balanced parentheses (fastest, catches syntax errors)
 2. `make ci` - Cold compile + UDP handshake (catches compile errors)
