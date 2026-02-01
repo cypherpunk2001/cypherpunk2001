@@ -34,48 +34,41 @@ Eliminate visible "loading..." screens for cached zone transitions, and reduce t
 
 ### Step 2: Add asymmetric hysteresis band
 
-**What:** Instead of transitioning when the player reaches the exact zone edge, pull the trigger point *inward* so the transition fires when the player is still N tiles inside the current zone. The player never leaves valid collision space — the handoff happens early, while they're still within the current zone's wall-map. Use asymmetric thresholds: a larger inward margin to enter the new zone (harder to trigger), and a smaller margin to return (easier to cancel/re-trigger the old zone).
+**What:** Add a two-phase arm/commit model to zone transitions. Instead of transitioning the instant the player touches the zone edge, the system arms a pending transition when the player enters a band near the edge, then commits only when they reach the edge itself. If the player retreats before reaching the edge, the pending is cancelled. This creates a window where the player can change their mind without triggering a load.
 
 **Spatial model (critical — all code must follow this):**
-```
-  Zone interior          Hysteresis band       Edge (wall-map boundary)
-  |                      |<-- in threshold -->|
-  |    player runs  -->  |   [trigger fires]  |  (player is HERE, still inside zone)
-  |                      |                    |
-  |              |<-out->|                    |
-  |              [cancel threshold]           |
-```
-There are two lines: the **arm line** (in-threshold, further from edge) and the **commit line** (the zone edge itself). The **cancel line** (out-threshold, between arm and interior) determines when a pending transition is cancelled.
+
+All distances are measured inward from the zone edge. A larger value = further from edge = deeper into zone interior.
 
 ```
-  Zone interior       Cancel line    Arm line         Edge
-  |                   |              |                |
-  |                   |<- out-thres->|<-- in-thres -->|
-  |                   |              |                |
-  |  player runs -->  |         [arm]|       [commit] |
-  |          <-- retreats past cancel = cancel        |
+  Zone interior    Cancel line (6 tiles)   Arm line (4 tiles)   Edge (0 tiles)
+  |                |                       |                    |
+  |                |<--- dead band (2t) -->|<--- arm zone (4t)->|
+  |                |                       |                    |
+  |  player runs ->|                  [arm]|            [commit]|
+  |        <-- retreats past cancel = pending cleared           |
 ```
 
-- **Arm line** (in-threshold, default 4 tiles inward from edge): When the player crosses this line moving toward the edge, `zone-transition-pending` is set. No transition yet.
-- **Commit line** (the zone edge itself): When a player with a pending transition reaches the zone edge (existing `y <= min-y` check), `transition-zone` fires. The player never crosses the boundary — handoff happens at the edge and `find-open-position-with-map` places them in the target zone.
-- **Cancel line** (out-threshold, default 2 tiles inward from edge, i.e. further from edge than arm line): If the player retreats past this line, pending is cleared. Because out-threshold < in-threshold, there's a dead band between cancel and arm that prevents rapid re-arming.
+- **Arm line** (`*zone-hysteresis-in*`, default 4 tiles inward from edge): When the player crosses this line moving toward the edge, `zone-transition-pending` is set to that edge. **No transition fires yet.**
+- **Commit line** (the zone edge itself, 0 tiles — the existing boundary check): When a player with a pending transition reaches the zone edge (existing `y <= min-y` check), `transition-zone` fires. The player never crosses the boundary — handoff happens at the edge and `find-open-position-with-map` places them in the target zone.
+- **Cancel line** (`*zone-hysteresis-out*`, default 6 tiles inward from edge — further from edge than the arm line): If the player retreats past this line, pending is cleared. The 2-tile dead band between cancel (6t) and arm (4t) prevents rapid re-arming — the player must move 2 tiles past the arm line before they can re-enter the arm zone.
 
-The player **never leaves valid collision space**. The arm/cancel lines exist within the zone interior; the commit line is the existing zone boundary.
+The player **never leaves valid collision space**. The arm and cancel lines exist within the zone interior; the commit line is the existing zone boundary where collision already handles the edge.
 
 **Files:**
-- `src/config.lisp` — Add two parameters:
-  - `*zone-hysteresis-in*` (default 4.0 tiles, in pixels = `4.0 * tile-size`) — inward distance from edge where pending is armed.
-  - `*zone-hysteresis-out*` (default 2.0 tiles) — inward distance from edge where pending is cancelled (must be > in-threshold, i.e. further from the edge).
+- `src/config.lisp` — Add two parameters (both measured in tiles inward from edge; larger value = further from edge):
+  - `*zone-hysteresis-in*` (default 4.0) — arm line distance. Player crossing this toward the edge sets pending.
+  - `*zone-hysteresis-out*` (default 6.0) — cancel line distance. Player retreating past this clears pending. Must be > `*zone-hysteresis-in*` (cancel line is further from edge than arm line).
 - `src/types.lisp` — Add `zone-transition-pending` field to player struct (keyword or nil, e.g. `:east`). Tracks which edge the player is approaching. Ephemeral.
 - `src/movement.lisp:799` (`world-exit-edge-with-bounds`) — Add a second detection mode for the arm line. For the north edge: arm when `y <= (+ min-y hysteresis-in-px)` (N tiles inside the zone). Similarly for other edges. The existing edge check (`y <= min-y`) remains unchanged as the commit line.
 - `src/movement.lisp:1298` (`update-zone-transition`) — Two-phase state machine:
   - **No pending + player crosses arm line** → set `zone-transition-pending` to that edge. Do NOT transition.
   - **Pending + player reaches commit line (zone edge)** → call `transition-zone`, clear pending.
-  - **Pending + player retreats past cancel line** → clear pending (player reversed). Cancel line is at `(+ min-y hysteresis-out-px)` for north edge — further from edge than the arm line, creating a dead band.
+  - **Pending + player retreats past cancel line** → clear pending (player reversed). Cancel line for north edge is at `(+ min-y hysteresis-out-px)` (6 tiles from edge, further inside zone than the arm line at `(+ min-y hysteresis-in-px)`).
   - **Pending + edge changes** → clear pending (player changed direction).
   - **Pending + intent drops below `*zone-direction-threshold*`** → clear pending.
 
-**Implementation note:** The hysteresis values are in *tiles* but the edge detection works in *pixels*. Convert at the point of comparison: `(* *zone-hysteresis-in* (float *tile-size*))`. Assert at config load time that `*zone-hysteresis-out*` > `*zone-hysteresis-in*` (cancel line is further from edge than arm line).
+**Implementation note:** The hysteresis values are in *tiles* but the edge detection works in *pixels*. Convert at the point of comparison: `(* *zone-hysteresis-in* (float *tile-size*))`. Assert at config load time that `*zone-hysteresis-out*` > `*zone-hysteresis-in*` (cancel line at 6 tiles is further from edge than arm line at 4 tiles). The dead band between them (default 2 tiles) prevents flicker at the arm line.
 
 **Corner / 4-way intersection handling:** `world-exit-edge-with-bounds` can detect two edges simultaneously at corners (e.g., player at northeast corner has both north and east candidates). The existing code picks the edge with the highest movement-weight (strongest intent component). The `zone-transition-pending` field locks to a single edge once armed. Resolution rules:
 1. If no pending edge → pick edge with highest directional weight (existing behavior). Arm as pending.
@@ -89,7 +82,7 @@ This prevents corner thrash — once the player is armed toward an edge, they mu
 - Unit test: player with pending reaches zone edge → transition fires, pending cleared.
 - Unit test: player crosses arm line then retreats past cancel line → pending cleared, no transition.
 - Unit test: player crosses arm line, retreats into dead band (between cancel and arm) → pending still set (not yet cancelled).
-- Unit test: asymmetry — cancel line is further from edge than arm line.
+- Unit test: asymmetry — `*zone-hysteresis-out*` (6) > `*zone-hysteresis-in*` (4), cancel line is further from edge than arm line.
 - Unit test: at corner with two edges, pending locks to dominant edge; other edge ignored.
 - Unit test: pending edge cleared when intent drops below direction threshold.
 
