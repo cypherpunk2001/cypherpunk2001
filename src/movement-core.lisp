@@ -134,12 +134,13 @@
 
 (defun zone-bounds-zero-origin (tile-dest-size width height collision-half-w collision-half-h)
   "Calculate movement bounds for a zone with zero-origin wall-map.
+   Bounds include tile 0 and tile (width-1) so the visible boundary ring is walkable.
    Unlike zone-bounds-from-dimensions, this ignores *wall-origin-x/y* globals
    since per-zone wall-maps are always zero-indexed."
-  (let* ((wall-min-x (+ (* 1 tile-dest-size) collision-half-w))
-         (wall-max-x (- (* (1- width) tile-dest-size) collision-half-w))
-         (wall-min-y (+ (* 1 tile-dest-size) collision-half-h))
-         (wall-max-y (- (* (1- height) tile-dest-size) collision-half-h)))
+  (let* ((wall-min-x (+ (* 0 tile-dest-size) collision-half-w))
+         (wall-max-x (- (* width tile-dest-size) collision-half-w))
+         (wall-min-y (+ (* 0 tile-dest-size) collision-half-h))
+         (wall-max-y (- (* height tile-dest-size) collision-half-h)))
     (values wall-min-x wall-max-x wall-min-y wall-max-y)))
 
 (defun get-zone-collision-bounds (zone-id tile-dest-size collision-half-w collision-half-h)
@@ -172,14 +173,16 @@
 
 (defun zone-bounds-from-dimensions (tile-dest-size width height collision-half-width collision-half-height)
   ;; Return wall bounds for a zone with WIDTH/HEIGHT in tiles.
-  (let* ((wall-min-x (+ (* (+ *wall-origin-x* 1) tile-dest-size)
+  ;; Bounds include the boundary ring (tile 0 and tile width-1) so all visible tiles
+  ;; are walkable.
+  (let* ((wall-min-x (+ (* *wall-origin-x* tile-dest-size)
                         collision-half-width))
-         (wall-max-x (- (* (+ *wall-origin-x* (1- width))
+         (wall-max-x (- (* (+ *wall-origin-x* width)
                            tile-dest-size)
                         collision-half-width))
-         (wall-min-y (+ (* (+ *wall-origin-y* 1) tile-dest-size)
+         (wall-min-y (+ (* *wall-origin-y* tile-dest-size)
                         collision-half-height))
-         (wall-max-y (- (* (+ *wall-origin-y* (1- height))
+         (wall-max-y (- (* (+ *wall-origin-y* height)
                            tile-dest-size)
                         collision-half-height)))
     (values wall-min-x wall-max-x wall-min-y wall-max-y)))

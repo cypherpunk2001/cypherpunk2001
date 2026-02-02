@@ -79,9 +79,32 @@
                  (setf (intent-target-active intent) nil
                        dx 0.0
                        dy 0.0)
-                 ;; Stationary: attempted = actual
-                 (setf (player-attempted-x player) x
-                       (player-attempted-y player) y))
+                 (if (intent-target-clamped-p intent)
+                     ;; Target was clamped from an out-of-bounds click.
+                     ;; Use raw target to compute attempted position so
+                     ;; world-crossing-edge can detect the zone transition.
+                     (let* ((raw-x (intent-target-raw-x intent))
+                            (raw-y (intent-target-raw-y intent))
+                            (raw-dx (- raw-x x))
+                            (raw-dy (- raw-y y))
+                            (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
+                       (if (> raw-dist 0.001)
+                           (let* ((rdir-x (/ raw-dx raw-dist))
+                                  (rdir-y (/ raw-dy raw-dist))
+                                  (nudge 1.0))
+                             (setf (player-attempted-x player) (+ x (* rdir-x nudge))
+                                   (player-attempted-y player) (+ y (* rdir-y nudge)))
+                             ;; Set move direction so player-intent-direction returns
+                             ;; the raw-target direction. Without this, the pending
+                             ;; cancel gate sees (0,0) and cancels before
+                             ;; world-crossing-edge can detect the boundary crossing.
+                             (set-intent-move intent rdir-x rdir-y))
+                           (setf (player-attempted-x player) x
+                                 (player-attempted-y player) y))
+                       (setf (intent-target-clamped-p intent) nil))
+                     ;; Normal stationary: attempted = actual
+                     (setf (player-attempted-x player) x
+                           (player-attempted-y player) y)))
                (let* ((dir-x (/ to-x dist))
                       (dir-y (/ to-y dist))
                       (step (min (* *player-speed* speed-mult dt) dist)))
@@ -501,7 +524,8 @@
   ;; Apply a zone transition using EXIT metadata for the given PLAYER.
   ;; Updates player's zone-id and position. Also updates zone-state cache.
   ;; Uses player's current zone-id (not world-zone) for per-zone bounds.
-  (let* ((world (game-world game))
+  (let* ((t0 (get-internal-real-time))
+         (world (game-world game))
          (intent (player-intent player))
          ;; Use player's zone-id for source zone, not world-zone (server may have stale world-zone)
          (current-zone-id (or (player-zone-id player) *starting-zone-id*))
@@ -691,7 +715,7 @@
                       *zone-transition-cooldown-seconds* (player-id player)))
           ;; Step 2: Clear pending transition
           (setf (player-zone-transition-pending player) nil)
-          (reset-frame-intent intent)
+          (reset-frame-intent-preserving-movement intent)
           (when had-target
             (set-intent-target intent
                                (+ (player-x player) target-offset-x)
@@ -732,6 +756,15 @@
                   ;; Populate NPC spatial grid for proximity queries
                   (populate-npc-grid target-state merged)
                   (setf (gethash target-zone-id *zone-states*) target-state)))))
+          ;; Log per-transition timing (verbose only)
+          (when *verbose-zone-transitions*
+            (let* ((t1 (get-internal-real-time))
+                   (elapsed-ms (* (/ (float (- t1 t0) 1.0)
+                                     (float internal-time-units-per-second 1.0))
+                                  1000.0)))
+              (log-zone "Zone transition: elapsed ~,1fms (player ~a, cache-~a)"
+                        elapsed-ms (player-id player)
+                        (if cached-zone "HIT" "MISS"))))
           t)))))))
 
 ;;;; ========================================================================
@@ -806,15 +839,32 @@
                                     (cond
                                       ;; Commit: at the pending edge
                                       ((eq actual-edge pending)
-                                       (let ((now (/ (float (get-internal-real-time) 1.0)
-                                                     (float internal-time-units-per-second 1.0))))
-                                         (let* ((last (player-zone-transition-last-time player))
-                                                (time-since (if (> last 0.0) (- now last) -1.0)))
-                                           (log-zone "Zone transition: COMMIT edge=~a player=~a time-since-last=~,2fs"
-                                                     pending (player-id player) time-since))
-                                         (setf (player-zone-transition-last-time player) now))
-                                       (transition-zone game player exit pending)
-                                       (incf transition-count))
+                                       ;; Client cache gate: defer commit if target zone
+                                       ;; is not yet cached (avoids sync disk load hitch).
+                                       ;; Server always commits immediately.
+                                       (let* ((target-id (getf exit :to))
+                                              (zone-lru (game-zone-cache game))
+                                              (is-client (not (eq (game-net-role game) :server)))
+                                              (cached (or (not is-client)
+                                                         (not zone-lru)
+                                                         (zone-cache-lookup zone-lru target-id))))
+                                         (if (not cached)
+                                             ;; Target zone not cached on client — defer commit,
+                                             ;; keep pending so preloader can warm the cache.
+                                             (when *verbose-zone-transitions*
+                                               (log-zone "Zone transition: DEFERRED edge=~a (zone ~a not cached)"
+                                                         pending target-id))
+                                             ;; Proceed with commit
+                                             (progn
+                                               (let ((now (/ (float (get-internal-real-time) 1.0)
+                                                             (float internal-time-units-per-second 1.0))))
+                                                 (let* ((last (player-zone-transition-last-time player))
+                                                        (time-since (if (> last 0.0) (- now last) -1.0)))
+                                                   (log-zone "Zone transition: COMMIT edge=~a player=~a time-since-last=~,2fs"
+                                                             pending (player-id player) time-since))
+                                                 (setf (player-zone-transition-last-time player) now))
+                                               (transition-zone game player exit pending)
+                                               (incf transition-count)))))
                                       ;; Edge changed: player now at a different edge → clear pending
                                       (actual-edge
                                        (when *verbose-zone-transitions*

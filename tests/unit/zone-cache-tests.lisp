@@ -135,7 +135,10 @@
             "distance-to-edge: east = max-x - x")))
 
 (defun test-player-in-arm-band-p-inside ()
-  "Player close to edge should be in arm band."
+  "Player close to edge should be in arm band.
+   NOTE: Binds *zone-hysteresis-in* to 6.0 explicitly for isolation — tests the
+   function mechanics, not the current default (2.0).  See zone-continuity-tests
+   for tests using the actual 2.0 default."
   (let ((*zone-hysteresis-in* 6.0))
     ;; tile-dest-size = 64 (16 * 4.0), arm threshold = 6 * 64 = 384 px
     ;; Player at y=100, min-y=0 → distance to north = 100 (< 384) → in arm band
@@ -144,7 +147,8 @@
               "arm-band: player close to edge should be in arm band"))))
 
 (defun test-player-in-arm-band-p-outside ()
-  "Player deep in zone interior should NOT be in arm band."
+  "Player deep in zone interior should NOT be in arm band.
+   Binds explicit value (6.0) for isolation — see note on test above."
   (let ((*zone-hysteresis-in* 6.0))
     ;; Player at y=2048, min-y=0 → distance to north = 2048 (> 384) → NOT in arm band
     (let ((player (make-player 500.0 2048.0)))
@@ -152,7 +156,8 @@
               "arm-band: player in interior should NOT be in arm band"))))
 
 (defun test-player-past-cancel-line-p-test ()
-  "Player deep in interior should be past cancel line."
+  "Player deep in interior should be past cancel line.
+   Binds explicit value (8.0) for isolation — see note on arm-band test above."
   (let ((*zone-hysteresis-out* 8.0))
     ;; cancel threshold = 8 * 64 = 512 px
     ;; Player at y=600, min-y=0 → distance to north = 600 (> 512) → past cancel
@@ -735,7 +740,7 @@
                      "validate-zone-config: should error when preload-radius < hysteresis-in"))
            ;; Restore and violate: hysteresis-out <= hysteresis-in
            (setf *zone-preload-radius* saved-preload)
-           (setf *zone-hysteresis-out* 3.0)  ; less than hysteresis-in (6.0)
+           (setf *zone-hysteresis-out* 1.0)  ; less than hysteresis-in (2.0)
            (let ((errored nil))
              (handler-case (validate-zone-config)
                (error () (setf errored t)))

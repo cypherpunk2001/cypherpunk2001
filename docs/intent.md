@@ -14,6 +14,8 @@ What an intent contains
 - Movement direction (dx, dy)
 - Facing direction (face-dx, face-dy)
 - A target point (for click-to-move)
+- Raw click target (`target-raw-x`, `target-raw-y`) and clamped flag (`target-clamped-p`)
+  for zone-crossing detection when the visible target was clamped to collision bounds
 - One-frame actions (attack, run toggle)
 - Client-requested targets (for server validation):
   - `requested-attack-target-id`: NPC id the client wants to attack
@@ -35,6 +37,8 @@ What an intent contains
 
 Key functions
 - `reset-frame-intent`: clears per-frame signals without erasing targets.
+- `reset-frame-intent-preserving-movement`: like `reset-frame-intent` but preserves
+  `move-dx/dy` and `face-dx/dy` so walking animation continues across zone transitions.
 - `consume-intent-actions`: clears one-shot actions after a sim tick.
 - `set-intent-move`, `set-intent-face`: standardize motion signals.
 - `set-intent-target`, `clear-intent-target`: manage click-to-move.

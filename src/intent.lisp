@@ -6,6 +6,9 @@
   move-dx move-dy
   face-dx face-dy
   target-x target-y target-active
+  ;; Raw (unclamped) click target — used for zone-crossing direction when the click
+  ;; target was clamped to bounds. Allows click-to-move to still trigger transitions.
+  target-raw-x target-raw-y target-clamped-p
   attack
   run-toggle
   ;; Client-requested targets (server validates and sets authoritative state)
@@ -37,6 +40,9 @@
                 :target-x target-x
                 :target-y target-y
                 :target-active nil
+                :target-raw-x 0.0
+                :target-raw-y 0.0
+                :target-clamped-p nil
                 :attack nil
                 :run-toggle nil
                 :requested-attack-target-id 0
@@ -67,6 +73,13 @@
         (intent-run-toggle intent) nil
         (intent-requested-unstuck intent) nil))
 
+(defun reset-frame-intent-preserving-movement (intent)
+  ;; Like reset-frame-intent but preserves move-dx/dy and face-dx/dy so that
+  ;; the walking animation continues smoothly across zone transitions.
+  (setf (intent-attack intent) nil
+        (intent-run-toggle intent) nil
+        (intent-requested-unstuck intent) nil))
+
 (defun consume-intent-actions (intent)
   ;; Clear one-shot actions after a simulation tick.
   (setf (intent-attack intent) nil
@@ -91,8 +104,9 @@
         (intent-target-active intent) t))
 
 (defun clear-intent-target (intent)
-  ;; Cancel any active target.
-  (setf (intent-target-active intent) nil))
+  ;; Cancel any active target and raw-target state.
+  (setf (intent-target-active intent) nil
+        (intent-target-clamped-p intent) nil))
 
 (defun request-intent-attack (intent)
   ;; Request an attack this frame.

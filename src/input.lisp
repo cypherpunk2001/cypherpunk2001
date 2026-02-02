@@ -141,10 +141,22 @@
             (when (<= timer 0.0)
               (setf (player-click-marker-kind player) nil)))))))
 
-(defun set-player-walk-target (player intent world-x world-y &optional (mark-p t))
+(defun set-player-walk-target (player intent world-x world-y &optional (mark-p t) world)
   ;; Request a walk target via intent (server validates and clears conflicting targets).
   ;; Note: We do NOT clear pickup target here - if player has an active pickup,
   ;; clicking on ground shouldn't cancel it. Let them finish the pickup first.
+  ;; Clamp target to walkable collision bounds to prevent overshoot near zone edges.
+  ;; Store raw (unclamped) target so zone-crossing direction is preserved for transitions.
+  (setf (intent-target-raw-x intent) world-x
+        (intent-target-raw-y intent) world-y
+        (intent-target-clamped-p intent) nil)
+  (when world
+    (let ((clamped-x (clamp world-x (world-wall-min-x world) (world-wall-max-x world)))
+          (clamped-y (clamp world-y (world-wall-min-y world) (world-wall-max-y world))))
+      (when (or (/= clamped-x world-x) (/= clamped-y world-y))
+        (setf (intent-target-clamped-p intent) t))
+      (setf world-x clamped-x
+            world-y clamped-y)))
   (set-intent-target intent world-x world-y)
   (clear-requested-attack-target intent)
   (clear-requested-follow-target intent)
@@ -308,7 +320,8 @@
     (or desc
         (format nil "A ~a." name))))
 
-(defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down)
+(defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down
+                                  &optional world)
   ;; Handle click/hold to update the player target position.
   (when mouse-clicked
     (clear-player-auto-walk player)
@@ -319,7 +332,7 @@
                          (player-y player)
                          (camera-offset camera)
                          (camera-zoom camera))
-      (set-player-walk-target player intent target-x target-y t)
+      (set-player-walk-target player intent target-x target-y t world)
       (setf (player-mouse-hold-timer player) 0.0)))
   (when (and mouse-down (not mouse-clicked))
     (incf (player-mouse-hold-timer player) dt)
@@ -333,7 +346,7 @@
                            (player-y player)
                            (camera-offset camera)
                            (camera-zoom camera))
-        (set-player-walk-target player intent target-x target-y nil))))
+        (set-player-walk-target player intent target-x target-y nil world))))
   (unless mouse-down
     (setf (player-mouse-hold-timer player) 0.0)))
 
@@ -367,7 +380,7 @@
       (clear-player-auto-walk player)
       (multiple-value-bind (target-x target-y)
           (minimap-screen-to-world ui world player mouse-x mouse-y)
-        (set-player-walk-target player intent target-x target-y t)
+        (set-player-walk-target player intent target-x target-y t world)
         (setf (player-mouse-hold-timer player) 0.0))
       t)
     (when (and inside mouse-down (not mouse-clicked))
@@ -377,7 +390,7 @@
         (clear-player-auto-walk player)
         (multiple-value-bind (target-x target-y)
             (minimap-screen-to-world ui world player mouse-x mouse-y)
-          (set-player-walk-target player intent target-x target-y nil)))
+          (set-player-walk-target player intent target-x target-y nil world)))
       t)
     (unless mouse-down
       (setf (player-mouse-hold-timer player) 0.0))

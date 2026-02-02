@@ -405,20 +405,20 @@
                            :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
     ;; Place player just past east collision bound of zone-a
     ;; 10-tile zone with tile-size=64, half-w=16:
-    ;;   collision min-x=80 (1*64+16), max-x=560 (9*64-16)
-    ;; Player at x=562 (2px past src-max-x=560)
-    (setf (player-x player) 562.0
+    ;;   collision min-x=16 (0*64+16), max-x=624 (10*64-16)
+    ;; Player at x=626 (2px past src-max-x=624)
+    (setf (player-x player) 626.0
           (player-y player) 300.0
           ;; Attempted position = pre-collision intended position (same as actual when past edge)
-          (player-attempted-x player) 562.0
+          (player-attempted-x player) 626.0
           (player-attempted-y player) 300.0
           (player-zone-id player) zone-a-id
           (player-intent player) (make-intent))
-    ;; Set up world bounds matching 10-tile zone collision
-    (setf (world-wall-min-x world) 80.0
-          (world-wall-max-x world) 560.0
-          (world-wall-min-y world) 80.0
-          (world-wall-max-y world) 560.0
+    ;; Set up world bounds matching 10-tile zone collision (tile-0 based)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0
           (world-zone-label world) "Zone A")
     ;; Write zone-b to a temp file so transition-zone can load it
     (let ((tmp-path (format nil "/tmp/test-zone-b-~a.lisp" (get-universal-time))))
@@ -434,11 +434,11 @@
       (unwind-protect
            (progn
              (transition-zone game player exit :east)
-             ;; After east crossing: new-x = dst-min-x + (562 - src-max-x)
-             ;;   = 80 + (562 - 560) = 82. Y unchanged at 300.
+             ;; After east crossing: new-x = dst-min-x + (626 - src-max-x)
+             ;;   = 16 + (626 - 624) = 18. Y unchanged at 300.
              ;; This is seamless: only 2px from the destination edge.
-             (assert (< (abs (- (player-x player) 82.0)) 1.0) ()
-                     "seam-integration: player-x should be near 82, got ~,2f"
+             (assert (< (abs (- (player-x player) 18.0)) 1.0) ()
+                     "seam-integration: player-x should be near 18, got ~,2f"
                      (player-x player))
              ;; Y-axis must be preserved exactly (not ratio-mapped to 0.5)
              (assert (< (abs (- (player-y player) 300.0)) 1.0) ()
@@ -481,17 +481,20 @@
                              :player-grid (make-spatial-grid-for-zone 10 10 64.0)
                              :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
       ;; Player just past east collision bound
-      (setf (player-x player) 562.0
+      ;; 10-tile zone with tile-size=64, half-w=16:
+      ;;   collision min-x=16 (0*64+16), max-x=624 (10*64-16)
+      ;; Player at x=626 (2px past src-max-x=624)
+      (setf (player-x player) 626.0
             (player-y player) 300.0
             ;; Attempted position = pre-collision intended position
-            (player-attempted-x player) 562.0
+            (player-attempted-x player) 626.0
             (player-attempted-y player) 300.0
             (player-zone-id player) zone-a-id
             (player-intent player) (make-intent))
-      (setf (world-wall-min-x world) 80.0
-            (world-wall-max-x world) 560.0
-            (world-wall-min-y world) 80.0
-            (world-wall-max-y world) 560.0
+      (setf (world-wall-min-x world) 16.0
+            (world-wall-max-x world) 624.0
+            (world-wall-min-y world) 16.0
+            (world-wall-max-y world) 624.0
             (world-zone-label world) "Zone A")
       (let ((tmp-path (format nil "/tmp/test-zone-blk-~a.lisp" (get-universal-time))))
         (with-open-file (out tmp-path :direction :output :if-exists :supersede)
@@ -506,7 +509,8 @@
         (unwind-protect
              (progn
                (transition-zone game player exit :east)
-               ;; Seam translation gives clamped (80, 300) which is blocked → fallback
+               ;; Seam translation gives clamped (18, 300) at column 0, but column 1 is
+               ;; blocked so spiral search from clamped position avoids it → fallback
                ;; Fallback uses find-open-position-with-map spiral search
                ;; Player should end up in zone-b at a non-blocked position
                (assert (eq (player-zone-id player) zone-b-id) ()
@@ -754,6 +758,331 @@
       (assert (null edge) ()
               "gating-east-moving-north: should be nil, got ~a" edge))))
 
+(defun test-reset-frame-intent-preserving-movement ()
+  "reset-frame-intent-preserving-movement clears attack/run/unstuck but keeps move and face."
+  (let ((intent (make-intent)))
+    (setf (intent-move-dx intent) 1.0
+          (intent-move-dy intent) -0.5
+          (intent-face-dx intent) 1.0
+          (intent-face-dy intent) 0.0
+          (intent-attack intent) t
+          (intent-run-toggle intent) t
+          (intent-requested-unstuck intent) t)
+    (reset-frame-intent-preserving-movement intent)
+    ;; Movement preserved
+    (assert (= (intent-move-dx intent) 1.0) ()
+            "preserve-move-dx: should be 1.0, got ~,2f" (intent-move-dx intent))
+    (assert (= (intent-move-dy intent) -0.5) ()
+            "preserve-move-dy: should be -0.5, got ~,2f" (intent-move-dy intent))
+    ;; Face preserved
+    (assert (= (intent-face-dx intent) 1.0) ()
+            "preserve-face-dx: should be 1.0, got ~,2f" (intent-face-dx intent))
+    (assert (= (intent-face-dy intent) 0.0) ()
+            "preserve-face-dy: should be 0.0, got ~,2f" (intent-face-dy intent))
+    ;; Actions cleared
+    (assert (null (intent-attack intent)) ()
+            "clear-attack: should be nil")
+    (assert (null (intent-run-toggle intent)) ()
+            "clear-run: should be nil")
+    (assert (null (intent-requested-unstuck intent)) ()
+            "clear-unstuck: should be nil")))
+
+(defun test-walk-target-clamped-to-bounds ()
+  "set-player-walk-target clamps world-x/y to collision bounds when world is provided.
+   Uses post-Issue-0 bounds: 64-tile zone, tile=64, collision-half=27.2 →
+   wall-min=27.2, wall-max=4068.8."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 27.2)))
+    (setf (player-intent player) intent)
+    (setf (world-wall-min-x world) 27.2
+          (world-wall-max-x world) 4068.8
+          (world-wall-min-y world) 27.2
+          (world-wall-max-y world) 4068.8)
+    ;; Click outside bounds (too far west and north)
+    (set-player-walk-target player intent 10.0 10.0 t world)
+    (assert (< (abs (- (intent-target-x intent) 27.2)) 0.01) ()
+            "clamp-west: target-x should be clamped to 27.2, got ~,2f"
+            (intent-target-x intent))
+    (assert (< (abs (- (intent-target-y intent) 27.2)) 0.01) ()
+            "clamp-north: target-y should be clamped to 27.2, got ~,2f"
+            (intent-target-y intent))
+    ;; Click outside bounds (too far east and south)
+    (set-player-walk-target player intent 5000.0 5000.0 t world)
+    (assert (< (abs (- (intent-target-x intent) 4068.8)) 0.01) ()
+            "clamp-east: target-x should be clamped to 4068.8, got ~,2f"
+            (intent-target-x intent))
+    (assert (< (abs (- (intent-target-y intent) 4068.8)) 0.01) ()
+            "clamp-south: target-y should be clamped to 4068.8, got ~,2f"
+            (intent-target-y intent))
+    ;; Click inside bounds — no clamping
+    (set-player-walk-target player intent 2000.0 2000.0 t world)
+    (assert (< (abs (- (intent-target-x intent) 2000.0)) 0.01) ()
+            "no-clamp: target-x should be 2000.0, got ~,2f"
+            (intent-target-x intent))
+    (assert (< (abs (- (intent-target-y intent) 2000.0)) 0.01) ()
+            "no-clamp: target-y should be 2000.0, got ~,2f"
+            (intent-target-y intent))
+    ;; Click on boundary ring tile center (tile 0: center=32px, within bounds 27.2–4068.8)
+    (set-player-walk-target player intent 32.0 32.0 t world)
+    (assert (< (abs (- (intent-target-x intent) 32.0)) 0.01) ()
+            "boundary-ring: tile-0 center (32) should NOT be clamped, got ~,2f"
+            (intent-target-x intent))
+    (assert (not (intent-target-clamped-p intent)) ()
+            "boundary-ring: click on tile-0 center should not set clamped flag")))
+
+(defun test-walk-target-no-clamp-without-world ()
+  "set-player-walk-target does NOT clamp when world is nil (backward compat)."
+  (let* ((player (%make-player))
+         (intent (make-intent)))
+    (setf (player-intent player) intent)
+    (set-player-walk-target player intent 10.0 10.0 t nil)
+    (assert (< (abs (- (intent-target-x intent) 10.0)) 0.01) ()
+            "no-world: target-x should remain 10.0, got ~,2f"
+            (intent-target-x intent))))
+
+(defun test-reduced-arm-band-no-false-arm ()
+  "With *zone-hysteresis-in* = 2.0, a player 3 tiles from the edge must NOT be in
+   the arm band.  Old value (6.0) would have armed at this distance."
+  (let ((*zone-hysteresis-in* 2.0))
+    (let ((player (%make-player)))
+      ;; Zone from 0..4096 (64-tile zone), tile-dest-size=64.
+      ;; Player at y=256 → 256 px from north edge (=4 tiles away).
+      (setf (player-x player) 2048.0 (player-y player) 256.0)
+      (assert (not (player-in-arm-band-p player :north 0.0 4096.0 0.0 4096.0 64.0)) ()
+              "reduced-arm: 4 tiles from edge should NOT arm (threshold=2 tiles)")
+      ;; Player at y=96 → 96 px from north edge (=1.5 tiles away), should arm.
+      (setf (player-y player) 96.0)
+      (assert (player-in-arm-band-p player :north 0.0 4096.0 0.0 4096.0 64.0) ()
+              "reduced-arm: 1.5 tiles from edge SHOULD arm (threshold=2 tiles)"))))
+
+(defun test-reduced-cancel-line-closer ()
+  "With *zone-hysteresis-out* = 3.0, a player 4 tiles from the edge should be past
+   the cancel line.  Old value (8.0) would NOT have cancelled at this distance."
+  (let ((*zone-hysteresis-out* 3.0))
+    (let ((player (%make-player)))
+      ;; Player at y=320 → 320 px from north edge (=5 tiles away)
+      (setf (player-x player) 2048.0 (player-y player) 320.0)
+      (assert (player-past-cancel-line-p player :north 0.0 4096.0 0.0 4096.0 64.0) ()
+              "reduced-cancel: 5 tiles from edge should cancel (threshold=3 tiles)")
+      ;; Player at y=128 → 128 px from north edge (=2 tiles away), should NOT cancel.
+      (setf (player-y player) 128.0)
+      (assert (not (player-past-cancel-line-p player :north 0.0 4096.0 0.0 4096.0 64.0)) ()
+              "reduced-cancel: 2 tiles from edge should NOT cancel (threshold=3 tiles)"))))
+
+(defun test-clamped-click-sets-raw-target ()
+  "When click target is outside bounds and gets clamped, raw target is stored."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 27.2)))
+    (setf (player-intent player) intent)
+    (setf (world-wall-min-x world) 27.2
+          (world-wall-max-x world) 4068.8
+          (world-wall-min-y world) 27.2
+          (world-wall-max-y world) 4068.8)
+    ;; Click outside east bounds
+    (set-player-walk-target player intent 5000.0 2000.0 t world)
+    (assert (intent-target-clamped-p intent) ()
+            "clamped-click: target-clamped-p should be T when click is outside bounds")
+    (assert (< (abs (- (intent-target-raw-x intent) 5000.0)) 0.01) ()
+            "clamped-click: raw-x should be 5000.0, got ~,2f"
+            (intent-target-raw-x intent))
+    (assert (< (abs (- (intent-target-x intent) 4068.8)) 0.01) ()
+            "clamped-click: target-x should be clamped to 4068.8, got ~,2f"
+            (intent-target-x intent))
+    ;; Click inside bounds — no clamping flag
+    (set-player-walk-target player intent 2000.0 2000.0 t world)
+    (assert (not (intent-target-clamped-p intent)) ()
+            "inside-click: target-clamped-p should be nil for in-bounds click")))
+
+(defun test-clamped-click-produces-attempted-past-boundary ()
+  "When a clamped target is reached, attempted position extends past boundary
+   using raw target direction, enabling world-crossing-edge to detect the crossing."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    ;; 10-tile zone: bounds min=16, max=624
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0)
+    ;; Player at east boundary, clamped target was from click outside east
+    (setf (player-x player) 624.0
+          (player-y player) 300.0)
+    ;; Simulate clamped click: raw target at 700 (past east), clamped to 624
+    (set-intent-target intent 624.0 300.0)
+    (setf (intent-target-raw-x intent) 700.0
+          (intent-target-raw-y intent) 300.0
+          (intent-target-clamped-p intent) t)
+    ;; Run movement update — player is at target (dist=0 < epsilon), clamped branch fires
+    (update-player-position player intent world 1.0 0.016)
+    ;; Attempted should be past east boundary (nudged toward raw target)
+    (assert (> (player-attempted-x player) 624.0) ()
+            "clamped-attempted: attempted-x should be > 624 (past east), got ~,2f"
+            (player-attempted-x player))
+    ;; world-crossing-edge should detect east crossing
+    (setf (intent-move-dx intent) 1.0
+          (intent-move-dy intent) 0.0)
+    (let ((edge (world-crossing-edge player 16.0 624.0 16.0 624.0)))
+      (assert (eq edge :east) ()
+              "clamped-crossing: should detect :east crossing, got ~a" edge))))
+
+(defun test-click-inside-bounds-no-crossing ()
+  "When click target is inside bounds (not clamped), reaching it does not trigger crossing."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0)
+    ;; Player near east edge, click target inside bounds
+    (setf (player-x player) 600.0
+          (player-y player) 300.0)
+    (set-intent-target intent 600.0 300.0)
+    (setf (intent-target-clamped-p intent) nil)
+    ;; At target → stationary, attempted = actual
+    (update-player-position player intent world 1.0 0.016)
+    (assert (<= (player-attempted-x player) 624.0) ()
+            "inside-click: attempted-x should be <= 624, got ~,2f"
+            (player-attempted-x player))))
+
+(defun test-transition-preserves-movement-integration ()
+  "Integration: transition-zone preserves move-dx/dy so walk animation continues.
+   Tests the actual transition code path at movement-transition.lisp:694."
+  (let* ((world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-a-id :zone-anim-a)
+         (zone-b-id :zone-anim-b)
+         (wall-map (make-array '(10 10) :initial-element 0))
+         (zone-b (%make-zone :id zone-b-id :width 10 :height 10
+                             :collision-tiles nil :objects nil))
+         (player (%make-player))
+         (intent (make-intent))
+         (game (%make-game :world world :players (vector player)
+                           :npcs (vector) :entities (vector player)
+                           :net-role :server
+                           :npc-id-source (make-id-source 1000000 nil)))
+         (exit (list :to zone-b-id :spawn-edge :west)))
+    (setf (gethash zone-a-id *zone-states*)
+          (make-zone-state :zone-id zone-a-id :wall-map wall-map
+                           :zone (%make-zone :id zone-a-id :width 10 :height 10
+                                             :collision-tiles nil :objects nil)))
+    (setf (gethash zone-b-id *zone-states*)
+          (make-zone-state :zone-id zone-b-id :wall-map wall-map
+                           :zone zone-b
+                           :player-grid (make-spatial-grid-for-zone 10 10 64.0)
+                           :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
+    ;; Player walking east (move-dx=1.0) past east boundary
+    (setf (player-x player) 626.0
+          (player-y player) 300.0
+          (player-attempted-x player) 626.0
+          (player-attempted-y player) 300.0
+          (player-zone-id player) zone-a-id
+          (player-intent player) intent)
+    (setf (intent-move-dx intent) 1.0
+          (intent-move-dy intent) 0.0)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0
+          (world-zone-label world) "Zone A")
+    (let ((tmp-path (format nil "/tmp/test-zone-anim-~a.lisp" (get-universal-time))))
+      (with-open-file (out tmp-path :direction :output :if-exists :supersede)
+        (write (list :id zone-b-id :width 10 :height 10
+                     :tile-layers nil :collision-tiles nil :objects nil)
+               :stream out))
+      (let* ((paths (make-hash-table :test 'eq))
+             (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                       :zone-paths paths)))
+        (setf (gethash zone-b-id paths) tmp-path)
+        (setf (world-world-graph world) graph))
+      (unwind-protect
+           (progn
+             (transition-zone game player exit :east)
+             ;; move-dx/dy should be preserved (not zeroed)
+             (assert (= (intent-move-dx intent) 1.0) ()
+                     "transition-anim: move-dx should be 1.0, got ~,2f"
+                     (intent-move-dx intent))
+             (assert (= (intent-move-dy intent) 0.0) ()
+                     "transition-anim: move-dy should be 0.0, got ~,2f"
+                     (intent-move-dy intent))
+             ;; Attack should be cleared
+             (assert (null (intent-attack intent)) ()
+                     "transition-anim: attack should be nil after transition")
+             ;; Player should be in zone-b
+             (assert (eq (player-zone-id player) zone-b-id) ()
+                     "transition-anim: player should be in zone-b"))
+        (delete-file tmp-path)))))
+
+(defun test-clamped-nudge-sets-move-direction ()
+  "When a clamped target is reached, the raw-target nudge also sets move-dx/dy
+   on the intent so that player-intent-direction returns non-zero. Without this,
+   the pending cancel gate sees (0,0) and cancels before world-crossing-edge runs."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0)
+    ;; Player at east boundary
+    (setf (player-x player) 624.0
+          (player-y player) 300.0)
+    ;; Simulate clamped click past east boundary
+    (set-intent-target intent 624.0 300.0)
+    (setf (intent-target-raw-x intent) 700.0
+          (intent-target-raw-y intent) 300.0
+          (intent-target-clamped-p intent) t)
+    ;; Run movement — clamped nudge branch should fire
+    (update-player-position player intent world 1.0 0.016)
+    ;; move-dx should be set to raw direction (eastward ≈ 1.0)
+    (assert (> (intent-move-dx intent) 0.5) ()
+            "nudge-direction: move-dx should be positive (east), got ~,2f"
+            (intent-move-dx intent))
+    ;; edge-direction-passes-p should now pass for :east
+    (assert (edge-direction-passes-p (intent-move-dx intent) (intent-move-dy intent) :east) ()
+            "nudge-direction: direction should pass for :east")))
+
+(defun test-client-cache-gate-defers-when-uncached ()
+  "Client cache gate: when game is a client and target zone is not in the
+   LRU cache, the commit path should be deferred. Tests the cache-gate logic
+   directly without running full update-zone-transition (which needs GPU for game)."
+  (let* ((cache (make-zone-cache :capacity 4))
+         (target-id :zone-gate-b))
+    ;; Target zone is NOT in cache
+    (assert (null (zone-cache-lookup cache target-id)) ()
+            "cache-gate: target zone should not be in empty cache")
+    ;; Simulate the cache gate condition:
+    ;; is-client = t, zone-lru exists, target not cached → should defer
+    (let* ((is-client t)
+           (zone-lru cache)
+           (cached (or (not is-client)
+                       (not zone-lru)
+                       (zone-cache-lookup zone-lru target-id))))
+      (assert (not cached) ()
+              "cache-gate: should evaluate to NOT cached for empty cache on client"))
+    ;; Now insert the target zone and check again
+    (let ((zone (%make-zone :id target-id :width 10 :height 10)))
+      (zone-cache-insert cache target-id zone)
+      (let* ((is-client t)
+             (zone-lru cache)
+             (cached (or (not is-client)
+                         (not zone-lru)
+                         (zone-cache-lookup zone-lru target-id))))
+        (assert cached ()
+                "cache-gate: should evaluate to cached after insert")))
+    ;; Server always commits (is-client = nil)
+    (let* ((is-client nil)
+           (zone-lru cache)
+           (cached (or (not is-client)
+                       (not zone-lru)
+                       (zone-cache-lookup zone-lru target-id))))
+      (assert cached ()
+              "cache-gate: server should always pass cache gate"))))
+
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
     'test-compute-transition-overstep-north
@@ -788,4 +1117,22 @@
     'test-transition-uses-seam-not-fallback
     'test-attempted-position-set-for-stationary
     'test-attempted-position-set-for-click-to-move
-    'test-crossing-edge-directional-gating))
+    'test-crossing-edge-directional-gating
+    ;; Animation preservation across transitions (Issue 3 fix)
+    'test-reset-frame-intent-preserving-movement
+    ;; Click-to-move target clamping (Issue 2 fix)
+    'test-walk-target-clamped-to-bounds
+    'test-walk-target-no-clamp-without-world
+    ;; Reduced ARM band depth (Issue 1 fix)
+    'test-reduced-arm-band-no-false-arm
+    'test-reduced-cancel-line-closer
+    ;; Click-to-move zone crossing (Issue 2b fix)
+    'test-clamped-click-sets-raw-target
+    'test-clamped-click-produces-attempted-past-boundary
+    'test-click-inside-bounds-no-crossing
+    ;; Issue 3 integration: movement preserved across transition-zone
+    'test-transition-preserves-movement-integration
+    ;; Issue 2b: direction preserved for pending cancel gate
+    'test-clamped-nudge-sets-move-direction
+    ;; Issue 6: client cache gate defers commit when not cached
+    'test-client-cache-gate-defers-when-uncached))

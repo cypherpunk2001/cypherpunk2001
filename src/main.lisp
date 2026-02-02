@@ -207,7 +207,7 @@
                      (set-player-walk-target player client-intent
                                              context-x
                                              context-y
-                                             t))
+                                             t world))
                     ((eq action :attack)
                      (let ((npc (find-npc-by-id npcs context-id)))
                        (when npc
@@ -374,11 +374,11 @@
                                                    t))
                         (t
                          (update-target-from-mouse player client-intent camera dt
-                                                   mouse-clicked mouse-down))))))
+                                                   mouse-clicked mouse-down world))))))
                 (when (and mouse-down (not mouse-clicked)
                            (not mouse-npc) (not mouse-object))
                   (update-target-from-mouse player client-intent camera dt
-                                            mouse-clicked mouse-down)))))))
+                                            mouse-clicked mouse-down world)))))))
       (unless (or (editor-active editor)
                   (ui-inventory-open ui)
                   (ui-chat-active ui))

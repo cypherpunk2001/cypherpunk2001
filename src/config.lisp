@@ -110,9 +110,9 @@
   "Post-transition suppression window in seconds. Prevents rapid re-transitions.")
 
 ;;; Hysteresis Band (Step 2) — distances in tiles inward from edge
-(defparameter *zone-hysteresis-in* 6.0
+(defparameter *zone-hysteresis-in* 2.0
   "Arm line distance from zone edge in tiles. Crossing toward edge sets pending.")
-(defparameter *zone-hysteresis-out* 8.0
+(defparameter *zone-hysteresis-out* 3.0
   "Cancel line distance from zone edge in tiles. Retreating past this clears pending.
    Must be > *zone-hysteresis-in*.")
 

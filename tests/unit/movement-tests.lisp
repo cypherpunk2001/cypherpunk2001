@@ -216,7 +216,9 @@
         (assert (= x 276.0) () "edge-spawn: east x is max")))))
 
 (defun test-zone-bounds-from-dimensions ()
-  "Test calculating zone wall bounds."
+  "Test calculating zone wall bounds.
+   With origin=0, tile-size=32, 10 tiles, collision-half=12:
+   min = 0*32+12=12, max = 10*32-12=308."
   (let ((*wall-origin-x* 0)
         (*wall-origin-y* 0))
     (multiple-value-bind (min-x max-x min-y max-y)
@@ -224,7 +226,50 @@
       (assert (numberp min-x) () "zone-bounds: min-x is number")
       (assert (numberp max-x) () "zone-bounds: max-x is number")
       (assert (< min-x max-x) () "zone-bounds: min-x < max-x")
-      (assert (< min-y max-y) () "zone-bounds: min-y < max-y"))))
+      (assert (< min-y max-y) () "zone-bounds: min-y < max-y")
+      (assert (< (abs (- min-x 12.0)) 0.01) ()
+              "zone-bounds: min-x should be 12.0, got ~,2f" min-x)
+      (assert (< (abs (- max-x 308.0)) 0.01) ()
+              "zone-bounds: max-x should be 308.0, got ~,2f" max-x))))
+
+(defun test-zone-bounds-zero-origin-includes-boundary-ring ()
+  "zone-bounds-zero-origin includes tile 0 and tile (width-1) as walkable.
+   For a 64-tile zone with tile-dest-size=64 and collision-half=27.2:
+   min = 0*64 + 27.2 = 27.2, max = 64*64 - 27.2 = 4068.8."
+  (multiple-value-bind (min-x max-x min-y max-y)
+      (zone-bounds-zero-origin 64.0 64 64 27.2 27.2)
+    ;; tile-0 center = 32 px → should be inside bounds
+    (assert (<= min-x 32.0) ()
+            "boundary-ring: tile-0 center (32) must be >= min-x (~,2f)" min-x)
+    (assert (< (abs (- min-x 27.2)) 0.01) ()
+            "boundary-ring: min-x should be 27.2, got ~,2f" min-x)
+    ;; tile-63 center = 4032 px → should be inside bounds
+    (assert (>= max-x 4032.0) ()
+            "boundary-ring: tile-63 center (4032) must be <= max-x (~,2f)" max-x)
+    (assert (< (abs (- max-x 4068.8)) 0.01) ()
+            "boundary-ring: max-x should be 4068.8, got ~,2f" max-x)
+    ;; Same for Y
+    (assert (< (abs (- min-y 27.2)) 0.01) ()
+            "boundary-ring: min-y should be 27.2, got ~,2f" min-y)
+    (assert (< (abs (- max-y 4068.8)) 0.01) ()
+            "boundary-ring: max-y should be 4068.8, got ~,2f" max-y)))
+
+(defun test-zone-bounds-from-dimensions-includes-boundary-ring ()
+  "zone-bounds-from-dimensions includes tile 0 and tile (width-1).
+   With origin=0, tile-size=32, 10 tiles wide, collision-half=12:
+   min = 0*32 + 12 = 12, max = 10*32 - 12 = 308."
+  (let ((*wall-origin-x* 0)
+        (*wall-origin-y* 0))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (zone-bounds-from-dimensions 32.0 10 10 12.0 12.0)
+      (assert (< (abs (- min-x 12.0)) 0.01) ()
+              "from-dimensions: min-x should be 12, got ~,2f" min-x)
+      (assert (< (abs (- max-x 308.0)) 0.01) ()
+              "from-dimensions: max-x should be 308, got ~,2f" max-x)
+      (assert (< (abs (- min-y 12.0)) 0.01) ()
+              "from-dimensions: min-y should be 12, got ~,2f" min-y)
+      (assert (< (abs (- max-y 308.0)) 0.01) ()
+              "from-dimensions: max-y should be 308, got ~,2f" max-y))))
 
 (defun test-position-blocked-p ()
   "Test position blocking check wrapper."
@@ -538,6 +583,8 @@
     test-update-running-state
     test-edge-spawn-position
     test-zone-bounds-from-dimensions
+    test-zone-bounds-zero-origin-includes-boundary-ring
+    test-zone-bounds-from-dimensions-includes-boundary-ring
     test-position-blocked-p
     test-find-open-tile
     test-player-is-stuck-p
