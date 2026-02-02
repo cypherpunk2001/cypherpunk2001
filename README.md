@@ -117,6 +117,19 @@ Test env overrides:
 - `MMORPG_NET_TEST_PORT` - UDP port (default 1337)
 - `MMORPG_NET_TEST_SECONDS` - UDP server duration in CI
 
+## Source Layout
+
+Large source files are split into domain modules (~1000 LOC each). The glue file re-exports shared helpers; the split files contain the actual logic.
+
+| Domain | Glue file | Split modules |
+|--------|-----------|---------------|
+| Networking | `net.lisp` | `net-protocol`, `net-auth`, `net-snapshot`, `net-server`, `net-client` |
+| Rendering | `rendering.lisp` | `rendering-core`, `rendering-tiles`, `rendering-entities`, `rendering-ui` |
+| Database | `db.lisp` | `db-storage`, `db-players`, `db-accounts`, `db-admin` |
+| Save/Load | `save.lisp` | `save-serialize`, `save-deserialize`, `save-delta`, `save-edge-strips`, `save-validate` |
+| Movement | `movement.lisp` | `movement-core`, `movement-collision`, `movement-transition`, `movement-preview` |
+| Editor | `editor.lisp` | `editor-core`, `editor-tools`, `editor-io` |
+
 ## Code Quality Standards
 
 **See [CLAUDE.md](CLAUDE.md) for detailed criteria and examples.**

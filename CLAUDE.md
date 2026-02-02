@@ -367,6 +367,9 @@ Migration rules:
 
 ## Code Style Rules
 
+### File Size Guideline
+Prefer ~1000 LOC per source file when there's a natural domain split. Don't force it — if a file is 1200 LOC and cohesive, that's fine. When a file exceeds ~1500 LOC, look for natural boundaries to split (e.g., `net.lisp` → `net-protocol.lisp`, `net-auth.lisp`, `net-snapshot.lisp`, `net-server.lisp`, `net-client.lisp`). Split files use a thin glue file that loads last. Each split file gets a matching `docs/<name>.md`.
+
 ### Modular & Reusable by Default
 We are building reusable game systems, not one-off demo code.
 

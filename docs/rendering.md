@@ -1,4 +1,12 @@
-# rendering.lisp
+# rendering.lisp (and rendering-*.lisp modules)
+
+**Module structure:** `rendering.lisp` is a thin glue file. The rendering code is split into:
+- `rendering-core.lisp` — core draw helpers, rectangles, textures, asset loading
+- `rendering-tiles.lisp` — map/tileset rendering, chunk caching, preview zones
+- `rendering-entities.lisp` — players/NPCs/objects rendering, viewport culling, spatial culling
+- `rendering-ui.lisp` — HUD overlays, minimap, inventory, menus, combat log
+
+See `docs/rendering-core.md`, `docs/rendering-tiles.md`, `docs/rendering-entities.md`, `docs/rendering-ui.md` for per-file details.
 
 Purpose
 - Load visual assets and render the world, entities, HUD, and menus.

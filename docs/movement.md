@@ -1,4 +1,12 @@
-# movement.lisp
+# movement.lisp (and movement-*.lisp modules)
+
+**Module structure:** `movement.lisp` is a thin glue file. The movement code is split into:
+- `movement-core.lisp` — movement integration, intent processing, player position updates
+- `movement-collision.lisp` — collision checks, wall maps, bounds, open spawn placement
+- `movement-transition.lisp` — zone transitions, hysteresis, cooldown, NPC carry-across
+- `movement-preview.lisp` — preview zones, camera edge checks, minimap collision markers
+
+See `docs/movement-core.md`, `docs/movement-collision.md`, `docs/movement-transition.md`, `docs/movement-preview.md` for per-file details.
 
 Purpose
 - Resolve movement and collisions against the world.

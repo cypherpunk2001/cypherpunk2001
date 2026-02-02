@@ -128,8 +128,22 @@ world + assets
 
 **Networking & Persistence**
 - [net.md](net.md) - UDP protocol, client/server, snapshots, interpolation, prediction
+  - [net-protocol.md](net-protocol.md) - Message formats, encode/decode, validation
+  - [net-auth.md](net-auth.md) - Login/register, auth queues, rate limiting
+  - [net-snapshot.md](net-snapshot.md) - Snapshot transmission, delta compression
+  - [net-server.md](net-server.md) - Server UDP loop, dispatch, connection tracking
+  - [net-client.md](net-client.md) - Client networking loop, login UI
 - [db.md](db.md) - Storage abstraction, Redis/memory backends, write tiers, dirty flags
+  - [db-storage.md](db-storage.md) - Storage abstraction, backend selection
+  - [db-players.md](db-players.md) - Player save/load, dirty flags, session management
+  - [db-accounts.md](db-accounts.md) - Account creation/verification
+  - [db-admin.md](db-admin.md) - Admin tooling, migrate-all, metrics
 - [save.md](save.md) - Serialization format, durable vs ephemeral classification
+  - [save-serialize.md](save-serialize.md) - Serialize functions, compact vectors
+  - [save-deserialize.md](save-deserialize.md) - Deserialize functions, apply-state
+  - [save-delta.md](save-delta.md) - Delta encoding/decoding
+  - [save-edge-strips.md](save-edge-strips.md) - Edge strip serialization
+  - [save-validate.md](save-validate.md) - Schema checks, 4-outcome validation
 - [migrations.md](migrations.md) - Schema versioning, migration functions
 - [server.md](server.md) - Server-side game loop
 
@@ -138,6 +152,10 @@ world + assets
 - [intent.md](intent.md) - Intent layer (what entities want to do)
 - [input.md](input.md) - Client input handling
 - [movement.md](movement.md) - Physics, collision, zone transitions
+  - [movement-core.md](movement-core.md) - Movement integration, intent processing
+  - [movement-collision.md](movement-collision.md) - Collision checks, wall maps
+  - [movement-transition.md](movement-transition.md) - Zone transitions, NPC carry-across
+  - [movement-preview.md](movement-preview.md) - Preview zones, camera edge checks
 - [combat.md](combat.md) - Damage, HP, death, XP awards
 - [ai.md](ai.md) - NPC behaviors (idle, wander, aggressive, flee)
 - [progression.md](progression.md) - Stats, XP, levels, inventory, equipment
@@ -147,7 +165,14 @@ world + assets
 - [zone.md](zone.md) - Zone loading, tile layers, collision maps
 - [world-graph.md](world-graph.md) - Zone connections, edge transitions
 - [rendering.md](rendering.md) - Draw pipeline, sprites, tiles
+  - [rendering-core.md](rendering-core.md) - Core draw helpers, asset loading
+  - [rendering-tiles.md](rendering-tiles.md) - Map/tileset rendering, chunk caching
+  - [rendering-entities.md](rendering-entities.md) - Player/NPC/object rendering, culling
+  - [rendering-ui.md](rendering-ui.md) - HUD, minimap, inventory, menus
 - [editor.md](editor.md) - Zone editor mode
+  - [editor-core.md](editor-core.md) - Editor state, modes, primary loop
+  - [editor-tools.md](editor-tools.md) - Brush/tools, hotkeys
+  - [editor-io.md](editor-io.md) - Loading/saving map data
 
 **UI & Polish**
 - [ui.md](ui.md) - Menus, HUD, login screen

@@ -1,4 +1,13 @@
-# save.lisp
+# save.lisp (and save-*.lisp modules)
+
+**Module structure:** `save.lisp` is a glue file with shared helpers. The serialization code is split into:
+- `save-serialize.lisp` — serialize-* functions, snapshot build, compact player/NPC vectors
+- `save-deserialize.lisp` — deserialize-* functions, apply-state, snapshot application
+- `save-delta.lisp` — delta encoding/decoding, dirty flag management
+- `save-edge-strips.lisp` — edge strip serialization/deserialization for zone transitions
+- `save-validate.lisp` — schema checks, bounds validation, 4-outcome validation
+
+See `docs/save-serialize.md`, `docs/save-deserialize.md`, `docs/save-delta.md`, `docs/save-edge-strips.md`, `docs/save-validate.md` for per-file details.
 
 Purpose
 - Serialize and deserialize authoritative game state for save/load functionality.

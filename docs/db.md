@@ -1,4 +1,12 @@
-# Database Architecture
+# Database Architecture (db.lisp and db-*.lisp modules)
+
+**Module structure:** `db.lisp` is a thin glue file. The database code is split into:
+- `db-storage.lisp` — storage abstraction, backend selection, Redis/memory implementations
+- `db-players.lisp` — player save/load, dirty flags, logout, session management
+- `db-accounts.lisp` — account creation/verification, password hashing
+- `db-admin.lisp` — admin tooling, migrate-all, metrics
+
+See `docs/db-storage.md`, `docs/db-players.md`, `docs/db-accounts.md`, `docs/db-admin.md` for per-file details.
 
 ## Overview
 

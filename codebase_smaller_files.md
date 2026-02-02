@@ -104,5 +104,5 @@ Proposed files:
 ## Acceptance Criteria
 - No behavior changes; tests pass.
 - No `checkdocs` failures (all new files documented).
-- Each large file reduced to ≤ ~1000 LOC.
+- Each large file reduced to ~1000 LOC (advisory; up to ~1300 is acceptable when cohesive).
 - New file names match contents.

@@ -1,6 +1,15 @@
-# editor.lisp
+# editor.lisp (and editor-*.lisp modules)
+
+**Module structure:** `editor.lisp` is a thin glue file. The editor code is split into:
+- `editor-core.lisp` — editor state, modes, primary loop
+- `editor-tools.lisp` — brush/tools, hotkeys
+- `editor-io.lisp` — loading/saving map data
+
+See `docs/editor-core.md`, `docs/editor-tools.md`, `docs/editor-io.md` for per-file details.
 
 Purpose
+- Editor glue: main update loop and drawing/overlay functions.
+- Coordinates the editor subsystems defined in `editor-core.lisp`, `editor-tools.lisp`, and `editor-io.lisp`.
 - Provide an in-game, Minecraft-style map editor that paints tiles/objects, places spawns, and exports zones.
 
 Why we do it this way

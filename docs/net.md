@@ -1,4 +1,13 @@
-# net.lisp
+# net.lisp (and net-*.lisp modules)
+
+**Module structure:** `net.lisp` is a thin glue file. The networking code is split into:
+- `net-protocol.lisp` — message formats, encode/decode, validation, client management
+- `net-auth.lisp` — login/register handling, auth queues, rate limiting, session management
+- `net-snapshot.lisp` — snapshot send/receive, delta compression, interpolation, prediction
+- `net-server.lisp` — server UDP loop, dispatch, connection tracking (`run-server`)
+- `net-client.lisp` — client networking loop, login UI, snapshot application (`run-client`)
+
+See `docs/net-protocol.md`, `docs/net-auth.md`, `docs/net-snapshot.md`, `docs/net-server.md`, `docs/net-client.md` for per-file details.
 
 Purpose
 - Provide the UDP client/server split with optimized snapshot streaming.
