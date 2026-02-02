@@ -1,0 +1,175 @@
+Zone Transition Bugs — Root Cause Investigation (2026-02-02)
+=============================================================
+
+FIXED BUGS (committed in 0a58afe)
+==================================
+
+[FIXED] Tile Skipping — spawning tiles deep into destination zone
+-----------------------------------------------------------------
+Root cause: seam translation used player-attempted-x/y (raw click target,
+potentially hundreds of px past the edge) instead of actual position.
+Fix: Use player-x/y + 1px edge-push for seam translation. Cap overstep.
+File: src/movement-transition.lisp:680
+
+[FIXED] Keyboard Crossing Difficulty — player felt "stuck" at edge
+-------------------------------------------------------------------
+Root cause: (zerop dx) check too strict; floating-point residuals from
+collision prevented forced-attempted from firing. 1.5s cooldown too long.
+Fix: Near-zero threshold (< abs 0.5), cooldown reduced to 0.5s.
+Files: src/movement-transition.lisp:82-93, src/config.lisp:109
+
+
+OPEN BUGS
+==========
+
+Bug 1: Infinite Walking — ROOT CAUSE PARTIALLY IDENTIFIED
+-----------------------------------------------------------
+Status: First fix attempt (clear-intent-target in handle-zone-transition)
+did NOT resolve the bug. The user still sees infinite walking after
+click-to-move zone crossing.
+
+What we know:
+  update-zone-transition only runs on the SERVER (main.lisp:828, guarded
+  by (not (eq (game-net-role game) :client))). The server rebases the
+  click target for the new zone (lines 814-820), but the CLIENT's local
+  intent target was stale.
+
+What we tried:
+  Added clear-intent-target in handle-zone-transition (main.lisp:716-729).
+  This should have cleared the client's stale target on zone change.
+  The fix DID NOT work — user reports infinite walking persists.
+
+Remaining theories to investigate:
+  1. Timing: handle-zone-transition may fire BEFORE the snapshot fully
+     applies the new position, so clear-intent-target runs but then the
+     snapshot re-applies stale intent fields (target-x, target-active).
+     Need to check: does apply-snapshot overwrite intent fields?
+
+  2. Local prediction: The client may re-derive movement from its own
+     input state. If the mouse button is still "held" or the click-to-move
+     input state persists across the zone change, the client re-issues a
+     new walk command in the old coordinate space.
+
+  3. Server-side issue: The server's rebased target may itself be wrong.
+     If the rebased target lands outside walkable bounds or on a collision
+     tile, the player walks toward it forever without reaching it.
+
+  4. Snapshot propagation: The server may broadcast the stale pre-rebase
+     target in the snapshot, overwriting the client's cleared target.
+
+Next steps: Trace the full lifecycle of a click-to-move target through
+zone transition on BOTH server and client. Add verbose logging to
+handle-zone-transition, apply-snapshot, and update-player-position to
+see exact values at each step.
+
+
+Bug 2: Audio Skips — ROOT CAUSE IDENTIFIED (PROBABLE)
+------------------------------------------------------
+transition-zone calls apply-zone-to-world synchronously (line 666):
+
+    (apply-zone-to-world world zone)
+
+This function (src/movement.lisp:88) rebuilds wall-map bounds, rescans
+the zone directory on disk (build-zone-paths), rebuilds minimap data,
+and recalculates collision. This takes 5-20ms synchronously on the main
+thread.
+
+At 60 FPS, a frame budget is 16.67ms. A 10-20ms spike in the game loop
+causes a frame drop. If audio playback relies on the game loop's frame
+callbacks (or shares the main thread), the spike causes a skip.
+
+The client-zone-change-hook (rendering-tiles.lisp:302-307) also
+invalidates all cached render textures, making the NEXT frame expensive
+too (potential double-frame drop).
+
+CONCLUSION: Synchronous reconstruction work in apply-zone-to-world is
+the audio skip source. The zone data is already cached in LRU — the
+hitch is from rebuilding derived data structures, not from disk I/O.
+
+
+Bug 3: Ground/Tile Shift — ROOT CAUSE IDENTIFIED (PROBABLE)
+-------------------------------------------------------------
+On zone transition, the tiles visually shift in one direction underneath
+the character. Not a shake — a single-direction shift that settles.
+
+Root cause: Camera screen-pixel snap formula in rendering.lisp:89-97:
+
+    (camera-x (if (> zoom 0.0)
+                  (/ (fround (* raw-camera-x zoom)) zoom)
+                  raw-camera-x))
+
+This rounds the camera to screen-pixel boundaries to prevent sub-pixel
+tile seams. During zone transition, the player position jumps
+discontinuously (e.g., x=4004 in zone 1 -> x=92 in zone 2). The snap
+formula rounds each position independently. The fractional-pixel
+alignment between character sprite and tile grid changes, causing tiles
+to appear to shift by ~1 pixel relative to the character.
+
+Contributing factors:
+  1. No camera smoothing — editor-camera-target (editor-core.lisp:392-398)
+     returns player-x/y directly with no interpolation across zone jumps.
+  2. Render cache clearing — *client-zone-change-hook* invalidates all
+     chunk textures during handle-zone-transition. The first frame after
+     transition renders fresh caches at the new sub-pixel alignment.
+  3. The same frame spike from apply-zone-to-world (Bug 2) may cause a
+     dropped frame, making the visual discontinuity more jarring.
+
+The shift direction depends on which direction the snap formula rounds
+differently at the old vs new position. It's always one direction because
+it's a single rounding discontinuity, not oscillation.
+
+CONCLUSION: The snap formula creates a sub-pixel alignment difference
+between old and new camera positions. Combined with the frame spike from
+Bug 2, the shift is visible for 1-2 frames.
+
+
+ADDITIONAL FINDINGS (2026-02-02)
+================================
+
+Bug 1: Infinite Walking — ROOT CAUSE CONFIRMED (client-intent not cleared)
+---------------------------------------------------------------------------
+The prior fix cleared the PLAYER'S intent during handle-zone-transition,
+but the CLIENT'S intent (game-client-intent) is the one actually sent to
+the server every frame. That stale client intent overwrites the rebased
+target on the next tick, reintroducing the old-zone target and causing
+endless walking.
+
+Evidence from code flow:
+  1. update-client-input writes into (game-client-intent game), not the
+     player's intent (src/main.lisp).
+  2. net-client sends game-client-intent every frame (send-intent-message),
+     and it does NOT clear target-x/target-y/target-active after send
+     (src/net-client.lisp, src/net-snapshot.lisp).
+  3. Server copies ALL target fields from client intent each tick via
+     apply-client-intent (intent-target-x/y/raw/clamped/active)
+     (src/server.lisp:118-160).
+  4. handle-zone-transition only clears (player-intent player), leaving
+     game-client-intent untouched (src/main.lisp:661-729).
+  5. transition-zone rebases the target server-side, but that rebased
+     target is overwritten next tick by the stale client intent.
+
+Why this produces "walk forever":
+  - The stale client target remains in the old zone coordinate space
+    (often far outside new bounds, with target-clamped-p = T and raw
+    target outside). update-player-position treats it as a clamped
+    crossing target and keeps intent-target-active true, so the player
+    keeps moving and never reaches the intended stop point.
+  - This also reproduces in local mode: run-local applies game-client-intent
+    to player intent every frame, reintroducing the stale target after
+    handle-zone-transition clears the player's intent.
+
+Fix direction (not yet implemented):
+  - On zone transition, clear BOTH player-intent and game-client-intent
+    (target-active/raw/clamped), and consider resetting mouse-hold timer
+    to prevent immediate re-issuance.
+  - Alternatively, gate apply-client-intent for one tick after zone-id
+    change so server rebased target is not overwritten by stale client input.
+
+Bug 2: Audio Skips — Additional confirmation
+---------------------------------------------
+apply-zone-to-world always rebuilds derived structures (wall-map bounds,
+minimap spawns/collisions, and graph zone paths) synchronously on the
+client transition path (src/movement.lisp:88-122, called from
+apply-game-state in src/save.lisp). This is still on the main thread and
+still coupled to render-cache invalidation, so the frame hitch (and
+audio skip) will persist until the work is deferred/cached.

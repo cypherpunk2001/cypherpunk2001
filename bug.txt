@@ -16,3 +16,11 @@ Bug 2: Audio skips on zone switch
 ----------------------------------
 A brief audio glitch/skip is audible when the zone transition fires.
 The audio drops out momentarily during the switch.
+
+Bug 3: Ground/tile shift on zone transition
+--------------------------------------------
+On zone switch, the tiles visually shift in one direction underneath the
+character — like the camera or tile layer jumps briefly. Not a shake
+(no oscillation), just a single-direction shift that settles. Looks
+like a brief earthquake or the camera snapping to a new position.
+Likely related to the same frame spike that causes the audio skip.

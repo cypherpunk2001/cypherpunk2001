@@ -1,0 +1,90 @@
+Zone Transition Bugs — Fix Plan (2026-02-02)
+=============================================
+
+COMPLETED (committed in 0a58afe)
+=================================
+- Tile skipping: seam translation uses actual position + 1px edge-push
+- Keyboard crossing: near-zero threshold (0.5), cooldown 0.5s
+- Dead sprite at edge: edge-strips cleared on zone change
+- Non-crossing targets clamped to destination bounds
+
+
+REMAINING BUGS — 3 open
+=========================
+
+Phase 1: Fix infinite walking (Bug 1) — HIGHEST PRIORITY
+----------------------------------------------------------
+Files: src/main.lisp
+
+ROOT CAUSE CONFIRMED: The previous fix cleared (player-intent player)
+but NOT (game-client-intent game). The client-intent is the one actually
+sent to the server every frame and also applied locally in run-local
+(main.lisp:984-985). The stale client-intent overwrites the cleared
+player intent on the very next tick via apply-client-intent
+(server.lisp:129-134), reintroducing the old-zone target.
+
+Fix: In handle-zone-transition (main.lisp:716-729), ALSO clear the
+target fields on game-client-intent:
+  (let ((ci (game-client-intent game)))
+    (when ci
+      (clear-intent-target ci)))
+
+This ensures the stale target is not re-sent to the server or re-applied
+locally. The existing player-intent clear stays as a belt-and-suspenders.
+
+Consider also: Reset the mouse-hold/click-to-move input state so the
+client doesn't immediately re-issue a walk command from the still-held
+mouse button. Check update-client-input for persistent click state.
+
+Tests:
+  - Verify game-client-intent target is cleared after zone change
+  - Verify walk terminates in destination zone (not infinite)
+  - Verify stale target is not re-applied after one sim tick
+
+
+Phase 2: Fix audio skip (Bug 2) and tile shift (Bug 3)
+--------------------------------------------------------
+Bug 2 (audio skip) is caused by synchronous work in apply-zone-to-world
+(5-20ms frame spike on main thread). Bug 3 (tile shift) is primarily
+caused by camera pixel snapping (rendering.lisp:89-97), with the frame
+spike making it more visible.
+
+Step 1: Profile apply-zone-to-world
+  - Measure time for each operation: wall-map rebuild, zone-paths scan,
+    minimap rebuild, collision recalc
+  - Identify which operations are redundant (zone is already in LRU cache)
+
+Step 2: Eliminate redundant work
+  - Zone wall-map is already computed at load time (zone-wall-map). The
+    current code just assigns it — this should be fast. Check if
+    build-zone-paths or minimap rebuild is the real cost.
+  - Pre-compute derived data (wall bounds, minimap) during zone preload
+    rather than on transition.
+
+Step 3: Fix tile shift specifically
+  Option A (preferred): After zone transition, force the new player
+  position to have the same fractional-pixel alignment as the old
+  position. This makes the snap formula produce consistent rounding.
+  Option B: Skip the snap formula for 1-2 frames after transition.
+  Option C: Round spawn position to integer coordinates.
+
+Step 4: If frame spike can't be fully eliminated, defer heavy work:
+  - Pre-build derived data for adjacent zones during gameplay (when
+    player is near an edge, precompute the destination zone's data)
+  - Render cache cost is now mostly from cold cache build, not blanket
+    invalidation (clear-other-zone-render-caches keeps the destination
+    zone warm if already cached). Spread cold cache rebuilding over
+    multiple frames if needed.
+
+Tests: Measure frame time during zone transition (should be < 16ms).
+       Verify no visible tile shift. Verify audio continuity.
+
+
+Verification
+============
+After each phase:
+  - make tests (all tests must pass)
+  - Manual: click-to-move across zone boundary, verify walk stops
+  - Manual: keyboard walk across zone boundary, verify smooth crossing
+  - Manual: listen for audio skip on zone change
+  - Manual: watch for tile/ground shift on zone change
