@@ -283,8 +283,19 @@
                   (+ (ui-minimap-y ui) (* ry (ui-minimap-height ui))))
           (values nil nil)))))
 
+(defun ensure-minimap-data (world)
+  ;; Lazily rebuild minimap data deferred from zone transitions.
+  ;; Called at draw time so the sim tick stays fast (avoids audio skips).
+  (when (world-minimap-dirty world)
+    (setf (world-minimap-spawns world)
+          (build-adjacent-minimap-spawns world))
+    (setf (world-minimap-collisions world)
+          (build-minimap-collisions world))
+    (setf (world-minimap-dirty world) nil)))
+
 (defun draw-minimap (world player npcs ui)
   ;; Render the minimap overlay and markers.
+  (ensure-minimap-data world)
   (let* ((map-x (ui-minimap-x ui))
          (map-y (ui-minimap-y ui))
          (map-width (ui-minimap-width ui))

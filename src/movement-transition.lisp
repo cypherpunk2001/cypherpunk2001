@@ -765,8 +765,11 @@
                           (spatial-grid-remove old-grid (player-id player)
                                                (player-grid-cell-x player)
                                                (player-grid-cell-y player))))))
-                  (setf (player-x player) spawn-x
-                        (player-y player) spawn-y
+                  ;; Round spawn to integer coords so camera snap formula
+                  ;; (fround * zoom / zoom) produces consistent rounding,
+                  ;; avoiding a visible 1px tile shift on zone transition.
+                  (setf (player-x player) (fround spawn-x)
+                        (player-y player) (fround spawn-y)
                         (player-dx player) 0.0
                         (player-dy player) 0.0
                         (player-zone-id player) target-zone-id
@@ -821,8 +824,7 @@
           (setf (player-attacking player) nil
                 (player-attack-hit player) nil
                     (player-attack-timer player) 0.0)
-          (setf (world-minimap-spawns world)
-                (build-adjacent-minimap-spawns world player))
+          (setf (world-minimap-dirty world) t)
           (let* ((players (game-players game))
                  (target-zone-id (and zone (zone-id zone)))
                  (cached (cached-zone-npcs target-zone-id))

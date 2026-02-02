@@ -118,12 +118,9 @@
           (world-wall-max-y world) wall-max-y)
     (unless (world-zone-preview-cache world)
       (setf (world-zone-preview-cache world) (make-hash-table :test 'eq :size 64)))
-    (let ((graph (world-world-graph world)))
-      (when graph
-        (setf (world-graph-zone-paths graph)
-              (build-zone-paths (resolve-zone-path *zone-root*)))))
-    (setf (world-minimap-spawns world)
-          (build-adjacent-minimap-spawns world))
-    (setf (world-minimap-collisions world)
-          (build-minimap-collisions world))
+    ;; Zone paths are built once at startup in load-world-graph;
+    ;; no need to rebuild on every transition.
+    ;; Defer minimap rebuilds to draw time to avoid stalling the sim tick
+    ;; (synchronous file I/O here caused audio skips — Bug 2).
+    (setf (world-minimap-dirty world) t)
     world))

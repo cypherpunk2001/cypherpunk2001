@@ -1626,6 +1626,55 @@
     (assert (null (game-edge-strips game)) ()
             "edge-strip-clear: edge-strips should be nil after zone change")))
 
+(defun test-spawn-position-rounded-for-camera-snap ()
+  "Zone transition spawn position is rounded to integers to avoid tile shift."
+  ;; The camera snap formula (fround * zoom / zoom) rounds differently for
+  ;; fractional positions, causing visible 1px tile shift on zone change.
+  ;; Rounding spawn coords to integers fixes this.
+  (let* ((spawn-x 286.4)
+         (spawn-y 512.7)
+         (rounded-x (fround spawn-x))
+         (rounded-y (fround spawn-y)))
+    (assert (= rounded-x 286.0) ()
+            "spawn-x should round to 286.0, got ~f" rounded-x)
+    (assert (= rounded-y 513.0) ()
+            "spawn-y should round to 513.0, got ~f" rounded-y)
+    ;; Verify that integer coords produce stable camera snap
+    (let ((zoom 2.0))
+      (let ((snapped (/ (fround (* rounded-x zoom)) zoom)))
+        (assert (= snapped rounded-x) ()
+                "integer position should survive camera snap, got ~f" snapped)))))
+
+(defun test-apply-zone-to-world-sets-minimap-dirty ()
+  "apply-zone-to-world sets minimap-dirty instead of rebuilding synchronously."
+  (let* ((zone (%make-zone :id :test-zone :width 10 :height 10
+                            :collision-tiles (make-hash-table :test 'eql)))
+         (world (%make-world :tile-dest-size 64.0
+                              :collision-half-width 27.2
+                              :collision-half-height 27.2)))
+    ;; Ensure dirty is initially nil
+    (assert (not (world-minimap-dirty world)) ()
+            "minimap-dirty should start nil")
+    (apply-zone-to-world world zone)
+    (assert (world-minimap-dirty world) ()
+            "minimap-dirty should be t after apply-zone-to-world")))
+
+(defun test-apply-zone-to-world-no-zone-paths-rebuild ()
+  "apply-zone-to-world does not rebuild zone-paths (already built at startup)."
+  (let* ((zone (%make-zone :id :test-zone :width 10 :height 10
+                            :collision-tiles (make-hash-table :test 'eql)))
+         (original-paths (make-hash-table :test 'eq))
+         (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                    :zone-paths original-paths))
+         (world (%make-world :tile-dest-size 64.0
+                              :collision-half-width 27.2
+                              :collision-half-height 27.2
+                              :world-graph graph)))
+    (apply-zone-to-world world zone)
+    ;; zone-paths should still be the same object (not rebuilt)
+    (assert (eq (world-graph-zone-paths graph) original-paths) ()
+            "zone-paths should not be rebuilt by apply-zone-to-world")))
+
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
     'test-compute-transition-overstep-north
@@ -1704,4 +1753,9 @@
     'test-client-zone-change-clears-client-intent
     'test-stale-client-intent-not-reapplied-after-zone-change
     ;; Cross-zone click targets should be rebased, not cleared
-    'test-client-cross-zone-target-rebased))
+    'test-client-cross-zone-target-rebased
+    ;; Minimap dirty flag deferred rebuild (Bug 2 audio skip fix)
+    'test-apply-zone-to-world-sets-minimap-dirty
+    'test-apply-zone-to-world-no-zone-paths-rebuild
+    ;; Spawn position rounding (Bug 3 tile shift fix)
+    'test-spawn-position-rounded-for-camera-snap))

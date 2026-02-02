@@ -186,6 +186,7 @@
   (zone-preview-cache nil :type (or null hash-table))
   (minimap-spawns nil :type list)
   (minimap-collisions nil :type (or null vector))
+  (minimap-dirty nil :type boolean)
   (wall-map nil :type (or null array))
   (wall-map-width 0 :type fixnum)
   (wall-map-height 0 :type fixnum)
