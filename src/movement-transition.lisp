@@ -78,17 +78,20 @@
              ;; force attempted past the boundary so the transition can commit.
              ;; (Handles diagonal movement that slides along a boundary.)
              (when (and min-x max-x min-y max-y)
-               (let ((arm-px (* *zone-hysteresis-in* tile-size)))
-                 (when (and (> input-dx 0.0) (zerop dx) (<= (- max-x x) arm-px))
+               (let ((arm-px (* *zone-hysteresis-in* tile-size))
+                     (blocked-threshold 0.5))
+                 ;; Use near-zero threshold instead of (zerop) to catch cases
+                 ;; where collision returns a tiny residual from wall-sliding.
+                 (when (and (> input-dx 0.0) (< (abs dx) blocked-threshold) (<= (- max-x x) arm-px))
                    (setf (player-attempted-x player) (+ max-x step)
                          (player-attempted-y player) y))
-                 (when (and (< input-dx 0.0) (zerop dx) (<= (- x min-x) arm-px))
+                 (when (and (< input-dx 0.0) (< (abs dx) blocked-threshold) (<= (- x min-x) arm-px))
                    (setf (player-attempted-x player) (- min-x step)
                          (player-attempted-y player) y))
-                 (when (and (> input-dy 0.0) (zerop dy) (<= (- max-y y) arm-px))
+                 (when (and (> input-dy 0.0) (< (abs dy) blocked-threshold) (<= (- max-y y) arm-px))
                    (setf (player-attempted-y player) (+ max-y step)
                          (player-attempted-x player) x))
-                 (when (and (< input-dy 0.0) (zerop dy) (<= (- y min-y) arm-px))
+                 (when (and (< input-dy 0.0) (< (abs dy) blocked-threshold) (<= (- y min-y) arm-px))
                    (setf (player-attempted-y player) (- min-y step)
                          (player-attempted-x player) x))))))
           ((intent-target-active intent)
@@ -675,13 +678,26 @@
                         (values (world-wall-min-x world) (world-wall-max-x world)
                                 (world-wall-min-y world) (world-wall-max-y world)))
               ;; PLAN_zone_transition_continuity: Seam translation as primary path
-              ;; Uses attempted position (pre-collision) so the seam formula
-              ;; produces in-bounds results (player has crossed the boundary).
-              (let* ((px (player-attempted-x player))
-                     (py (player-attempted-y player))
+              ;; Use actual player position (collision-resolved) and push the
+              ;; crossing axis just 1px past the boundary. This prevents the
+              ;; old bug where raw attempted position (e.g. click target 500px
+              ;; past the edge) caused the player to spawn tiles deep into
+              ;; the destination zone.
+              (let* ((px (player-x player))
+                     (py (player-y player))
                      (overstep (compute-transition-overstep
                                 edge player
                                 src-min-x src-max-x src-min-y src-max-y)))
+                ;; Push crossing axis just past the boundary so seam formula
+                ;; produces a position inside the destination zone.
+                ;; Without this, player-x (clamped at collision wall) would
+                ;; produce a spawn at or outside the destination edge.
+                (let ((edge-push 1.0))
+                  (case edge
+                    (:east  (setf px (+ src-max-x edge-push)))
+                    (:west  (setf px (- src-min-x edge-push)))
+                    (:north (setf py (- src-min-y edge-push)))
+                    (:south (setf py (+ src-max-y edge-push)))))
                 (setf target-crossing-p
                       (and had-target
                            (or (< target-x src-min-x) (> target-x src-max-x)
@@ -766,8 +782,11 @@
                           (setf target-rebased-x (clamp tx new-min-x new-max-x)
                                 target-rebased-y (clamp ty new-min-y new-max-y)))
                         ;; Target was inside the current zone: preserve relative offset.
-                        (setf target-rebased-x (+ (player-x player) target-offset-x)
-                              target-rebased-y (+ (player-y player) target-offset-y))))
+                        ;; Clamp to destination zone bounds to prevent unreachable targets.
+                        (setf target-rebased-x (clamp (+ (player-x player) target-offset-x)
+                                                      new-min-x new-max-x)
+                              target-rebased-y (clamp (+ (player-y player) target-offset-y)
+                                                      new-min-y new-max-y))))
                   ;; Insert player into new zone's spatial grid and zone-players cache
                   (when target-zone-state
                     ;; Add to zone-players cache (Task 4.1)

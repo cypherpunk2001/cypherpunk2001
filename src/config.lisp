@@ -106,7 +106,7 @@
 ;;;; ========================================================================
 
 ;;; Transition Cooldown (Step 1)
-(defparameter *zone-transition-cooldown-seconds* 1.5
+(defparameter *zone-transition-cooldown-seconds* 0.5
   "Post-transition suppression window in seconds. Prevents rapid re-transitions.")
 
 ;;; Hysteresis Band (Step 2) — distances in tiles inward from edge

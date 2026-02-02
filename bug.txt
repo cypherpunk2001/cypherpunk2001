@@ -1,0 +1,18 @@
+Zone Transition Bugs — Current State (2026-02-02)
+==================================================
+
+Bug 1: Click-to-move to another zone — character walks indefinitely
+-------------------------------------------------------------------
+When clicking on a location in an adjacent zone, the character transitions
+to the new zone but then walks forever without stopping. The walk target
+is never reached or cleared. The player must click again or press a key
+to interrupt the movement.
+
+Repro: In zone 1, click on a visible tile in zone 2. Character walks to
+the edge, transitions, then continues walking in the new zone without
+ever stopping at the intended destination.
+
+Bug 2: Audio skips on zone switch
+----------------------------------
+A brief audio glitch/skip is audible when the zone transition fires.
+The audio drops out momentarily during the switch.

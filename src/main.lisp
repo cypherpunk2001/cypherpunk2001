@@ -713,10 +713,22 @@
       (when (and pred player (not large-delta-p))
         (setf (prediction-state-predicted-x pred) (player-x player)
               (prediction-state-predicted-y pred) (player-y player))))
-    ;; Clear stale targets — old zone's NPCs are no longer valid
+    ;; Clear stale targets — old zone's NPCs/targets are no longer valid.
+    ;; Click-to-move target MUST be cleared: it's in the old zone's coordinate
+    ;; space and would cause the player to walk across the entire new zone
+    ;; toward the stale target position. (Server rebases the target via
+    ;; transition-zone, but that only runs server-side. The client's local
+    ;; intent target is never rebased — clear it so the player stops.)
     (when player
       (setf (player-attack-target-id player) 0
-            (player-follow-target-id player) 0))
+            (player-follow-target-id player) 0)
+      (let ((intent (player-intent player)))
+        (when intent
+          (clear-intent-target intent))))
+    ;; Clear stale edge-strips from the old zone. Between zone change and
+    ;; next snapshot, old edge-strips would render as ghost sprites at wrong
+    ;; positions. New edge-strips arrive with the next server snapshot.
+    (setf (game-edge-strips game) nil)
     ;; Phase 2: Sync zone-state NPCs with game-npcs so rendering matches
     (sync-client-zone-npcs game)
     ;; Step 5: Queue all adjacent zones for preloading after zone change

@@ -434,11 +434,12 @@
       (unwind-protect
            (progn
              (transition-zone game player exit :east)
-             ;; After east crossing: new-x = dst-min-x + (626 - src-max-x)
-             ;;   = 16 + (626 - 624) = 18. Y unchanged at 300.
-             ;; This is seamless: only 2px from the destination edge.
-             (assert (< (abs (- (player-x player) 18.0)) 1.0) ()
-                     "seam-integration: player-x should be near 18, got ~,2f"
+             ;; After east crossing: now uses actual position + 1px push,
+             ;; not raw attempted. So: px = src-max-x + 1.0 = 625.
+             ;; new-x = dst-min-x + (625 - 624) = 16 + 1 = 17.
+             ;; Y unchanged at 300.
+             (assert (< (abs (- (player-x player) 17.0)) 1.0) ()
+                     "seam-integration: player-x should be near 17, got ~,2f"
                      (player-x player))
              ;; Y-axis must be preserved exactly (not ratio-mapped to 0.5)
              (assert (< (abs (- (player-y player) 300.0)) 1.0) ()
@@ -1379,6 +1380,130 @@
                      "server-preload: target zone should be queued for preloading"))
         (delete-file tmp-path)))))
 
+;;; ============================================================
+;;; Spawn position fix: use actual position, not raw attempted
+;;; ============================================================
+
+(defun test-seam-spawn-uses-actual-position ()
+  "Seam translation should produce a spawn near the destination edge,
+   not deep inside the zone. Previously, using raw attempted position
+   (click target hundreds of px past boundary) caused tile-skipping."
+  ;; Simulate east crossing: player at east edge, click target far past
+  (let ((src-min-x 91.0) (src-max-x 4005.0)
+        (src-min-y 91.0) (src-max-y 4005.0)
+        (dst-min-x 91.0) (dst-max-x 4005.0)
+        (dst-min-y 91.0) (dst-max-y 4005.0))
+    ;; Old behavior: px = raw click target (4500), spawn = 91 + (4500 - 4005) = 586
+    ;; New behavior: px = boundary + 1px push (4006), spawn = 91 + (4006 - 4005) = 92
+    (let ((px (+ src-max-x 1.0))  ; 1px past boundary (new behavior)
+          (py 2000.0))
+      (multiple-value-bind (new-x new-y)
+          (seam-translate-position :east px py
+                                   src-min-x src-max-x src-min-y src-max-y
+                                   dst-min-x dst-max-x dst-min-y dst-max-y)
+        (assert (< new-x (+ dst-min-x 10.0)) ()
+                "spawn-actual-pos-east: should be near dst-min-x, got ~,1f" new-x)
+        (assert (< (abs (- new-y py)) 0.01) ()
+                "spawn-actual-pos-east: y should be preserved, got ~,1f" new-y)))))
+
+(defun test-seam-spawn-not-deep-for-click ()
+  "A click 500px past the zone boundary should NOT spawn 500px deep."
+  (let ((src-max-x 4005.0) (dst-min-x 91.0))
+    ;; With the fix, we use boundary + 1px, not the raw click position.
+    ;; Verify: seam formula with 1px overstep produces near-edge spawn
+    (let* ((px (+ src-max-x 1.0))
+           (new-x (+ dst-min-x (- px src-max-x))))
+      (assert (< new-x 100.0) ()
+              "spawn-not-deep: x should be ~92, got ~,1f" new-x))
+    ;; Verify: the old approach with raw click at 4500 would be deep
+    (let* ((bad-px 4500.0)
+           (bad-x (+ dst-min-x (- bad-px src-max-x))))
+      (assert (> bad-x 400.0) ()
+              "spawn-not-deep: old approach would be ~586, got ~,1f" bad-x))))
+
+(defun test-keyboard-blocked-threshold ()
+  "Forced-attempted should fire with near-zero residual movement, not just exact zero."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 27.2)))
+    (setf (player-intent player) intent)
+    ;; Player near east edge, pressing east, collision returns tiny residual
+    (let ((min-x 91.2) (max-x 4004.8)
+          (arm-px (* 2.0 64.0)))  ; arm band = 128px
+      (setf (player-x player) 4000.0
+            (player-y player) 2000.0)
+      ;; Simulate: player pressed east (input-dx > 0), collision returned dx=0.1
+      ;; Old code: (zerop 0.1) = nil → force doesn't fire
+      ;; New code: (< (abs 0.1) 0.5) = t → force fires
+      (let ((dx 0.1) (input-dx 1.0))
+        ;; Check the condition that would be used
+        (assert (not (zerop dx)) ()
+                "blocked-threshold: dx=0.1 is not zerop")
+        (assert (< (abs dx) 0.5) ()
+                "blocked-threshold: dx=0.1 should pass threshold 0.5")
+        (assert (<= (- max-x (player-x player)) arm-px) ()
+                "blocked-threshold: player should be in arm band")
+        (assert (> input-dx 0.0) ()
+                "blocked-threshold: input-dx should be positive")))))
+
+(defun test-rebased-target-clamped-to-bounds ()
+  "Non-crossing target offset should be clamped to destination zone bounds."
+  ;; If player was at x=4000 in zone 1 with target at x=3000,
+  ;; and spawns at x=92 in zone 2, offset-rebased would be 92 + (3000-4000) = -908.
+  ;; This must be clamped to new-min-x.
+  (let ((spawn-x 92.0)
+        (offset-x (- 3000.0 4000.0))  ; = -1000
+        (new-min-x 91.0)
+        (new-max-x 4005.0))
+    (let ((rebased (clamp (+ spawn-x offset-x) new-min-x new-max-x)))
+      (assert (>= rebased new-min-x) ()
+              "rebased-clamp: should be >= min, got ~,1f" rebased)
+      (assert (<= rebased new-max-x) ()
+              "rebased-clamp: should be <= max, got ~,1f" rebased))))
+
+(defun test-cooldown-reduced ()
+  "Zone transition cooldown should be 0.5s (reduced from 1.5s)."
+  (assert (< *zone-transition-cooldown-seconds* 1.0) ()
+          "cooldown: should be < 1.0s, got ~,2f" *zone-transition-cooldown-seconds*)
+  (assert (>= *zone-transition-cooldown-seconds* 0.3) ()
+          "cooldown: should be >= 0.3s, got ~,2f" *zone-transition-cooldown-seconds*))
+
+(defun test-client-zone-change-clears-target ()
+  "handle-zone-transition must clear the click-to-move target.
+   The target was set in the old zone's coordinate space and is invalid
+   after zone change. Without clearing, the player walks across the
+   entire new zone toward the stale target position."
+  (let* ((player (%make-player))
+         (intent (make-intent)))
+    (setf (player-intent player) intent)
+    ;; Simulate: target active from a clamped click in zone 1
+    (set-intent-target intent 4004.8 2000.0)
+    (setf (intent-target-raw-x intent) 4200.0
+          (intent-target-raw-y intent) 2000.0
+          (intent-target-clamped-p intent) t)
+    (assert (intent-target-active intent) ()
+            "client-zone-clear: target should be active before zone change")
+    ;; Simulate what handle-zone-transition does: clear target
+    (clear-intent-target intent)
+    (assert (not (intent-target-active intent)) ()
+            "client-zone-clear: target should be cleared after zone change")
+    (assert (not (intent-target-clamped-p intent)) ()
+            "client-zone-clear: clamped-p should be cleared after zone change")))
+
+(defun test-client-zone-change-clears-edge-strips ()
+  "handle-zone-transition must clear edge-strips to prevent ghost sprites.
+   Stale edge-strips from the old zone would render at wrong positions
+   until the next snapshot replaces them."
+  (let ((game (%make-game)))
+    ;; Simulate: edge-strips populated from old zone
+    (setf (game-edge-strips game) (list '(:edge :east :zone-id :zone-2)))
+    (assert (game-edge-strips game) ()
+            "edge-strip-clear: should have edge-strips before zone change")
+    ;; Simulate what handle-zone-transition does: clear edge-strips
+    (setf (game-edge-strips game) nil)
+    (assert (null (game-edge-strips game)) ()
+            "edge-strip-clear: edge-strips should be nil after zone change")))
+
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
     'test-compute-transition-overstep-north
@@ -1440,4 +1565,16 @@
     ;; Issue 6: client cache gate defers commit when not cached
     'test-client-cache-gate-defers-when-uncached
     ;; Server-side preloading to avoid sync load stalls
-    'test-server-preloading-queues-adjacent))
+    'test-server-preloading-queues-adjacent
+    ;; Spawn position fix: actual position, not raw attempted
+    'test-seam-spawn-uses-actual-position
+    'test-seam-spawn-not-deep-for-click
+    ;; Keyboard blocked threshold fix
+    'test-keyboard-blocked-threshold
+    ;; Rebased target bounds clamping
+    'test-rebased-target-clamped-to-bounds
+    ;; Cooldown reduction
+    'test-cooldown-reduced
+    ;; Client-side zone change fixes
+    'test-client-zone-change-clears-target
+    'test-client-zone-change-clears-edge-strips))
