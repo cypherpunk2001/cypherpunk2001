@@ -1,14 +1,6 @@
 Zone Transition Bugs — Current State (2026-02-02)
 ==================================================
 
-Bug 3: Ground/tile shift on zone transition
---------------------------------------------
-On zone switch, the tiles visually shift in one direction underneath the
-character — like the camera or tile layer jumps briefly. Not a shake
-(no oscillation), just a single-direction shift that settles. Looks
-like a brief earthquake or the camera snapping to a new position.
-Likely related to the same frame spike that causes the audio skip.
-
 Bug 4: Diagonal cross-zone click routes to wrong adjacent zone
 ---------------------------------------------------------------
 Click-to-move across diagonal zones (e.g., zone 1 → zone 4, or zone 2 → zone 3)

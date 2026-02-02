@@ -7,42 +7,6 @@ FIXED BUGS (committed in 0a58afe)
 OPEN BUGS
 ==========
 
-Bug 3: Ground/Tile Shift — ROOT CAUSE IDENTIFIED (PROBABLE)
--------------------------------------------------------------
-On zone transition, the tiles visually shift in one direction underneath
-the character. Not a shake — a single-direction shift that settles.
-
-Root cause: Camera screen-pixel snap formula in rendering.lisp:89-97:
-
-    (camera-x (if (> zoom 0.0)
-                  (/ (fround (* raw-camera-x zoom)) zoom)
-                  raw-camera-x))
-
-This rounds the camera to screen-pixel boundaries to prevent sub-pixel
-tile seams. During zone transition, the player position jumps
-discontinuously (e.g., x=4004 in zone 1 -> x=92 in zone 2). The snap
-formula rounds each position independently. The fractional-pixel
-alignment between character sprite and tile grid changes, causing tiles
-to appear to shift by ~1 pixel relative to the character.
-
-Contributing factors:
-  1. No camera smoothing — editor-camera-target (editor-core.lisp:392-398)
-     returns player-x/y directly with no interpolation across zone jumps.
-  2. Render cache clearing — *client-zone-change-hook* invalidates all
-     chunk textures during handle-zone-transition. The first frame after
-     transition renders fresh caches at the new sub-pixel alignment.
-  3. The same frame spike from apply-zone-to-world (Bug 2) may cause a
-     dropped frame, making the visual discontinuity more jarring.
-
-The shift direction depends on which direction the snap formula rounds
-differently at the old vs new position. It's always one direction because
-it's a single rounding discontinuity, not oscillation.
-
-CONCLUSION: The snap formula creates a sub-pixel alignment difference
-between old and new camera positions. Combined with the frame spike from
-Bug 2, the shift is visible for 1-2 frames.
-
-
 Bug 4: Diagonal cross-zone click routes to wrong adjacent zone
 ---------------------------------------------------------------
 Status: Newly reported. Not yet fixed.
