@@ -13,7 +13,9 @@
                         (max-frames 0)
                         (worker-threads 1))
   ;; Run a UDP server that simulates the game and streams snapshots.
-  ;; Scaling: This runs ONE zone. For 10k users @ 500/zone, run 20 server processes.
+  ;; Scaling: One process can host MANY zones. When you scale horizontally,
+  ;; assign each process a cluster/shard of zones based on capacity (CPU/network),
+  ;; not a 1-process-per-zone model.
   ;; See SERVER_PERFORMANCE.md for horizontal scaling strategy.
   ;;
   ;; WORKER-THREADS: Number of threads for parallel snapshot sending (default 1).

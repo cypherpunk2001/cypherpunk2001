@@ -145,7 +145,9 @@ Client-Side Prediction (Optional)
 Performance & Scaling
 - Single server process can host multiple zones; snapshots and NPC simulation are filtered per zone.
 - Player and NPC collision use per-zone bounds from zone-state wall maps (see `docs/movement.md`).
-- For 10k users @ 500/zone: run 20 separate server processes (horizontal scaling).
+- Horizontal scaling is by capacity, not by zone count: each server process can host many zones
+  (hundreds+) and should be assigned a **cluster/shard** of zones when you add more processes.
+  Example: for 10k users, add server processes based on CPU/network limits, not 1 process per zone.
 - Snapshot optimization:
   - State serialized once per zone per frame via `serialize-game-state-for-zone`
   - Snapshot encoded to bytes once per zone and sent to all clients in that zone (encode-once-send-many)

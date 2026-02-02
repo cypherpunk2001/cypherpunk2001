@@ -65,91 +65,110 @@
                    (attempt-move world from-x from-y dir-x dir-y step
                                  half-w half-h tile-size))))
         (cond
-        ((or (not (zerop input-dx))
-             (not (zerop input-dy)))
-         (clear-intent-target intent)
-         (let ((step (* *player-speed* speed-mult dt)))
-           ;; Store attempted position BEFORE collision resolution
-           (setf (player-attempted-x player) (+ x (* input-dx step))
-                 (player-attempted-y player) (+ y (* input-dy step)))
-           (multiple-value-setq (x y dx dy)
-             (do-move x y input-dx input-dy step))))
-        ((intent-target-active intent)
-         (let* ((target-x (intent-target-x intent))
-                (target-y (intent-target-y intent))
-                (raw-x (if (intent-target-clamped-p intent)
-                           (intent-target-raw-x intent)
-                           target-x))
-                (raw-y (if (intent-target-clamped-p intent)
-                           (intent-target-raw-y intent)
-                           target-y))
-                (to-x (- target-x x))
-                (to-y (- target-y y))
-                (dist (sqrt (+ (* to-x to-x) (* to-y to-y))))
-                (crossing-target-p (and min-x max-x min-y max-y
-                                        (or (< raw-x min-x) (> raw-x max-x)
-                                            (< raw-y min-y) (> raw-y max-y)))))
-           (if (<= dist *target-epsilon*)
-               (if (or (intent-target-clamped-p intent) crossing-target-p)
-                   ;; Target was clamped from an out-of-bounds click.
-                   ;; Keep target active, but use raw target direction to nudge
-                   ;; attempted past the boundary for commit detection.
-                   (let* ((raw-dx (- raw-x x))
-                          (raw-dy (- raw-y y))
-                          (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
-                     (if (> raw-dist 0.001)
-                         (let* ((rdir-x (/ raw-dx raw-dist))
-                                (rdir-y (/ raw-dy raw-dist)))
+          ((or (not (zerop input-dx))
+               (not (zerop input-dy)))
+           (clear-intent-target intent)
+           (let ((step (* *player-speed* speed-mult dt)))
+             ;; Store attempted position BEFORE collision resolution
+             (setf (player-attempted-x player) (+ x (* input-dx step))
+                   (player-attempted-y player) (+ y (* input-dy step)))
+             (multiple-value-setq (x y dx dy)
+               (do-move x y input-dx input-dy step))
+             ;; If movement is blocked on the axis that pushes into an edge,
+             ;; force attempted past the boundary so the transition can commit.
+             ;; (Handles diagonal movement that slides along a boundary.)
+             (when (and min-x max-x min-y max-y)
+               (let ((arm-px (* *zone-hysteresis-in* tile-size)))
+                 (when (and (> input-dx 0.0) (zerop dx) (<= (- max-x x) arm-px))
+                   (setf (player-attempted-x player) (+ max-x step)
+                         (player-attempted-y player) y))
+                 (when (and (< input-dx 0.0) (zerop dx) (<= (- x min-x) arm-px))
+                   (setf (player-attempted-x player) (- min-x step)
+                         (player-attempted-y player) y))
+                 (when (and (> input-dy 0.0) (zerop dy) (<= (- max-y y) arm-px))
+                   (setf (player-attempted-y player) (+ max-y step)
+                         (player-attempted-x player) x))
+                 (when (and (< input-dy 0.0) (zerop dy) (<= (- y min-y) arm-px))
+                   (setf (player-attempted-y player) (- min-y step)
+                         (player-attempted-x player) x))))))
+          ((intent-target-active intent)
+           (let* ((target-x (intent-target-x intent))
+                  (target-y (intent-target-y intent))
+                  (raw-x (if (intent-target-clamped-p intent)
+                             (intent-target-raw-x intent)
+                             target-x))
+                  (raw-y (if (intent-target-clamped-p intent)
+                             (intent-target-raw-y intent)
+                             target-y))
+                  (to-x (- target-x x))
+                  (to-y (- target-y y))
+                  (dist (sqrt (+ (* to-x to-x) (* to-y to-y))))
+                  (crossing-target-p (and min-x max-x min-y max-y
+                                          (or (< raw-x min-x) (> raw-x max-x)
+                                              (< raw-y min-y) (> raw-y max-y))))
+                  (clamped-crossing-p (or (intent-target-clamped-p intent)
+                                          crossing-target-p)))
+             (if (<= dist *target-epsilon*)
+                 (if clamped-crossing-p
+                     ;; Target was clamped from an out-of-bounds click.
+                     ;; Keep target active, but use raw target direction to nudge
+                     ;; attempted past the boundary for commit detection.
+                     (let* ((raw-dx (- raw-x x))
+                            (raw-dy (- raw-y y))
+                            (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
+                       (if (> raw-dist 0.001)
+                           (let* ((rdir-x (/ raw-dx raw-dist))
+                                  (rdir-y (/ raw-dy raw-dist)))
+                             (setf (player-attempted-x player) raw-x
+                                   (player-attempted-y player) raw-y
+                                   ;; Preserve walking animation while pushing
+                                   dx rdir-x
+                                   dy rdir-y))
+                           (setf (player-attempted-x player) x
+                                 (player-attempted-y player) y
+                                 dx 0.0
+                                 dy 0.0)))
+                     ;; Normal stationary: clear target and stop.
+                     (progn
+                       (setf (intent-target-active intent) nil
+                             dx 0.0
+                             dy 0.0)
+                       (setf (player-attempted-x player) x
+                             (player-attempted-y player) y)))
+                 (let* ((dir-x (/ to-x dist))
+                        (dir-y (/ to-y dist))
+                        (step (min (* *player-speed* speed-mult dt) dist)))
+                   ;; Store attempted position BEFORE collision resolution
+                   (setf (player-attempted-x player) (+ x (* dir-x step))
+                         (player-attempted-y player) (+ y (* dir-y step)))
+                   (multiple-value-setq (x y dx dy)
+                     (do-move x y dir-x dir-y step))
+                   ;; If we're blocked by collision but the target was clamped
+                   ;; (click beyond edge), keep target active and use raw target
+                   ;; to drive attempted position across the boundary.
+                   (when (and clamped-crossing-p
+                              (zerop dx) (zerop dy))
+                     (let* ((raw-dx (- raw-x x))
+                            (raw-dy (- raw-y y))
+                            (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
+                       (when (> raw-dist 0.001)
+                         (let ((rdir-x (/ raw-dx raw-dist))
+                               (rdir-y (/ raw-dy raw-dist)))
                            (setf (player-attempted-x player) raw-x
                                  (player-attempted-y player) raw-y
-                                 ;; Preserve walking animation while pushing
                                  dx rdir-x
-                                 dy rdir-y))
-                         (setf (player-attempted-x player) x
-                               (player-attempted-y player) y
-                               dx 0.0
-                               dy 0.0)))
-                   ;; Normal stationary: clear target and stop.
-                   (progn
-                     (setf (intent-target-active intent) nil
-                           dx 0.0
-                           dy 0.0)
-                     (setf (player-attempted-x player) x
-                           (player-attempted-y player) y)))
-               (let* ((dir-x (/ to-x dist))
-                      (dir-y (/ to-y dist))
-                      (step (min (* *player-speed* speed-mult dt) dist)))
-                 ;; Store attempted position BEFORE collision resolution
-                 (setf (player-attempted-x player) (+ x (* dir-x step))
-                       (player-attempted-y player) (+ y (* dir-y step)))
-                 (multiple-value-setq (x y dx dy)
-                   (do-move x y dir-x dir-y step))
-                 ;; If we're blocked by collision but the target was clamped
-                 ;; (click beyond edge), keep target active and use raw target
-                 ;; to drive attempted position across the boundary.
-                 (when (and (or (intent-target-clamped-p intent) crossing-target-p)
-                            (zerop dx) (zerop dy))
-                   (let* ((raw-dx (- raw-x x))
-                          (raw-dy (- raw-y y))
-                          (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
-                     (when (> raw-dist 0.001)
-                       (let ((rdir-x (/ raw-dx raw-dist))
-                             (rdir-y (/ raw-dy raw-dist)))
-                         (setf (player-attempted-x player) raw-x
-                               (player-attempted-y player) raw-y
-                               dx rdir-x
-                               dy rdir-y)))))
-                 (when (or (<= dist step)
-                           (and (zerop dx) (zerop dy)
-                                (not (or (intent-target-clamped-p intent)
-                                         crossing-target-p))))
-                   (setf (intent-target-active intent) nil))))))
-        (t
-         (setf dx 0.0
-               dy 0.0)
-         ;; Stationary: attempted = actual (prevents stale values)
-         (setf (player-attempted-x player) x
-               (player-attempted-y player) y))))
+                                 dy rdir-y)))))
+                   (when (or (and (<= dist step)
+                                  (not clamped-crossing-p))
+                             (and (zerop dx) (zerop dy)
+                                  (not clamped-crossing-p)))
+                     (setf (intent-target-active intent) nil))))))
+          (t
+           (setf dx 0.0
+                 dy 0.0)
+           ;; Stationary: attempted = actual (prevents stale values)
+           (setf (player-attempted-x player) x
+                 (player-attempted-y player) y))))
       ;; Clamp to zone bounds if available, otherwise global world bounds
       (setf x (clamp x min-x max-x)
             y (clamp y min-y max-y)))
@@ -177,6 +196,7 @@
                   (when changed
                     (setf (player-grid-cell-x player) new-cx
                           (player-grid-cell-y player) new-cy)))))))))))
+
 
 (defun player-intent-direction (player)
   ;; Return the intended movement direction for edge transitions.
@@ -575,6 +595,9 @@
                             (- target-x (player-x player))))
          (target-offset-y (when had-target
                             (- target-y (player-y player))))
+         (target-crossing-p nil)
+         (target-rebased-x nil)
+         (target-rebased-y nil)
          (carry (collect-transition-npcs current-npcs player world))
          (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
@@ -646,11 +669,11 @@
                 (funcall *client-zone-change-hook* target-zone-id)))
             (setf (world-zone-label world) (zone-label zone))
             ;; Calculate spawn position using appropriate bounds
-            (multiple-value-bind (new-min-x new-max-x new-min-y new-max-y)
-                (if (and is-server target-wall-map)
-                    (get-zone-collision-bounds target-zone-id tile-size half-w half-h)
-                    (values (world-wall-min-x world) (world-wall-max-x world)
-                            (world-wall-min-y world) (world-wall-max-y world)))
+                (multiple-value-bind (new-min-x new-max-x new-min-y new-max-y)
+                    (if (and is-server target-wall-map)
+                        (get-zone-collision-bounds target-zone-id tile-size half-w half-h)
+                        (values (world-wall-min-x world) (world-wall-max-x world)
+                                (world-wall-min-y world) (world-wall-max-y world)))
               ;; PLAN_zone_transition_continuity: Seam translation as primary path
               ;; Uses attempted position (pre-collision) so the seam formula
               ;; produces in-bounds results (player has crossed the boundary).
@@ -659,6 +682,10 @@
                      (overstep (compute-transition-overstep
                                 edge player
                                 src-min-x src-max-x src-min-y src-max-y)))
+                (setf target-crossing-p
+                      (and had-target
+                           (or (< target-x src-min-x) (> target-x src-max-x)
+                               (< target-y src-min-y) (> target-y src-max-y))))
                 ;; Step 1: Try seam translation (primary path)
                 (multiple-value-bind (trans-x trans-y)
                     (seam-translate-position edge px py
@@ -728,6 +755,19 @@
                         (player-dy player) 0.0
                         (player-zone-id player) target-zone-id
                         (player-snapshot-dirty player) t)
+                  (when had-target
+                    (if target-crossing-p
+                        ;; Target was in the adjacent zone. Translate it across the seam
+                        ;; so the player walks to the intended location and stops.
+                        (multiple-value-bind (tx ty)
+                            (seam-translate-position edge target-x target-y
+                                                     src-min-x src-max-x src-min-y src-max-y
+                                                     new-min-x new-max-x new-min-y new-max-y)
+                          (setf target-rebased-x (clamp tx new-min-x new-max-x)
+                                target-rebased-y (clamp ty new-min-y new-max-y)))
+                        ;; Target was inside the current zone: preserve relative offset.
+                        (setf target-rebased-x (+ (player-x player) target-offset-x)
+                              target-rebased-y (+ (player-y player) target-offset-y))))
                   ;; Insert player into new zone's spatial grid and zone-players cache
                   (when target-zone-state
                     ;; Add to zone-players cache (Task 4.1)
@@ -754,9 +794,7 @@
           (setf (player-zone-transition-pending player) nil)
           (reset-frame-intent-preserving-movement intent)
           (when had-target
-            (set-intent-target intent
-                               (+ (player-x player) target-offset-x)
-                               (+ (player-y player) target-offset-y))
+            (set-intent-target intent target-rebased-x target-rebased-y)
             ;; After transition, treat target as in-bounds for the new zone.
             (setf (intent-target-raw-x intent) (intent-target-x intent)
                   (intent-target-raw-y intent) (intent-target-y intent)

@@ -219,46 +219,66 @@ This is more complex and may not be needed if Tier 1 eliminates the reconstructi
 
 ---
 
-## Movement Prediction and Hitches
+## Codex Addendum — Why Crossing Still Feels “Blocked” (Not a Preload Problem)
 
-The user raises a good point: with movement prediction, we know the player's trajectory
-and can predict which zone they'll enter next. The current system already exploits this
-via the arm-band and preload-radius — when a player moves toward an edge, the preloader
-starts warming the cache.
+I don’t think the stubborn “invisible wall / must double‑click / must hold keys” symptoms
+are caused by preload. Preload removes disk I/O hitches, but the **block‑and‑delay** feels
+like logic that **never commits a transition when the player is on the boundary**. That
+points to movement/transition gating, not cache misses.
 
-**Why hitches still happen despite prediction:**
+### Likely Root Causes (Behavioral)
 
-1. **Reconstruction is synchronous.** Even a perfectly predicted and pre-cached zone still
-   triggers `apply-zone-to-world` + minimap rebuild + render cache invalidation on the
-   frame of transition. Prediction helps with I/O but not with computation.
+1. **Commit detection relies on “attempted” position past the edge.**  
+   If movement is clamped or blocked, the attempted position may never exceed the bound,
+   so `world-crossing-edge` never fires. This creates the “push against wall” feeling.
 
-2. **Render cache cold start.** After transitioning, the client must re-render all visible
-   tile chunks from scratch (the old zone's render textures are invalid). This causes a
-   frame spike even though the zone data is in memory.
+2. **Target clears before crossing (click‑to‑move).**  
+   If a clamped click target is “reached” within one step, it gets cleared, removing
+   intent direction before the transition can commit. This looks like: player walks to
+   the edge, stops, never crosses — unless you re‑click.
 
-3. **NPC grid population.** Creating spatial grids and populating them with NPCs takes
-   time proportional to NPC count.
+3. **Directional gating cancels pending.**  
+   The pending edge is cancelled if `player-intent-direction` drops below threshold.
+   That can happen when the target is cleared or when the move vector is reset to zero
+   even though the player is still pressing into the edge.
 
-**With Tier 1 fixes (pre-computed reconstruction),** the transition itself becomes near-zero
-cost. The remaining hitch would be render cache invalidation, which could be addressed by
-pre-rendering adjacent zone chunks in the background (a future optimization).
+4. **Cooldown masks repeated attempts.**  
+   If a partial attempt sets pending and then cancels, the cooldown can prevent a new
+   commit for up to 1.5s — perceived as “stuck against a wall.”
 
----
+5. **Collision bounds vs. zone ring mismatch.**  
+   If the bounds used for movement/collision and the bounds used for transition commit
+   diverge (tile ring vs. collision bounds), the player can be “inside” for movement but
+   “outside” for transition (or vice‑versa), causing inconsistent edge behavior.
 
-## Summary
+### Why This Matters For Preload
 
-| Aspect | Status |
-|--------|--------|
-| Adjacent zone preloading | Already implemented (cold-start + proximity + urgent) |
-| LRU cache sized for 8 neighbors | Already implemented (capacity=9) |
-| Explicit unload on transition | Implicit via LRU eviction (good enough) |
-| Cache gate (defer if uncached) | Already implemented |
-| Pre-compute reconstruction data | **NOT DONE — main source of hitch** |
-| Remove `build-zone-paths` disk scan | **NOT DONE — easy win** |
-| Pre-render adjacent zone chunks | Not done (future polish) |
-| Background reconstruction thread | Not done (probably unnecessary after Tier 1) |
+Preload only guarantees the destination zone is *ready*. It doesn’t guarantee the logic
+will decide to cross. So when the player can’t walk across, it’s almost always a **commit
+condition or intent state issue**, not a missing zone in cache.
 
-The proposal's core insight is correct: adjacent zones should be ready before the player
-arrives. The system already ensures the zone *data* is cached. The gap is that
-*derived state* (bounds, minimap, grids) is recomputed every transition instead of being
-cached alongside the zone data.
+### Practical Fix Direction (Aligned With Current System)
+
+These are the fixes that address the “wall” feeling directly:
+
+- **Ensure attempted position crosses the bound even when collision blocks movement.**  
+  For keyboard input, force attempted to “step past” the edge when blocked near the arm
+  band. For clamped click targets, preserve raw target and use it to drive attempted.
+
+- **Never clear a clamped crossing target on arrival.**  
+  Keep the target active until the transition commits. Clearing it too early drops
+  direction and cancels pending.
+
+- **Reduce or conditionalize cooldown.**  
+  Only apply cooldown after a successful transition, not after a cancel/failed attempt.
+
+- **Log intent + attempted + pending edge in verbose mode.**  
+  This will reveal whether the transition logic is failing because of intent direction,
+  attempted position, or cancel line.
+
+### Summary
+
+If preloading is solid (and it mostly is), the remaining “blocked crossing” problem is
+almost certainly in **movement → intent → transition** logic, not in loading. Preload
+fixes hitches; it doesn’t fix “the player can’t cross.” Fixing attempted position and
+target persistence will.

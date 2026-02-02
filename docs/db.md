@@ -1022,7 +1022,7 @@ return {ok = "TRADE_COMPLETE"}
 
 **Why Redis-based (not in-memory)?**
 - Survives server restart (ownership transfers cleanly)
-- Enables multi-server deployment (one server per zone cluster)
+- Enables multi-server deployment (one server per zone cluster/shard, many zones each)
 - Prevents "ghost sessions" from crashed servers blocking logins
 - TTL auto-cleanup means no manual intervention after crashes
 

@@ -146,12 +146,12 @@ Empty zones (no players) have idle NPCs - no AI processing.
 **Current: Single Server, Multi-Zone**
 - One server handles all zones
 - Players filtered by zone in snapshots
-- Target: ~500 concurrent players total
+- Target: ~500 concurrent players total (tune per hardware)
 
 **Future: Horizontal Scaling**
-- Multiple server processes, each handling a subset of zones
+- Multiple server processes, each handling a **cluster/shard** of zones
 - Shared database for player state
-- Target: ~2,000 players per zone server
+- Target: scale by capacity (CPU/network) rather than a fixed “per-zone” server count
 
 **Future: Zone Sharding**
 - Dynamic zone instances for overflow

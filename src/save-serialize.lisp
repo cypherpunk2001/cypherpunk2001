@@ -21,7 +21,7 @@
   "Size of compact NPC serialization vector (indices 0-14).")
 
 (defparameter *player-vector-pool-capacity* 600
-  "Initial capacity for player vector pool. Sized for ~500 players per zone + headroom.")
+  "Initial capacity for player vector pool. Sized for ~500 players per active zone snapshot + headroom.")
 
 (defvar *player-vector-pool* nil
   "Global vector pool for player compact serialization. Created lazily on first use.")

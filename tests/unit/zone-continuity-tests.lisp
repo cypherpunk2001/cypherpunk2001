@@ -908,6 +908,28 @@
       (clrhash *zone-states*)
       (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
 
+(defun test-clamped-target-not-cleared-when-reached ()
+  "When a clamped target is reached within one step, keep the target active
+   so the boundary crossing can still commit on the next frame."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0)
+    ;; Player slightly inside east boundary, clamped target at the edge.
+    (setf (player-x player) 622.0
+          (player-y player) 300.0)
+    (set-intent-target intent 624.0 300.0)
+    (setf (intent-target-raw-x intent) 700.0
+          (intent-target-raw-y intent) 300.0
+          (intent-target-clamped-p intent) t)
+    (update-player-position player intent world 1.0 0.016)
+    (assert (intent-target-active intent) ()
+            "clamped-reached: target should remain active when clamped target is reached")))
+
 (defun test-clamped-blocked-uses-raw-target-for-crossing ()
   "When clamped movement is blocked, attempted position uses raw target so
    world-crossing-edge can detect a boundary crossing."
@@ -944,6 +966,71 @@
       (clrhash *zone-states*)
       (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
 
+(defun test-input-blocked-near-edge-forces-crossing ()
+  "When keyboard input is blocked near an edge, attempted position is forced
+   past the boundary to allow immediate crossing."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-id :blocked-edge-zone)
+         (wall-map (make-array '(4 4) :element-type 'fixnum :initial-element 0))
+         (saved-zone-states (make-hash-table :test 'eq)))
+    ;; Block tile (3,1) so eastward move at edge is blocked.
+    (setf (aref wall-map 1 3) 1)
+    (setf (player-intent player) intent
+          (player-zone-id player) zone-id
+          (player-x player) 224.0
+          (player-y player) 96.0
+          (intent-move-dx intent) 1.0
+          (intent-move-dy intent) 0.0)
+    ;; Save/replace zone-state cache
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           (clrhash *zone-states*)
+           (setf (gethash zone-id *zone-states*)
+                 (make-zone-state :zone-id zone-id :wall-map wall-map))
+           (update-player-position player intent world 1.0 0.3)
+           (multiple-value-bind (min-x max-x min-y max-y)
+               (get-zone-collision-bounds zone-id 64.0 16.0 16.0)
+             (let ((edge (world-crossing-edge player min-x max-x min-y max-y)))
+               (assert (eq edge :east) ()
+                       "input-blocked-crossing: expected :east, got ~a" edge))))
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
+
+(defun test-diagonal-slide-still-forces-crossing ()
+  "When diagonal input slides along an edge (blocked on one axis),
+   attempted position should still cross the boundary."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-id :diag-blocked-zone)
+         (wall-map (make-array '(4 4) :element-type 'fixnum :initial-element 0))
+         (saved-zone-states (make-hash-table :test 'eq)))
+    ;; Block tile (3,1) so eastward move at edge is blocked; north movement allowed.
+    (setf (aref wall-map 1 3) 1)
+    (setf (player-intent player) intent
+          (player-zone-id player) zone-id
+          (player-x player) 224.0
+          (player-y player) 160.0
+          (intent-move-dx intent) 1.0
+          (intent-move-dy intent) -1.0)
+    ;; Save/replace zone-state cache
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           (clrhash *zone-states*)
+           (setf (gethash zone-id *zone-states*)
+                 (make-zone-state :zone-id zone-id :wall-map wall-map))
+           (update-player-position player intent world 1.0 0.3)
+           (multiple-value-bind (min-x max-x min-y max-y)
+               (get-zone-collision-bounds zone-id 64.0 16.0 16.0)
+             (let ((edge (world-crossing-edge player min-x max-x min-y max-y)))
+               (assert (eq edge :east) ()
+                       "diag-slide-crossing: expected :east, got ~a" edge))))
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
 (defun test-reduced-arm-band-no-false-arm ()
   "With *zone-hysteresis-in* = 2.0, a player 3 tiles from the edge must NOT be in
    the arm band.  Old value (6.0) would have armed at this distance."
@@ -1119,6 +1206,68 @@
                      "transition-anim: player should be in zone-b"))
         (delete-file tmp-path)))))
 
+(defun test-transition-rebases-cross-zone-target ()
+  "Cross-zone click target should be translated into the destination zone so
+   the player stops at the intended location (no infinite walk)."
+  (let* ((world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-a-id :zone-target-a)
+         (zone-b-id :zone-target-b)
+         (wall-map (make-array '(10 10) :initial-element 0))
+         (zone-b (%make-zone :id zone-b-id :width 10 :height 10
+                             :collision-tiles nil :objects nil))
+         (player (%make-player))
+         (intent (make-intent))
+         (game (%make-game :world world :players (vector player)
+                           :npcs (vector) :entities (vector player)
+                           :net-role :server
+                           :npc-id-source (make-id-source 1000000 nil)))
+         (exit (list :to zone-b-id :spawn-edge :west)))
+    (setf (gethash zone-a-id *zone-states*)
+          (make-zone-state :zone-id zone-a-id :wall-map wall-map
+                           :zone (%make-zone :id zone-a-id :width 10 :height 10
+                                             :collision-tiles nil :objects nil)))
+    (setf (gethash zone-b-id *zone-states*)
+          (make-zone-state :zone-id zone-b-id :wall-map wall-map
+                           :zone zone-b
+                           :player-grid (make-spatial-grid-for-zone 10 10 64.0)
+                           :npc-grid (make-spatial-grid-for-zone 10 10 64.0)))
+    (setf (player-x player) 620.0
+          (player-y player) 300.0
+          (player-attempted-x player) 626.0
+          (player-attempted-y player) 300.0
+          (player-zone-id player) zone-a-id
+          (player-intent player) intent)
+    ;; Simulate cross-zone click: raw target beyond east edge.
+    (set-intent-target intent 624.0 300.0)
+    (setf (intent-target-raw-x intent) 700.0
+          (intent-target-raw-y intent) 300.0
+          (intent-target-clamped-p intent) t)
+    (setf (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0
+          (world-zone-label world) "Zone A")
+    (let ((tmp-path (format nil "/tmp/test-zone-target-~a.lisp" (get-universal-time))))
+      (with-open-file (out tmp-path :direction :output :if-exists :supersede)
+        (write (list :id zone-b-id :width 10 :height 10
+                     :tile-layers nil :collision-tiles nil :objects nil)
+               :stream out))
+      (let* ((paths (make-hash-table :test 'eq))
+             (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                       :zone-paths paths)))
+        (setf (gethash zone-b-id paths) tmp-path)
+        (setf (world-world-graph world) graph))
+      (unwind-protect
+           (progn
+             (transition-zone game player exit :east)
+             ;; Target should be translated into destination zone (~92.0 = 16 + (700-624)).
+             (assert (< (abs (- (intent-target-x intent) 92.0)) 1.0) ()
+                     "target-rebase: expected ~92.0, got ~,2f"
+                     (intent-target-x intent))
+             (assert (not (intent-target-clamped-p intent)) ()
+                     "target-rebase: target should be in-bounds after transition"))
+        (delete-file tmp-path)))))
+
 (defun test-clamped-nudge-uses-raw-direction ()
   "When a clamped target is reached, the raw-target nudge keeps the target active
    and player-intent-direction uses the raw target so pending isn't cancelled."
@@ -1279,9 +1428,13 @@
     'test-clamped-click-produces-attempted-past-boundary
     'test-click-inside-bounds-no-crossing
     'test-clamped-target-not-cleared-when-blocked
+    'test-clamped-target-not-cleared-when-reached
     'test-clamped-blocked-uses-raw-target-for-crossing
+    'test-input-blocked-near-edge-forces-crossing
+    'test-diagonal-slide-still-forces-crossing
     ;; Issue 3 integration: movement preserved across transition-zone
     'test-transition-preserves-movement-integration
+    'test-transition-rebases-cross-zone-target
     ;; Issue 2b: direction preserved for pending cancel gate
     'test-clamped-nudge-uses-raw-direction
     ;; Issue 6: client cache gate defers commit when not cached
