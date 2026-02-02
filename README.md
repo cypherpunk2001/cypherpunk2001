@@ -111,7 +111,7 @@ make test-unit          # All unit tests (game logic, persistence, security, tra
 make checkdocs          # Verify docs exist for each src file
 ```
 
-**Note:** All test types (unit, persistence, security, trade) are now consolidated into a single `make test-unit` target for simplicity. The single test file is `tests/unit-test.lisp`.
+**Note:** All test types (unit, persistence, security, trade) run via `make test-unit`. Tests are split into modular domain files under `tests/unit/`, loaded by the aggregator `tests/unit-test.lisp`.
 
 Test env overrides:
 - `MMORPG_NET_TEST_PORT` - UDP port (default 1337)

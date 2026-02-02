@@ -34,12 +34,15 @@ Individual test targets (run by `make tests` in this order):
 make checkparens        # 1st - Verify balanced parentheses in all .lisp files
 make ci                 # 2nd - Cold compile + UDP handshake test (no GPU needed)
 make smoke              # 3rd - Full client/server smoke test with window (2s default)
-make test-unit          # All tests (unit, persistence, security, trade) in ONE file
+make test-unit          # All tests (unit, persistence, security, trade) via modular files
 make checkdocs          # Verify docs/foo.md exists for each src/foo.lisp
 ```
 
-**Test consolidation:** All test types (unit, persistence, security, trade) are consolidated into **one file**:
-- `tests/unit-test.lisp` (run via `make test-unit`)
+**Test layout:** Tests are split into modular domain files under `tests/unit/`, loaded by the aggregator `tests/unit-test.lisp`:
+- `tests/unit-test.lisp` — aggregator that loads all `tests/unit/*.lisp` files and runs test suites
+- `tests/unit/*.lisp` — domain-specific test files (e.g., `combat-tests.lisp`, `persistence-core-tests.lisp`)
+- Run via `make test-unit`
+- **File size guideline:** Around ~1000 lines, split test files at natural domain boundaries to avoid files exceeding ~2000 lines. Prefer descriptive names (e.g., `persistence-core-tests.lisp`, `persistence-hardening-tests.lisp`) over generic suffixes.
 
 **Never skip tests.** If you implement a feature but don't run all test targets, the work is incomplete.
 
@@ -69,8 +72,9 @@ We aim for **very high** test coverage. Tests prevent regressions and catch bugs
 **Rule of thumb:** If a function has logic that could break, write a test.
 The only exception is code that requires hardware (GPU/audio/input).
 
-**Test file (single source of truth):**
-- `tests/unit-test.lisp`
+**Test files (modular layout):**
+- `tests/unit/*.lisp` — domain test files, each with a `*tests-<domain>*` list
+- `tests/unit-test.lisp` — aggregator that loads them all
 
 ---
 
@@ -89,7 +93,7 @@ For every new function, ask:
 
 How to implement:
 1. Write the test BEFORE or ALONGSIDE the implementation
-2. Add your test to the appropriate section in `tests/unit-test.lisp`
+2. Add your test to the appropriate domain file in `tests/unit/` and its `*tests-<domain>*` list
 3. Run `make test-unit` to verify
 4. If a function is hard to test, refactor it to be testable (extract pure logic)
 

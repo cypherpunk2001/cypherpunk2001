@@ -4,7 +4,7 @@ Documentation for the MMORPG test suite.
 
 ## Test Suite Overview
 
-All tests are consolidated into a single file: `tests/unit-test.lisp`
+Tests are organized as modular domain files under `tests/unit/`, loaded by the aggregator `tests/unit-test.lisp`.
 
 | Suite | Section | Purpose |
 |-------|---------|---------|
@@ -128,9 +128,9 @@ When implementing features that touch player data, add tests if ANY of these app
 
 ## Implementation Details
 
-- **File**: `tests/unit-test.lisp` (Persistence Tests section)
+- **Files**: `tests/unit/persistence-core-tests.lisp`, `tests/unit/persistence-network-tests.lisp`, `tests/unit/persistence-hardening-tests.lisp`
 - **Package**: `mmorpg` (tests run in main package for access to internals)
-- **Test runner**: `scripts/test-unit.lisp`
+- **Test runner**: `scripts/test-unit.lisp` (loads aggregator which loads all domain files)
 - **Framework**: Custom lightweight test harness (no external dependencies)
 - **Exit codes**: 0 on success, 1 on failure (CI-friendly)
 
@@ -240,7 +240,7 @@ Good candidates for new tests:
 
 ## Implementation Details
 
-- **File**: `tests/unit-test.lisp` (Security Tests section)
+- **Files**: `tests/unit/security-input-tests.lisp`, `tests/unit/security-gamestate-tests.lisp`
 - **Package**: `mmorpg` (tests run in main package)
 - **Test macro**: `define-security-test` - Custom macro for security test boilerplate
 - **Ports**: Tests spin up temporary servers on configurable ports
@@ -250,22 +250,62 @@ Good candidates for new tests:
 
 # File Organization
 
-All tests are now consolidated into a single file for simplicity:
+Tests are split into modular domain files under `tests/unit/`, loaded by the aggregator:
 
 ```
 tests/
-└── unit-test.lisp          # All tests (unit, persistence, security, trade)
+├── unit-test.lisp              # Aggregator: loads all domain files, builds master test list, runs suites
+└── unit/
+    ├── 00-test-helpers.lisp    # Shared test helpers (ensure-test-game-data, make-test-world)
+    ├── ai-tests.lisp           # AI behavior tests
+    ├── auth-tests.lisp         # Auth throughput and rate-limiting tests
+    ├── chat-tests.lisp         # Chat message tests
+    ├── combat-targeting-tests.lisp  # Combat targeting fix + render cache tests
+    ├── combat-tests.lisp       # Combat math tests
+    ├── data-tests.lisp         # Data parsing and archetype tests
+    ├── db-tests.lisp           # Redis metrics tests
+    ├── intent-tests.lisp       # Intent system tests
+    ├── migration-tests.lisp    # Schema migration tests
+    ├── movement-tests.lisp     # Movement and collision tests
+    ├── net-tests.lisp          # Networking and binary snapshot tests
+    ├── persistence-core-tests.lisp      # Data integrity, round-trip, storage backend tests
+    ├── persistence-hardening-tests.lisp # Validation, 4-way outcomes, ownership, storage failures
+    ├── persistence-network-tests.lisp   # Compact serialization, zone-filtered deltas
+    ├── profiling-tests.lisp    # Profiling and GC tests
+    ├── progression-tests.lisp  # XP, inventory, equipment tests
+    ├── save-tests.lisp         # Serialization round-trip tests
+    ├── security-gamestate-tests.lisp  # Game authority, ownership, thread-safety tests
+    ├── security-input-tests.lisp      # Input validation and protocol security tests
+    ├── spatial-tests.lisp      # Spatial grid, zone-players cache, vector pool tests
+    ├── trade-tests.lisp        # Trade session and swap tests
+    ├── types-tests.lisp        # Type system tests
+    ├── utils-tests.lisp        # Utility function tests
+    ├── world-graph-tests.lisp  # World graph and pathfinding tests
+    ├── zone-cache-tests.lisp   # Zone LRU cache, arming, edge-strip serialization tests
+    ├── zone-continuity-tests.lisp # Overstep, seam translation, urgent preload tests
+    └── zone-tests.lisp         # Zone loading and manipulation tests
 
 scripts/
-└── test-unit.lisp          # Test runner script
+└── test-unit.lisp              # Test runner script
 ```
 
+Each domain file:
+- Starts with `(in-package #:mmorpg)`
+- Defines test functions
+- Defines a `*tests-<domain>*` list of test function symbols (for unit test domains)
+- Persistence, security, and trade suites have their own internal `run-*-tests-internal` runners
+
 To add a new test:
-1. Open `tests/unit-test.lisp`
-2. Find the appropriate section (Unit, Persistence, Security, or Trade)
-3. Add your test function following the existing patterns
-4. Add the test name to the `run-*-tests-internal` function in that section
-5. Run `make test-unit` to verify
+1. Find the appropriate domain file in `tests/unit/`
+2. Add your test function
+3. Add the test name to the domain's `*tests-<domain>*` list (or the runner function for persistence/security/trade)
+4. Run `make test-unit` to verify
+
+---
+
+# File Size Guideline
+
+**Rule of thumb:** Around ~1000 lines, a test file should be split to avoid files exceeding ~2000 lines. Split at natural domain boundaries (e.g., `persistence-tests.lisp` → `persistence-core-tests.lisp` + `persistence-network-tests.lisp` + `persistence-hardening-tests.lisp`). If no descriptive name is obvious, `foo-tests-a.lisp` and `foo-tests-b.lisp` is acceptable, but prefer descriptive names when possible.
 
 ---
 
