@@ -62,8 +62,12 @@
         ((or (not (zerop input-dx))
              (not (zerop input-dy)))
          (clear-intent-target intent)
-         (multiple-value-setq (x y dx dy)
-           (do-move x y input-dx input-dy (* *player-speed* speed-mult dt))))
+         (let ((step (* *player-speed* speed-mult dt)))
+           ;; Store attempted position BEFORE collision resolution
+           (setf (player-attempted-x player) (+ x (* input-dx step))
+                 (player-attempted-y player) (+ y (* input-dy step)))
+           (multiple-value-setq (x y dx dy)
+             (do-move x y input-dx input-dy step))))
         ((intent-target-active intent)
          (let* ((target-x (intent-target-x intent))
                 (target-y (intent-target-y intent))
@@ -71,12 +75,19 @@
                 (to-y (- target-y y))
                 (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
            (if (<= dist *target-epsilon*)
-               (setf (intent-target-active intent) nil
-                     dx 0.0
-                     dy 0.0)
+               (progn
+                 (setf (intent-target-active intent) nil
+                       dx 0.0
+                       dy 0.0)
+                 ;; Stationary: attempted = actual
+                 (setf (player-attempted-x player) x
+                       (player-attempted-y player) y))
                (let* ((dir-x (/ to-x dist))
                       (dir-y (/ to-y dist))
                       (step (min (* *player-speed* speed-mult dt) dist)))
+                 ;; Store attempted position BEFORE collision resolution
+                 (setf (player-attempted-x player) (+ x (* dir-x step))
+                       (player-attempted-y player) (+ y (* dir-y step)))
                  (multiple-value-setq (x y dx dy)
                    (do-move x y dir-x dir-y step))
                  (when (or (<= dist step)
@@ -84,7 +95,10 @@
                    (setf (intent-target-active intent) nil))))))
         (t
          (setf dx 0.0
-               dy 0.0))))
+               dy 0.0)
+         ;; Stationary: attempted = actual (prevents stale values)
+         (setf (player-attempted-x player) x
+               (player-attempted-y player) y))))
     ;; Clamp to zone bounds if available, otherwise global world bounds
     (multiple-value-bind (min-x max-x min-y max-y)
         (if zone-wall-map
@@ -248,6 +262,37 @@
             (values (world-wall-min-x world) (world-wall-max-x world)
                     (world-wall-min-y world) (world-wall-max-y world)))
       (world-exit-edge-with-bounds player min-x max-x min-y max-y))))
+
+(defun world-crossing-edge (player min-x max-x min-y max-y)
+  "Return the edge the player's attempted position crosses, if any.
+   Uses strict inequality: attempted must exceed the collision bound.
+   Only for commit detection — preview/minimap use world-exit-edge instead."
+  (multiple-value-bind (dx dy)
+      (player-intent-direction player)
+    (let ((ax (player-attempted-x player))
+          (ay (player-attempted-y player))
+          (edge nil)
+          (weight 0.0))
+      (declare (type single-float ax ay weight))
+      (when (and (< dy 0.0) (< ay min-y))
+        (let ((w (abs dy)))
+          (when (> w weight) (setf edge :north weight w))))
+      (when (and (> dy 0.0) (> ay max-y))
+        (let ((w (abs dy)))
+          (when (> w weight) (setf edge :south weight w))))
+      (when (and (< dx 0.0) (< ax min-x))
+        (let ((w (abs dx)))
+          (when (> w weight) (setf edge :west weight w))))
+      (when (and (> dx 0.0) (> ax max-x))
+        (let ((w (abs dx)))
+          (when (> w weight) (setf edge :east weight w))))
+      ;; Directional gating (same as existing world-exit-edge-with-bounds)
+      (when (and edge (not (edge-direction-passes-p dx dy edge)))
+        (when *verbose-zone-transitions*
+          (log-zone "Zone crossing: directional gating rejected edge ~a (dx=~,2f dy=~,2f)"
+                    edge dx dy))
+        (setf edge nil))
+      edge)))
 
 ;;;; ========================================================================
 ;;;; Spawn Position Calculation
@@ -420,18 +465,19 @@
 ;;; ADDENDUM 1: Overstep preservation for continuous zone transitions
 
 (defun compute-transition-overstep (edge player src-min-x src-max-x src-min-y src-max-y)
-  "Compute the distance between the player and the source zone edge being crossed.
-   Returns a non-negative float: how far the player is from the exact edge boundary.
-   EDGE is the direction the player is transitioning toward."
+  "Compute the distance the player's attempted position extends PAST the source zone edge.
+   Returns a non-negative float: 0.0 when inside the zone, positive when past the edge.
+   EDGE is the direction the player is transitioning toward.
+   Uses player-attempted-x/y (pre-collision intended position)."
   (declare (type single-float src-min-x src-max-x src-min-y src-max-y))
-  (let ((px (player-x player))
-        (py (player-y player)))
+  (let ((ax (player-attempted-x player))
+        (ay (player-attempted-y player)))
     (max 0.0
          (case edge
-           (:north (- py src-min-y))    ; distance from north (top) edge
-           (:south (- src-max-y py))    ; distance from south (bottom) edge
-           (:west  (- px src-min-x))    ; distance from west (left) edge
-           (:east  (- src-max-x px))    ; distance from east (right) edge
+           (:north (- src-min-y ay))    ; positive when attempted-y < src-min-y (crossed north)
+           (:south (- ay src-max-y))    ; positive when attempted-y > src-max-y (crossed south)
+           (:west  (- src-min-x ax))    ; positive when attempted-x < src-min-x (crossed west)
+           (:east  (- ax src-max-x))    ; positive when attempted-x > src-max-x (crossed east)
            (t 0.0)))))
 
 (defun apply-overstep-to-spawn (spawn-edge overstep base-x base-y)
@@ -481,13 +527,17 @@
                        (progn
                          (when *verbose-zone-transitions*
                            (log-zone "Zone transition: cache MISS for ~a — synchronous disk load" target-id))
-                         (with-retry-exponential (loaded (lambda () (load-zone target-path))
+                         (let ((loaded (with-retry-exponential (result (lambda () (load-zone target-path))
                                                    :max-retries 2
                                                    :initial-delay 100
                                                    :max-delay 200
                                                    :on-final-fail (lambda (e)
                                                                     (warn "Zone transition failed: could not load zone ~a after retries: ~a"
                                                                           target-id e)))
+                                         result)))
+                           ;; Insert into LRU cache so next transition to this zone hits cache
+                           (when (and loaded zone-lru)
+                             (zone-cache-insert zone-lru target-id loaded))
                            loaded))))
              (spawn-edge (or (getf exit :spawn-edge)
                              (getf exit :to-edge)
@@ -541,10 +591,13 @@
                     (values (world-wall-min-x world) (world-wall-max-x world)
                             (world-wall-min-y world) (world-wall-max-y world)))
               ;; PLAN_zone_transition_continuity: Seam translation as primary path
-              ;; Uses collision bounds (not pixel spans) so translated positions
-              ;; land within walkable area without multi-tile clamping.
-              (let* ((px (player-x player))
-                     (py (player-y player)))
+              ;; Uses attempted position (pre-collision) so the seam formula
+              ;; produces in-bounds results (player has crossed the boundary).
+              (let* ((px (player-attempted-x player))
+                     (py (player-attempted-y player))
+                     (overstep (compute-transition-overstep
+                                edge player
+                                src-min-x src-max-x src-min-y src-max-y)))
                 ;; Step 1: Try seam translation (primary path)
                 (multiple-value-bind (trans-x trans-y)
                     (seam-translate-position edge px py
@@ -562,22 +615,21 @@
                                            nil)))
                          (seam-valid (and in-bounds (not blocked))))
                     (when *verbose-zone-transitions*
-                      (log-zone "Seam translation: ~a->~a edge=~a path=~a old=(~,1f,~,1f) src-bounds=(~,1f,~,1f,~,1f,~,1f) dst-bounds=(~,1f,~,1f,~,1f,~,1f) -> trans=(~,1f,~,1f) in-bounds=~a blocked=~a overstep=not-applied"
+                      (log-zone "Seam translation: ~a->~a edge=~a path=~a~%  old=(~,1f, ~,1f) attempted=(~,1f, ~,1f)~%  src-bounds=(~,1f, ~,1f, ~,1f, ~,1f)~%  dst-bounds=(~,1f, ~,1f, ~,1f, ~,1f)~%  -> trans=(~,1f, ~,1f) in-bounds=~a blocked=~a overstep=~,2f"
                                 current-zone-id (zone-id zone) edge
                                 (if seam-valid "seam" "fallback")
+                                (player-x player) (player-y player)
                                 px py
                                 src-min-x src-max-x src-min-y src-max-y
                                 new-min-x new-max-x new-min-y new-max-y
-                                trans-x trans-y in-bounds blocked))
+                                trans-x trans-y in-bounds blocked overstep))
                     ;; Step 3: Use seam result if valid, otherwise fall back to ratio-spawn
                     (multiple-value-bind (raw-x raw-y fallback-reason)
                         (if seam-valid
                             (values trans-x trans-y nil)
                             ;; Fallback: ratio-based spawn + overstep (old path)
-                            (let* ((reason (if (not in-bounds) "out-of-bounds" "blocked"))
-                                   (overstep (compute-transition-overstep
-                                              edge player
-                                              src-min-x src-max-x src-min-y src-max-y)))
+                            ;; overstep already computed above (distance past edge)
+                            (let ((reason (if (not in-bounds) "out-of-bounds" "blocked")))
                               (multiple-value-bind (base-x base-y)
                                   (edge-spawn-position-bounds new-min-x new-max-x new-min-y new-max-y
                                                               spawn-edge preserve-axis ratio)
@@ -634,6 +686,9 @@
           ;; Step 1: Set transition cooldown
           (setf (player-zone-transition-cooldown player)
                 *zone-transition-cooldown-seconds*)
+          (when *verbose-zone-transitions*
+            (log-zone "Zone transition: cooldown started (~,2fs) for player ~a"
+                      *zone-transition-cooldown-seconds* (player-id player)))
           ;; Step 2: Clear pending transition
           (setf (player-zone-transition-pending player) nil)
           (reset-frame-intent intent)
@@ -708,21 +763,12 @@
                                         (get-or-create-zone-state player-zone-id zone-path)))
                          (tile-size (world-tile-dest-size world))
                          (half-w (world-collision-half-width world))
-                         (half-h (world-collision-half-height world))
-                         ;; ADDENDUM 2: Derive commit margin from collision size
-                         ;; so the player doesn't need to push through collision.
-                         ;; Use max(collision-half-w, collision-half-h) as the base,
-                         ;; scaled by *zone-commit-margin-tiles* as a multiplier.
-                         (commit-margin (max (* *zone-commit-margin-tiles* tile-size)
-                                             (max half-w half-h))))
+                         (half-h (world-collision-half-height world)))
                     (declare (ignore _zone-state))
                     ;; Step 1: Cooldown — decrement and skip if active
                     (when (> (player-zone-transition-cooldown player) 0.0)
                       (decf (player-zone-transition-cooldown player) dt)
                       (when (> (player-zone-transition-cooldown player) 0.0)
-                        (when *verbose-zone-transitions*
-                          (log-zone "Zone transition: cooldown active (~,2fs remaining) for player ~a"
-                                   (player-zone-transition-cooldown player) (player-id player)))
                         (return-from per-player)))
                     ;; Get per-zone bounds
                     (multiple-value-bind (min-x max-x min-y max-y)
@@ -752,13 +798,11 @@
                                   (when *verbose-zone-transitions*
                                     (log-zone "Zone transition: cancel for edge ~a (intent dropped)" pending))
                                   (setf (player-zone-transition-pending player) nil))
-                                 ;; Commit or edge-change: check actual edge at boundary
-                                 ;; commit-margin relaxes the boundary so collision doesn't
-                                 ;; prevent reaching the exact edge position
+                                 ;; Commit or edge-change: check if attempted position
+                                 ;; crosses the zone boundary (strict inequality)
                                  (t
-                                  (let ((actual-edge (world-exit-edge-with-bounds
-                                                      player min-x max-x min-y max-y
-                                                      commit-margin)))
+                                  (let ((actual-edge (world-crossing-edge
+                                                      player min-x max-x min-y max-y)))
                                     (cond
                                       ;; Commit: at the pending edge
                                       ((eq actual-edge pending)
@@ -766,8 +810,8 @@
                                                      (float internal-time-units-per-second 1.0))))
                                          (let* ((last (player-zone-transition-last-time player))
                                                 (time-since (if (> last 0.0) (- now last) -1.0)))
-                                           (log-zone "Zone transition: COMMIT edge=~a player=~a commit-margin=~,1f time-since-last=~,2fs"
-                                                     pending (player-id player) commit-margin time-since))
+                                           (log-zone "Zone transition: COMMIT edge=~a player=~a time-since-last=~,2fs"
+                                                     pending (player-id player) time-since))
                                          (setf (player-zone-transition-last-time player) now))
                                        (transition-zone game player exit pending)
                                        (incf transition-count))

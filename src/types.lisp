@@ -69,7 +69,12 @@
   ;; Seamless zone transition state (ephemeral, not persisted)
   (zone-transition-cooldown 0.0 :type single-float)   ; Seconds remaining before next transition allowed
   (zone-transition-pending nil :type (or null keyword)) ; Edge keyword (:north etc) or nil
-  (zone-transition-last-time 0.0 :type single-float))  ; Wall-clock time of last commit (for thrash metrics)
+  (zone-transition-last-time 0.0 :type single-float)   ; Wall-clock time of last commit (for thrash metrics)
+  ;; Pre-collision attempted position (ephemeral, not persisted/serialized).
+  ;; Set every tick in update-player-position BEFORE collision resolution.
+  ;; Used by world-crossing-edge for commit detection and by seam translation.
+  (attempted-x 0.0 :type single-float)
+  (attempted-y 0.0 :type single-float))
 
 (defstruct (npc (:constructor %make-npc))
   ;; NPC state used by update/draw loops.

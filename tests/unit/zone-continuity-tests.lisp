@@ -1,33 +1,49 @@
 (in-package #:mmorpg)
 
 (defun test-compute-transition-overstep-north ()
-  "Overstep for :north edge: distance from player Y to source min-y."
+  "Overstep for :north edge: distance attempted-y extends past src-min-y."
   (let ((player (%make-player)))
-    (setf (player-x player) 300.0 (player-y player) 20.0)
+    (setf (player-x player) 300.0 (player-y player) 10.0)
+    ;; Attempted position past north edge (y < min-y=10)
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 5.0)
     ;; Source zone: min-y=10, max-y=640
     (let ((overstep (compute-transition-overstep :north player 10.0 630.0 10.0 640.0)))
-      ;; Player at y=20, north edge at y=10 → overstep = 20 - 10 = 10
-      (assert (< (abs (- overstep 10.0)) 0.01) ()
-              "overstep-north: should be ~10, got ~,2f" overstep))))
+      ;; Attempted y=5, north edge at y=10 → overstep = 10 - 5 = 5
+      (assert (< (abs (- overstep 5.0)) 0.01) ()
+              "overstep-north: should be ~5, got ~,2f" overstep))))
 
 (defun test-compute-transition-overstep-all-edges ()
-  "Overstep computation for all 4 cardinal edges."
+  "Overstep computation for all 4 cardinal edges using attempted position."
   (let ((player (%make-player)))
-    ;; South edge: player at y=630, south boundary at y=640
-    (setf (player-x player) 300.0 (player-y player) 630.0)
+    ;; South edge: attempted-y past south boundary (y=640)
+    (setf (player-x player) 300.0 (player-y player) 640.0)
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 643.0)
     (let ((os (compute-transition-overstep :south player 10.0 630.0 10.0 640.0)))
-      (assert (< (abs (- os 10.0)) 0.01) ()
-              "overstep-south: should be ~10, got ~,2f" os))
-    ;; West edge: player at x=15, west boundary at x=10
-    (setf (player-x player) 15.0 (player-y player) 300.0)
+      (assert (< (abs (- os 3.0)) 0.01) ()
+              "overstep-south: should be ~3, got ~,2f" os))
+    ;; West edge: attempted-x past west boundary (x=10)
+    (setf (player-x player) 10.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 7.0
+          (player-attempted-y player) 300.0)
     (let ((os (compute-transition-overstep :west player 10.0 630.0 10.0 640.0)))
-      (assert (< (abs (- os 5.0)) 0.01) ()
-              "overstep-west: should be ~5, got ~,2f" os))
-    ;; East edge: player at x=625, east boundary at x=630
-    (setf (player-x player) 625.0)
+      (assert (< (abs (- os 3.0)) 0.01) ()
+              "overstep-west: should be ~3, got ~,2f" os))
+    ;; East edge: attempted-x past east boundary (x=630)
+    (setf (player-x player) 630.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 634.0
+          (player-attempted-y player) 300.0)
     (let ((os (compute-transition-overstep :east player 10.0 630.0 10.0 640.0)))
-      (assert (< (abs (- os 5.0)) 0.01) ()
-              "overstep-east: should be ~5, got ~,2f" os))))
+      (assert (< (abs (- os 4.0)) 0.01) ()
+              "overstep-east: should be ~4, got ~,2f" os))
+    ;; North edge: attempted-y past north boundary (y=10)
+    (setf (player-x player) 300.0 (player-y player) 10.0)
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 8.0)
+    (let ((os (compute-transition-overstep :north player 10.0 630.0 10.0 640.0)))
+      (assert (< (abs (- os 2.0)) 0.01) ()
+              "overstep-north: should be ~2, got ~,2f" os))))
 
 (defun test-apply-overstep-to-spawn-directions ()
   "apply-overstep-to-spawn should shift spawn position inward from spawn edge."
@@ -56,33 +72,34 @@
 ;;; ADDENDUM 2: Commit margin tied to collision size
 ;;; ============================================================
 
-(defun test-commit-margin-at-least-collision-half ()
-  "Commit margin must be at least max(collision-half-width, collision-half-height).
-   ADDENDUM 2: Ensures the player can trigger commit without pushing into wall."
-  ;; Scenario 1: Large collision (e.g. mount) exceeds tile-based margin
-  (let* ((tile-size 32.0)
-         (half-w 20.0)   ; wider than 0.5 * tile-size = 16
-         (half-h 24.0)   ; taller still
-         (margin (max (* *zone-commit-margin-tiles* tile-size)
-                      (max half-w half-h))))
-    (assert (>= margin half-w) ()
-            "commit-margin ~,1f must be >= collision-half-width ~,1f" margin half-w)
-    (assert (>= margin half-h) ()
-            "commit-margin ~,1f must be >= collision-half-height ~,1f" margin half-h)
-    ;; For this case, collision-based margin should win
-    (assert (= margin 24.0) ()
-            "commit-margin should be 24.0 (collision wins), got ~,1f" margin))
-  ;; Scenario 2: Small collision — tile-based margin wins
-  (let* ((tile-size 32.0)
-         (half-w 8.0)    ; smaller than 0.5 * 32 = 16
-         (half-h 8.0)
-         (margin (max (* *zone-commit-margin-tiles* tile-size)
-                      (max half-w half-h))))
-    (assert (>= margin half-w) ()
-            "commit-margin ~,1f must be >= collision-half-width ~,1f" margin half-w)
-    (assert (= margin (* *zone-commit-margin-tiles* tile-size)) ()
-            "commit-margin should be tile-based ~,1f, got ~,1f"
-            (* *zone-commit-margin-tiles* tile-size) margin)))
+(defun test-commit-requires-boundary-crossing ()
+  "Commit detection requires attempted position to strictly exceed collision bound.
+   Replaces old commit-margin test: commit now uses world-crossing-edge with
+   attempted position instead of commit-margin relaxation."
+  (let ((player (%make-player))
+        (intent (make-intent)))
+    (setf (player-intent player) intent)
+    (setf (intent-move-dx intent) 1.0 (intent-move-dy intent) 0.0)
+    ;; Scenario 1: Attempted position ON the boundary (not past) → no crossing
+    (setf (player-x player) 560.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 560.0
+          (player-attempted-y player) 300.0)
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (null edge) ()
+              "crossing-on-boundary: should be nil (strict inequality), got ~a" edge))
+    ;; Scenario 2: Attempted position PAST the boundary → crossing detected
+    (setf (player-attempted-x player) 562.0)
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (eq edge :east) ()
+              "crossing-past-boundary: should be :east, got ~a" edge))
+    ;; Scenario 3: Moving west, attempted past west boundary
+    (setf (intent-move-dx intent) -1.0 (intent-move-dy intent) 0.0)
+    (setf (player-x player) 80.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 78.0
+          (player-attempted-y player) 300.0)
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (eq edge :west) ()
+              "crossing-west: should be :west, got ~a" edge))))
 
 ;;; ============================================================
 ;;; ADDENDUM 3: Urgent preload near commit
@@ -392,6 +409,9 @@
     ;; Player at x=562 (2px past src-max-x=560)
     (setf (player-x player) 562.0
           (player-y player) 300.0
+          ;; Attempted position = pre-collision intended position (same as actual when past edge)
+          (player-attempted-x player) 562.0
+          (player-attempted-y player) 300.0
           (player-zone-id player) zone-a-id
           (player-intent player) (make-intent))
     ;; Set up world bounds matching 10-tile zone collision
@@ -463,6 +483,9 @@
       ;; Player just past east collision bound
       (setf (player-x player) 562.0
             (player-y player) 300.0
+            ;; Attempted position = pre-collision intended position
+            (player-attempted-x player) 562.0
+            (player-attempted-y player) 300.0
             (player-zone-id player) zone-a-id
             (player-intent player) (make-intent))
       (setf (world-wall-min-x world) 80.0
@@ -532,13 +555,212 @@
             "seam-mixed-west: new-y should be unchanged at 400, got ~,2f" ny)))
 
 
+;;; ============================================================
+;;; New tests for attempted-position and world-crossing-edge
+;;; ============================================================
+
+(defun test-crossing-edge-does-not-affect-preview ()
+  "world-exit-edge-with-bounds uses actual position, not attempted.
+   Preview/minimap must be unaffected by the crossing-edge change."
+  (let ((player (%make-player))
+        (intent (make-intent)))
+    (setf (player-intent player) intent)
+    (setf (intent-move-dx intent) 1.0 (intent-move-dy intent) 0.0)
+    ;; Actual position is ON the boundary, attempted is past it
+    (setf (player-x player) 560.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 563.0
+          (player-attempted-y player) 300.0)
+    ;; world-exit-edge-with-bounds should use actual position (560 <= 560) with margin=0
+    ;; At the boundary with zero margin → should detect east
+    (let ((edge (world-exit-edge-with-bounds player 80.0 560.0 80.0 560.0 0.0)))
+      (assert (eq edge :east) ()
+              "preview-edge: actual position on boundary should detect :east, got ~a" edge))
+    ;; Player well inside the zone: actual=300, attempted=563 (stale from hypothetical)
+    (setf (player-x player) 300.0)
+    ;; world-exit-edge-with-bounds should NOT detect an edge (player is deep inside)
+    (let ((edge (world-exit-edge-with-bounds player 80.0 560.0 80.0 560.0 0.0)))
+      (assert (null edge) ()
+              "preview-inside: player at x=300 should not trigger edge, got ~a" edge))))
+
+(defun test-overstep-zero-when-inside ()
+  "Overstep should be 0.0 when attempted position is inside the zone."
+  (let ((player (%make-player)))
+    ;; Attempted position well inside zone bounds
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 300.0)
+    (assert (< (abs (compute-transition-overstep :north player 10.0 630.0 10.0 640.0)) 0.001) ()
+            "overstep-inside-north: should be 0")
+    (assert (< (abs (compute-transition-overstep :south player 10.0 630.0 10.0 640.0)) 0.001) ()
+            "overstep-inside-south: should be 0")
+    (assert (< (abs (compute-transition-overstep :east player 10.0 630.0 10.0 640.0)) 0.001) ()
+            "overstep-inside-east: should be 0")
+    (assert (< (abs (compute-transition-overstep :west player 10.0 630.0 10.0 640.0)) 0.001) ()
+            "overstep-inside-west: should be 0")))
+
+(defun test-overstep-positive-when-past ()
+  "Overstep should be positive when attempted position is past the zone boundary."
+  (let ((player (%make-player)))
+    ;; South: attempted-y > max-y
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 645.0)
+    (let ((os (compute-transition-overstep :south player 10.0 630.0 10.0 640.0)))
+      (assert (> os 0.0) ()
+              "overstep-past-south: should be positive, got ~,2f" os)
+      (assert (< (abs (- os 5.0)) 0.01) ()
+              "overstep-past-south: should be ~5, got ~,2f" os))
+    ;; East: attempted-x > max-x
+    (setf (player-attempted-x player) 635.0
+          (player-attempted-y player) 300.0)
+    (let ((os (compute-transition-overstep :east player 10.0 630.0 10.0 640.0)))
+      (assert (> os 0.0) ()
+              "overstep-past-east: should be positive, got ~,2f" os)
+      (assert (< (abs (- os 5.0)) 0.01) ()
+              "overstep-past-east: should be ~5, got ~,2f" os))))
+
+(defun test-seam-translation-in-bounds-for-same-size ()
+  "For same-size zones (src-bounds == dst-bounds), seam translation must produce
+   an in-bounds position. This is the core invariant from the behavioral spec."
+  ;; 64x64 zone, tile-size=64, half=16: bounds = [80, 560]
+  (let ((min-b 80.0) (max-b 560.0))
+    ;; East crossing: attempted-x = 563 (3px past max-x=560)
+    (multiple-value-bind (nx ny)
+        (seam-translate-position :east 563.0 300.0
+                                 min-b max-b min-b max-b
+                                 min-b max-b min-b max-b)
+      ;; new-x = 80 + (563 - 560) = 83
+      (assert (seam-position-valid-p nx ny min-b max-b min-b max-b) ()
+              "same-size-east: seam position (~,1f,~,1f) must be in bounds" nx ny)
+      (assert (< (abs (- nx 83.0)) 0.01) ()
+              "same-size-east: new-x should be 83, got ~,2f" nx))
+    ;; North crossing: attempted-y = 77 (3px past min-y=80)
+    (multiple-value-bind (nx ny)
+        (seam-translate-position :north 300.0 77.0
+                                 min-b max-b min-b max-b
+                                 min-b max-b min-b max-b)
+      ;; new-y = 560 + (77 - 80) = 557
+      (assert (seam-position-valid-p nx ny min-b max-b min-b max-b) ()
+              "same-size-north: seam position (~,1f,~,1f) must be in bounds" nx ny)
+      (assert (< (abs (- ny 557.0)) 0.01) ()
+              "same-size-north: new-y should be 557, got ~,2f" ny))))
+
+(defun test-player-can-stand-on-edge-without-transition ()
+  "A stationary player on the edge-adjacent tile must NOT trigger world-crossing-edge.
+   The player's attempted position equals actual position (on the collision bound),
+   and strict inequality means this does not count as crossing."
+  (let ((player (%make-player))
+        (intent (make-intent)))
+    ;; Stationary: no movement intent
+    (setf (player-intent player) intent)
+    (setf (intent-move-dx intent) 0.0 (intent-move-dy intent) 0.0)
+    ;; Standing on east collision bound (max-x=560)
+    (setf (player-x player) 560.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 560.0
+          (player-attempted-y player) 300.0)
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (null edge) ()
+              "stationary-on-east: should be nil (no crossing), got ~a" edge))
+    ;; Standing on north collision bound (min-y=80)
+    (setf (player-x player) 300.0 (player-y player) 80.0)
+    (setf (player-attempted-x player) 300.0
+          (player-attempted-y player) 80.0)
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (null edge) ()
+              "stationary-on-north: should be nil (no crossing), got ~a" edge))))
+
+(defun test-transition-uses-seam-not-fallback ()
+  "When attempted position is past the boundary, seam-translate-position produces
+   an in-bounds result, so the primary (seam) path is used, not fallback."
+  ;; Simulate the logic from transition-zone: compute seam translation, check validity
+  (let* ((min-b 80.0) (max-b 560.0)
+         ;; East crossing: attempted-x = 563
+         (px 563.0) (py 300.0))
+    (multiple-value-bind (trans-x trans-y)
+        (seam-translate-position :east px py
+                                 min-b max-b min-b max-b
+                                 min-b max-b min-b max-b)
+      (let ((in-bounds (seam-position-valid-p trans-x trans-y min-b max-b min-b max-b)))
+        (assert in-bounds ()
+                "seam-primary-path: translated position (~,1f,~,1f) should be in bounds"
+                trans-x trans-y)
+        ;; Overstep = 563 - 560 = 3. trans-x = 80 + 3 = 83.
+        (assert (< (abs (- trans-x 83.0)) 0.01) ()
+                "seam-primary-path: trans-x should be 83, got ~,2f" trans-x)))))
+
+(defun test-attempted-position-set-for-stationary ()
+  "When the player is stationary, attempted position must equal actual position.
+   Prevents stale attempted values from triggering false crossings."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    (setf (player-x player) 300.0 (player-y player) 400.0)
+    ;; Set stale attempted values to prove they get overwritten
+    (setf (player-attempted-x player) 999.0
+          (player-attempted-y player) 999.0)
+    ;; No movement input, no click target → stationary branch
+    (setf (intent-move-dx intent) 0.0
+          (intent-move-dy intent) 0.0
+          (intent-target-active intent) nil)
+    (update-player-position player intent world 1.0 0.016)
+    (assert (< (abs (- (player-attempted-x player) 300.0)) 0.01) ()
+            "stationary-attempted-x: should be 300 (actual), got ~,2f"
+            (player-attempted-x player))
+    (assert (< (abs (- (player-attempted-y player) 400.0)) 0.01) ()
+            "stationary-attempted-y: should be 400 (actual), got ~,2f"
+            (player-attempted-y player))))
+
+(defun test-attempted-position-set-for-click-to-move ()
+  "When using click-to-move, attempted position is set before collision resolution.
+   The attempted position should be current + direction * step."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
+    (setf (player-intent player) intent)
+    ;; Player at center, click target to the east
+    (setf (player-x player) 300.0 (player-y player) 300.0)
+    ;; Set up world bounds so player can actually move
+    (setf (world-wall-min-x world) 80.0
+          (world-wall-max-x world) 560.0
+          (world-wall-min-y world) 80.0
+          (world-wall-max-y world) 560.0)
+    ;; Click target far east: activates click-to-move
+    (set-intent-target intent 500.0 300.0)
+    (setf (intent-move-dx intent) 0.0
+          (intent-move-dy intent) 0.0)
+    (update-player-position player intent world 1.0 0.016)
+    ;; Attempted should be slightly east of 300 (towards 500)
+    (assert (> (player-attempted-x player) 300.0) ()
+            "click-attempted-x: should be > 300 (moving east), got ~,2f"
+            (player-attempted-x player))
+    ;; Attempted-y should be ~300 (pure east movement)
+    (assert (< (abs (- (player-attempted-y player) 300.0)) 1.0) ()
+            "click-attempted-y: should be ~300, got ~,2f"
+            (player-attempted-y player))))
+
+(defun test-crossing-edge-directional-gating ()
+  "world-crossing-edge respects directional gating: attempted position past east
+   but movement intent is north → no east crossing detected."
+  (let ((player (%make-player))
+        (intent (make-intent)))
+    ;; Moving north (dy=-1), not east
+    (setf (player-intent player) intent)
+    (setf (intent-move-dx intent) 0.0 (intent-move-dy intent) -1.0)
+    ;; Attempted position past east boundary
+    (setf (player-x player) 560.0 (player-y player) 300.0)
+    (setf (player-attempted-x player) 562.0
+          (player-attempted-y player) 298.0)
+    ;; Should NOT detect east because movement intent is north
+    (let ((edge (world-crossing-edge player 80.0 560.0 80.0 560.0)))
+      (assert (null edge) ()
+              "gating-east-moving-north: should be nil, got ~a" edge))))
+
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
     'test-compute-transition-overstep-north
     'test-compute-transition-overstep-all-edges
     'test-apply-overstep-to-spawn-directions
-    ;; ADDENDUM 2: Commit margin tied to collision size
-    'test-commit-margin-at-least-collision-half
+    ;; ADDENDUM 2: Commit detection via boundary crossing
+    'test-commit-requires-boundary-crossing
     ;; ADDENDUM 3: Urgent preload near commit
     'test-process-preload-queue-urgent-pops-multiple
     'test-urgent-preload-no-pending-required
@@ -556,4 +778,14 @@
     'test-seam-position-valid-p
     'test-seam-translation-used-in-transition-zone
     'test-seam-translation-blocked-uses-fallback
-    'test-seam-translate-mixed-bounds))
+    'test-seam-translate-mixed-bounds
+    ;; New tests: attempted position and world-crossing-edge
+    'test-crossing-edge-does-not-affect-preview
+    'test-overstep-zero-when-inside
+    'test-overstep-positive-when-past
+    'test-seam-translation-in-bounds-for-same-size
+    'test-player-can-stand-on-edge-without-transition
+    'test-transition-uses-seam-not-fallback
+    'test-attempted-position-set-for-stationary
+    'test-attempted-position-set-for-click-to-move
+    'test-crossing-edge-directional-gating))

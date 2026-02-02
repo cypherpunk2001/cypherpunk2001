@@ -116,12 +116,11 @@
   "Cancel line distance from zone edge in tiles. Retreating past this clears pending.
    Must be > *zone-hysteresis-in*.")
 
-;;; Commit Margin (Step 2 refinement)
-(defparameter *zone-commit-margin-tiles* 0.5
-  "Commit triggers when player is within this many tiles of the zone edge.
-   Collision keeps the player slightly inside the boundary, so checking for
-   exact boundary crossing would require the player to 'push through' the wall.
-   0.5 tiles = half a tile of slack.")
+;;; Commit Margin (UNUSED — legacy parameter)
+(defparameter *zone-commit-margin-tiles* 0.01
+  "UNUSED — legacy parameter. Commit detection now uses world-crossing-edge
+   with attempted position (strict inequality on collision bounds).
+   Retained for rollback safety; will be removed.")
 
 ;;; Directional Gating (Step 3)
 (defparameter *zone-direction-threshold* 0.3
@@ -158,10 +157,7 @@
            *zone-hysteresis-out* *zone-hysteresis-in*))
   (unless (>= *zone-preload-radius* *zone-hysteresis-in*)
     (error "Zone config: *zone-preload-radius* (~a) must be >= *zone-hysteresis-in* (~a)"
-           *zone-preload-radius* *zone-hysteresis-in*))
-  (unless (> *zone-commit-margin-tiles* 0.0)
-    (error "Zone config: *zone-commit-margin-tiles* (~a) must be > 0"
-           *zone-commit-margin-tiles*)))
+           *zone-preload-radius* *zone-hysteresis-in*)))
 
 ;;;; ========================================================================
 ;;;; STATIC DATA (Evaluated at load time, effectively constants)
