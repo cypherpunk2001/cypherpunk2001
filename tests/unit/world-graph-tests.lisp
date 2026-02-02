@@ -113,6 +113,113 @@
 
 ;;; ============================================================
 
+;;; BFS PATHFINDING TESTS (Bug 4 Part 3)
+;;; ============================================================
+
+(defun make-test-graph-3x3 ()
+  "Create a 3x3 grid world graph for BFS tests.
+   Layout:  NW  N  NE
+            W   C  E
+            SW  S  SE
+   All edges are spatial (preserve-x/y)."
+  (let ((edges (list
+                ;; Center row: W <-> C <-> E
+                '(:from :zone-c :to :zone-e :edge :east :offset :preserve-y)
+                '(:from :zone-e :to :zone-c :edge :west :offset :preserve-y)
+                '(:from :zone-c :to :zone-w :edge :west :offset :preserve-y)
+                '(:from :zone-w :to :zone-c :edge :east :offset :preserve-y)
+                ;; Center column: N <-> C <-> S
+                '(:from :zone-c :to :zone-n :edge :north :offset :preserve-x)
+                '(:from :zone-n :to :zone-c :edge :south :offset :preserve-x)
+                '(:from :zone-c :to :zone-s :edge :south :offset :preserve-x)
+                '(:from :zone-s :to :zone-c :edge :north :offset :preserve-x)
+                ;; North row: NW <-> N <-> NE
+                '(:from :zone-n :to :zone-ne :edge :east :offset :preserve-y)
+                '(:from :zone-ne :to :zone-n :edge :west :offset :preserve-y)
+                '(:from :zone-n :to :zone-nw :edge :west :offset :preserve-y)
+                '(:from :zone-nw :to :zone-n :edge :east :offset :preserve-y)
+                ;; South row: SW <-> S <-> SE
+                '(:from :zone-s :to :zone-se :edge :east :offset :preserve-y)
+                '(:from :zone-se :to :zone-s :edge :west :offset :preserve-y)
+                '(:from :zone-s :to :zone-sw :edge :west :offset :preserve-y)
+                '(:from :zone-sw :to :zone-s :edge :east :offset :preserve-y)
+                ;; West column: NW <-> W <-> SW
+                '(:from :zone-w :to :zone-nw :edge :north :offset :preserve-x)
+                '(:from :zone-nw :to :zone-w :edge :south :offset :preserve-x)
+                '(:from :zone-w :to :zone-sw :edge :south :offset :preserve-x)
+                '(:from :zone-sw :to :zone-w :edge :north :offset :preserve-x)
+                ;; East column: NE <-> E <-> SE
+                '(:from :zone-e :to :zone-ne :edge :north :offset :preserve-x)
+                '(:from :zone-ne :to :zone-e :edge :south :offset :preserve-x)
+                '(:from :zone-e :to :zone-se :edge :south :offset :preserve-x)
+                '(:from :zone-se :to :zone-e :edge :north :offset :preserve-x))))
+    (%make-world-graph :edges-by-zone (normalize-world-graph-edges edges)
+                       :zone-paths (make-hash-table :test 'eq))))
+
+(defun test-world-graph-find-path-adjacent ()
+  "BFS finds 1-hop path between direct neighbors."
+  (let ((graph (make-test-graph-3x3)))
+    (let ((path (world-graph-find-path graph :zone-c :zone-e)))
+      (assert (equal path '(:zone-e)) ()
+              "bfs-adjacent: C->E should be (:zone-e), got ~a" path))
+    (let ((path (world-graph-find-path graph :zone-c :zone-n)))
+      (assert (equal path '(:zone-n)) ()
+              "bfs-adjacent: C->N should be (:zone-n), got ~a" path))))
+
+(defun test-world-graph-find-path-diagonal ()
+  "BFS finds 2-hop path to diagonal zone."
+  (let ((graph (make-test-graph-3x3)))
+    (let ((path (world-graph-find-path graph :zone-c :zone-ne)))
+      (assert (= (length path) 2) ()
+              "bfs-diagonal: C->NE should be 2 hops, got ~d: ~a"
+              (length path) path)
+      ;; Path should go through either N or E
+      (assert (or (equal path '(:zone-n :zone-ne))
+                  (equal path '(:zone-e :zone-ne))) ()
+              "bfs-diagonal: C->NE path should go through N or E, got ~a" path))))
+
+(defun test-world-graph-find-path-same-zone ()
+  "BFS returns NIL for same zone."
+  (let ((graph (make-test-graph-3x3)))
+    (assert (null (world-graph-find-path graph :zone-c :zone-c)) ()
+            "bfs-same: C->C should return NIL")))
+
+(defun test-world-graph-find-path-unreachable ()
+  "BFS returns NIL for disconnected zone."
+  (let ((graph (make-test-graph-3x3)))
+    (assert (null (world-graph-find-path graph :zone-c :zone-isolated)) ()
+            "bfs-unreachable: C->isolated should return NIL")))
+
+(defun test-world-graph-find-path-multi-hop ()
+  "BFS finds path across multiple hops (corner to corner)."
+  (let ((graph (make-test-graph-3x3)))
+    (let ((path (world-graph-find-path graph :zone-sw :zone-ne)))
+      (assert (and path (>= (length path) 2)) ()
+              "bfs-multihop: SW->NE should have >= 2 hops, got ~a" path)
+      ;; Last element must be destination
+      (assert (eq (car (last path)) :zone-ne) ()
+              "bfs-multihop: path should end with :zone-ne, got ~a" path))))
+
+(defun test-world-graph-edge-between ()
+  "Returns correct edge direction between connected zones."
+  (let ((graph (make-test-graph-3x3)))
+    (assert (eq (world-graph-edge-between graph :zone-c :zone-e) :east) ()
+            "edge-between: C->E should be :east")
+    (assert (eq (world-graph-edge-between graph :zone-c :zone-w) :west) ()
+            "edge-between: C->W should be :west")
+    (assert (eq (world-graph-edge-between graph :zone-c :zone-n) :north) ()
+            "edge-between: C->N should be :north")
+    (assert (eq (world-graph-edge-between graph :zone-c :zone-s) :south) ()
+            "edge-between: C->S should be :south")
+    ;; Non-adjacent zones return NIL
+    (assert (null (world-graph-edge-between graph :zone-c :zone-ne)) ()
+            "edge-between: C->NE should be NIL (not direct)")
+    ;; Nil graph returns NIL
+    (assert (null (world-graph-edge-between nil :zone-c :zone-e)) ()
+            "edge-between: nil graph should return NIL")))
+
+;;; ============================================================
+
 
 (defvar *tests-world-graph*
   '(test-world-graph-data-plist
@@ -122,5 +229,12 @@
     test-world-graph-zone-path
     test-collect-zone-files
     test-zone-id-from-file
-    test-build-zone-paths)
+    test-build-zone-paths
+    ;; BFS pathfinding tests (Bug 4 Part 3)
+    test-world-graph-find-path-adjacent
+    test-world-graph-find-path-diagonal
+    test-world-graph-find-path-same-zone
+    test-world-graph-find-path-unreachable
+    test-world-graph-find-path-multi-hop
+    test-world-graph-edge-between)
   "World-graph domain test functions.")

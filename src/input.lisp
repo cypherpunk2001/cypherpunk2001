@@ -368,20 +368,29 @@
 
 (defun minimap-screen-to-world (ui world player screen-x screen-y)
   ;; Convert minimap screen coordinates into world space.
+  ;; Uses extended view bounds (with margin) so clicks near minimap edges
+  ;; produce raw targets past zone collision bounds, enabling diagonal zone
+  ;; pathing. set-player-walk-target handles clamping to zone collision bounds.
   (multiple-value-bind (view-min-x view-min-y span-x span-y)
       (minimap-view-bounds world player)
-    (let* ((rx (if (> (ui-minimap-width ui) 0)
+    ;; Extend the view by 1 tile in each direction so edge/corner clicks
+    ;; produce coordinates past zone bounds, triggering zone transitions.
+    (let* ((tile-size (world-tile-dest-size world))
+           (margin (if (and tile-size (> tile-size 0.0)) tile-size 64.0))
+           (ext-min-x (- view-min-x margin))
+           (ext-min-y (- view-min-y margin))
+           (ext-span-x (+ span-x (* 2.0 margin)))
+           (ext-span-y (+ span-y (* 2.0 margin)))
+           (rx (if (> (ui-minimap-width ui) 0)
                    (/ (- screen-x (ui-minimap-x ui))
                       (ui-minimap-width ui))
                    0.0))
            (ry (if (> (ui-minimap-height ui) 0)
                    (/ (- screen-y (ui-minimap-y ui))
                       (ui-minimap-height ui))
-                   0.0))
-           (clamped-x (clamp rx 0.0 1.0))
-           (clamped-y (clamp ry 0.0 1.0)))
-      (values (+ view-min-x (* clamped-x span-x))
-              (+ view-min-y (* clamped-y span-y))))))
+                   0.0)))
+      (values (+ ext-min-x (* rx ext-span-x))
+              (+ ext-min-y (* ry ext-span-y))))))
 
 (defun update-target-from-minimap (player intent ui world dt mouse-clicked mouse-down)
   ;; Handle minimap click/hold to update the player target position.

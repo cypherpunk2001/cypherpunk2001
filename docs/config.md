@@ -73,6 +73,12 @@ How it connects
 | `*verbose-coordinates*` | `nil` | Logs entity positions and collider info per frame (very noisy) |
 | `*verbose-logs*` | `nil` | DEPRECATED: Use `*verbose-coordinates*` instead |
 
+### Minimap Multi-Hop Pathing
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*minimap-resolve-max-hops*` | `8` | Maximum zone hops when walking click coordinates through zone boundaries. Should be >= world diameter for full minimap coverage. |
+| `*bfs-max-hops*` | `32` | Maximum BFS depth when searching for shortest path between zones. Safety bound; should be >= number of zones in world graph. |
+
 ### Player Movement
 | Parameter | Default | Description |
 |-----------|---------|-------------|

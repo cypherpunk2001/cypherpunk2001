@@ -1675,6 +1675,711 @@
     (assert (eq (world-graph-zone-paths graph) original-paths) ()
             "zone-paths should not be rebuilt by apply-zone-to-world")))
 
+;;; ============================================================
+;;; Bug 4: Diagonal zone click pathing
+;;; ============================================================
+
+(defun make-diagonal-test-world ()
+  "Create a 4-zone 2x2 grid world for diagonal click-path testing.
+   Layout:
+     zone-1 (NW) | zone-2 (NE)
+     zone-3 (SW) | zone-4 (SE)
+   Each zone is 10x10 tiles, tile-size=64, collision-half=16.
+   Collision bounds per zone: min=16, max=624.
+   Only the current zone (:dz-1) goes into *zone-states* (as on the real client).
+   Adjacent zones are placed in the preview cache to exercise the fallback path
+   in get-zone-bounds-from-any-cache."
+  (let* ((tile-size 64.0)
+         (half 16.0)
+         (preview-cache (make-hash-table :test 'eq :size 8))
+         (world (%make-world :tile-dest-size tile-size
+                              :collision-half-width half
+                              :collision-half-height half
+                              :wall-min-x 16.0 :wall-max-x 624.0
+                              :wall-min-y 16.0 :wall-max-y 624.0
+                              :zone-preview-cache preview-cache))
+         (zone-1 (%make-zone :id :dz-1 :width 10 :height 10
+                              :collision-tiles nil :objects nil))
+         (edges (make-hash-table :test 'eq))
+         (paths (make-hash-table :test 'eq))
+         (graph (%make-world-graph :edges-by-zone edges :zone-paths paths)))
+    ;; Zone 1 (NW): east->2, south->3
+    (setf (gethash :dz-1 edges)
+          (list (list :edge :east :to :dz-2 :offset :preserve-y)
+                (list :edge :south :to :dz-3 :offset :preserve-x)))
+    ;; Zone 2 (NE): west->1, south->4
+    (setf (gethash :dz-2 edges)
+          (list (list :edge :west :to :dz-1 :offset :preserve-y)
+                (list :edge :south :to :dz-4 :offset :preserve-x)))
+    ;; Zone 3 (SW): east->4, north->1
+    (setf (gethash :dz-3 edges)
+          (list (list :edge :east :to :dz-4 :offset :preserve-y)
+                (list :edge :north :to :dz-1 :offset :preserve-x)))
+    ;; Zone 4 (SE): west->3, north->2
+    (setf (gethash :dz-4 edges)
+          (list (list :edge :west :to :dz-3 :offset :preserve-y)
+                (list :edge :north :to :dz-2 :offset :preserve-x)))
+    ;; Current zone in *zone-states* (client always has current zone)
+    (setf (gethash :dz-1 *zone-states*)
+          (make-zone-state :zone-id :dz-1
+                           :wall-map (make-array '(10 10) :initial-element 0)
+                           :zone zone-1))
+    ;; Adjacent zones in preview cache only (mimics real client behavior)
+    (dolist (zid '(:dz-2 :dz-3 :dz-4))
+      (setf (gethash zid preview-cache)
+            (%make-zone :id zid :width 10 :height 10
+                        :collision-tiles nil :objects nil)))
+    (setf (world-zone world) zone-1
+          (world-world-graph world) graph)
+    world))
+
+(defmacro with-diagonal-test-zone-states (&body body)
+  "Save/restore *zone-states* around diagonal path tests to prevent leakage."
+  (let ((saved (gensym "SAVED-")))
+    `(let ((,saved (make-hash-table :test 'eq)))
+       (maphash (lambda (k v) (setf (gethash k ,saved) v)) *zone-states*)
+       (unwind-protect (progn ,@body)
+         (clrhash *zone-states*)
+         (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) ,saved)))))
+
+(defun test-compute-diagonal-click-path-diagonal ()
+  "Diagonal click (past both east and south bounds) returns a 2-hop route."
+  (with-diagonal-test-zone-states
+    (let* ((world (make-diagonal-test-world))
+           (player (%make-player)))
+      (setf (player-zone-id player) :dz-1)
+      ;; Click past east (>624) and south (>624) → diagonal to zone-4
+      (multiple-value-bind (e1 e2 inter final)
+          (compute-diagonal-click-path world player 700.0 700.0)
+        (assert e1 () "diagonal click should return edge-1, got nil")
+        (assert e2 () "diagonal click should return edge-2, got nil")
+        (assert inter () "diagonal click should return intermediate zone")
+        (assert final () "diagonal click should return final zone")
+        ;; Route should reach zone-4 via either zone-2 or zone-3
+        (assert (eq final :dz-4) ()
+                "final zone should be :dz-4, got ~a" final)
+        (assert (or (eq inter :dz-2) (eq inter :dz-3)) ()
+                "intermediate should be :dz-2 or :dz-3, got ~a" inter)))))
+
+(defun test-compute-diagonal-click-path-orthogonal ()
+  "Orthogonal click (past only one axis) returns NIL — not a diagonal path."
+  (with-diagonal-test-zone-states
+    (let* ((world (make-diagonal-test-world))
+           (player (%make-player)))
+      (setf (player-zone-id player) :dz-1)
+      ;; Click past east only (y=300 is within bounds)
+      (multiple-value-bind (e1 e2 inter final)
+          (compute-diagonal-click-path world player 700.0 300.0)
+        (declare (ignore e2 inter final))
+        (assert (null e1) ()
+                "orthogonal click should return nil, got edge-1=~a" e1)))))
+
+(defun test-compute-diagonal-click-path-inside ()
+  "Click inside zone bounds returns NIL."
+  (with-diagonal-test-zone-states
+    (let* ((world (make-diagonal-test-world))
+           (player (%make-player)))
+      (setf (player-zone-id player) :dz-1)
+      (multiple-value-bind (e1 e2 inter final)
+          (compute-diagonal-click-path world player 300.0 300.0)
+        (declare (ignore e2 inter final))
+        (assert (null e1) ()
+                "click inside bounds should return nil, got edge-1=~a" e1)))))
+
+(defun test-translate-click-to-final-zone ()
+  "Click coordinates translate through 2 seams to land in final zone bounds.
+   Uses preview cache for intermediate/final zones (mimics real client)."
+  (with-diagonal-test-zone-states
+    (let ((world (make-diagonal-test-world)))
+      ;; Click at (700, 700) in zone-1 → east → south path via zone-2
+      ;; Zone bounds: all zones are 10x10 @ tile=64, half=16 → [16..624]
+      ;; East seam: src-max-x=624, dst-min-x=16
+      ;;   mid-x = 16 + (700 - 624) = 92
+      ;;   mid-y = 700 (preserved)
+      ;; South seam: src-max-y=624, dst-min-y=16
+      ;;   final-x = 92 (preserved)
+      ;;   final-y = 16 + (700 - 624) = 92
+      (multiple-value-bind (fx fy)
+          (translate-click-to-final-zone world 700.0 700.0
+                                         :dz-1 :dz-2 :dz-4
+                                         :east :south)
+        (assert fx () "translate should return final-x")
+        (assert fy () "translate should return final-y")
+        (assert (< (abs (- fx 92.0)) 1.0) ()
+                "final-x should be ~92, got ~,2f" fx)
+        (assert (< (abs (- fy 92.0)) 1.0) ()
+                "final-y should be ~92, got ~,2f" fy)
+        ;; Result should be within final zone bounds [16..624]
+        (assert (and (>= fx 16.0) (<= fx 624.0)) ()
+                "final-x should be within bounds [16,624], got ~,2f" fx)
+        (assert (and (>= fy 16.0) (<= fy 624.0)) ()
+                "final-y should be within bounds [16,624], got ~,2f" fy)))))
+
+(defun test-clear-zone-click-path ()
+  "clear-zone-click-path resets all fields."
+  (let ((game (%make-game)))
+    (setf (game-zone-click-path game) '(:zone-2)
+          (game-zone-click-final-x game) 100.0
+          (game-zone-click-final-y game) 200.0)
+    (clear-zone-click-path game)
+    (assert (null (game-zone-click-path game)) ()
+            "zone-click-path should be nil after clear")
+    (assert (= (game-zone-click-final-x game) 0.0) ()
+            "zone-click-final-x should be 0.0 after clear")
+    (assert (= (game-zone-click-final-y game) 0.0) ()
+            "zone-click-final-y should be 0.0 after clear")))
+
+(defun test-compute-diagonal-no-route ()
+  "Diagonal click with missing world-graph edge returns NIL."
+  (with-diagonal-test-zone-states
+    (let* ((tile-size 64.0)
+           (half 16.0)
+           (world (%make-world :tile-dest-size tile-size
+                                :collision-half-width half
+                                :collision-half-height half
+                                :wall-min-x 16.0 :wall-max-x 624.0
+                                :wall-min-y 16.0 :wall-max-y 624.0))
+           (zone (%make-zone :id :iso-1 :width 10 :height 10
+                              :collision-tiles nil :objects nil))
+           (edges (make-hash-table :test 'eq))
+           (graph (%make-world-graph :edges-by-zone edges
+                                      :zone-paths (make-hash-table :test 'eq)))
+           (player (%make-player)))
+      ;; Zone with only east exit, no south exit → no diagonal route
+      (setf (gethash :iso-1 edges)
+            (list (list :edge :east :to :iso-2 :offset :preserve-y)))
+      (setf (gethash :iso-1 *zone-states*)
+            (make-zone-state :zone-id :iso-1
+                             :wall-map (make-array '(10 10) :initial-element 0)
+                             :zone zone))
+      (setf (world-zone world) zone
+            (world-world-graph world) graph
+            (player-zone-id player) :iso-1)
+      (multiple-value-bind (e1 e2 inter final)
+          (compute-diagonal-click-path world player 700.0 700.0)
+        (declare (ignore e2 inter final))
+        (assert (null e1) ()
+                "no route should return nil, got edge-1=~a" e1)))))
+
+;;; ============================================================
+;;; Bug 4 Part 2: Zone-bounds index and minimap parity
+;;; ============================================================
+
+(defun test-build-zone-bounds-index ()
+  "build-zone-bounds-index reads zone files and computes collision bounds."
+  (let* ((tmp-dir (format nil "/tmp/test-zbi-~a/" (get-universal-time)))
+         (path-a (format nil "~azone-a.lisp" tmp-dir))
+         (path-b (format nil "~azone-b.lisp" tmp-dir)))
+    (ensure-directories-exist path-a)
+    (unwind-protect
+         (progn
+           ;; Write two zone files with different dimensions
+           (with-open-file (out path-a :direction :output :if-exists :supersede)
+             (write '(:id :zbi-a :width 10 :height 10 :layers nil :objects nil) :stream out))
+           (with-open-file (out path-b :direction :output :if-exists :supersede)
+             (write '(:id :zbi-b :width 20 :height 15 :layers nil :objects nil) :stream out))
+           (let* ((zone-paths (make-hash-table :test 'eq))
+                  ;; tile-dest-size=64, collision-half=16
+                  (index (progn
+                           (setf (gethash :zbi-a zone-paths) path-a
+                                 (gethash :zbi-b zone-paths) path-b)
+                           (build-zone-bounds-index zone-paths 64.0 16.0 16.0))))
+             (assert (= (hash-table-count index) 2) ()
+                     "index should have 2 entries, got ~d" (hash-table-count index))
+             ;; Zone A: 10x10 @ tile=64, half=16 → [16..624]
+             (let ((bounds-a (gethash :zbi-a index)))
+               (assert bounds-a () "zone A should be indexed")
+               (assert (< (abs (- (aref bounds-a 0) 16.0)) 0.1) ()
+                       "zone A min-x should be ~16, got ~f" (aref bounds-a 0))
+               (assert (< (abs (- (aref bounds-a 1) 624.0)) 0.1) ()
+                       "zone A max-x should be ~624, got ~f" (aref bounds-a 1)))
+             ;; Zone B: 20x15 @ tile=64, half=16 → x:[16..1264], y:[16..944]
+             (let ((bounds-b (gethash :zbi-b index)))
+               (assert bounds-b () "zone B should be indexed")
+               (assert (< (abs (- (aref bounds-b 1) 1264.0)) 0.1) ()
+                       "zone B max-x should be ~1264, got ~f" (aref bounds-b 1))
+               (assert (< (abs (- (aref bounds-b 3) 944.0)) 0.1) ()
+                       "zone B max-y should be ~944, got ~f" (aref bounds-b 3)))))
+      ;; Cleanup
+      (when (probe-file path-a) (delete-file path-a))
+      (when (probe-file path-b) (delete-file path-b))
+      (ignore-errors (uiop:delete-empty-directory tmp-dir)))))
+
+(defun test-world-graph-zone-bounds-lookup ()
+  "world-graph-zone-bounds returns pre-computed bounds or NIL."
+  (let* ((index (make-hash-table :test 'eq))
+         (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                    :zone-paths (make-hash-table :test 'eq)
+                                    :zone-bounds-index index)))
+    (setf (gethash :test-z index)
+          (make-array 4 :element-type 'single-float
+                        :initial-contents '(16.0 624.0 16.0 624.0)))
+    ;; Existing zone
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (world-graph-zone-bounds graph :test-z)
+      (assert (and min-x max-x min-y max-y) ()
+              "lookup should return bounds for indexed zone")
+      (assert (< (abs (- min-x 16.0)) 0.1) ()
+              "min-x should be 16, got ~f" min-x)
+      (assert (< (abs (- max-x 624.0)) 0.1) ()
+              "max-x should be 624, got ~f" max-x))
+    ;; Missing zone
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (world-graph-zone-bounds graph :nonexistent)
+      (declare (ignore max-x min-y max-y))
+      (assert (null min-x) ()
+              "lookup should return nil for missing zone"))))
+
+(defun test-get-zone-bounds-uses-index-fallback ()
+  "get-zone-bounds-from-any-cache uses the zone-bounds index when zone-state
+   and preview/LRU caches are empty."
+  (with-diagonal-test-zone-states
+    (let* ((index (make-hash-table :test 'eq))
+           (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                      :zone-paths (make-hash-table :test 'eq)
+                                      :zone-bounds-index index))
+           (world (%make-world :tile-dest-size 64.0
+                                :collision-half-width 16.0
+                                :collision-half-height 16.0
+                                :world-graph graph)))
+      ;; Zone not in *zone-states*, not in preview cache, not in LRU
+      ;; but IS in the bounds index
+      (setf (gethash :idx-only index)
+            (make-array 4 :element-type 'single-float
+                          :initial-contents '(16.0 624.0 16.0 624.0)))
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (get-zone-bounds-from-any-cache :idx-only world 64.0 16.0 16.0)
+        (assert (and min-x max-x min-y max-y) ()
+                "should return bounds from index fallback")
+        (assert (< (abs (- min-x 16.0)) 0.1) ()
+                "min-x from index should be ~16, got ~f" min-x)))))
+
+(defun test-translate-click-no-preview-uses-index ()
+  "translate-click-to-final-zone works with only the bounds index (no preview/LRU)."
+  (with-diagonal-test-zone-states
+    (let* ((index (make-hash-table :test 'eq))
+           (graph (%make-world-graph :edges-by-zone (make-hash-table :test 'eq)
+                                      :zone-paths (make-hash-table :test 'eq)
+                                      :zone-bounds-index index))
+           (world (%make-world :tile-dest-size 64.0
+                                :collision-half-width 16.0
+                                :collision-half-height 16.0
+                                :world-graph graph)))
+      ;; All three zones only in bounds index (no zone-states, no preview cache)
+      (dolist (zid '(:idx-src :idx-int :idx-fin))
+        (setf (gethash zid index)
+              (make-array 4 :element-type 'single-float
+                            :initial-contents '(16.0 624.0 16.0 624.0))))
+      ;; East then south: same math as test-translate-click-to-final-zone
+      (multiple-value-bind (fx fy)
+          (translate-click-to-final-zone world 700.0 700.0
+                                         :idx-src :idx-int :idx-fin
+                                         :east :south)
+        (assert fx () "translate should return final-x from index")
+        (assert fy () "translate should return final-y from index")
+        (assert (< (abs (- fx 92.0)) 1.0) ()
+                "final-x should be ~92 via index, got ~,2f" fx)
+        (assert (< (abs (- fy 92.0)) 1.0) ()
+                "final-y should be ~92 via index, got ~,2f" fy)))))
+
+(defun test-minimap-screen-to-world-extends-past-bounds ()
+  "Minimap click at edge produces world coordinates past zone collision bounds."
+  (let* ((world (%make-world :tile-dest-size 64.0
+                              :collision-half-width 16.0
+                              :collision-half-height 16.0
+                              :wall-min-x 16.0 :wall-max-x 624.0
+                              :wall-min-y 16.0 :wall-max-y 624.0))
+         (player (%make-player))
+         (ui (%make-ui)))
+    ;; Center player in zone
+    (setf (player-x player) 320.0
+          (player-y player) 320.0)
+    ;; Set minimap rect
+    (setf (ui-minimap-x ui) 0
+          (ui-minimap-y ui) 0
+          (ui-minimap-width ui) 200
+          (ui-minimap-height ui) 200)
+    ;; Click at bottom-right corner of minimap (x=199, y=199 ≈ ratio ~1.0)
+    (multiple-value-bind (wx wy)
+        (minimap-screen-to-world ui world player 199 199)
+      ;; With margin extension, the right/bottom edge should be past wall-max
+      (assert (> wx (world-wall-max-x world)) ()
+              "minimap corner click x should exceed wall-max-x=~f, got ~f"
+              (world-wall-max-x world) wx)
+      (assert (> wy (world-wall-max-y world)) ()
+              "minimap corner click y should exceed wall-max-y=~f, got ~f"
+              (world-wall-max-y world) wy))
+    ;; Click at center of minimap should be near player position
+    (multiple-value-bind (wx wy)
+        (minimap-screen-to-world ui world player 100 100)
+      (assert (< (abs (- wx (player-x player))) 5.0) ()
+              "minimap center click x should be near player, got ~f vs ~f"
+              wx (player-x player))
+      (assert (< (abs (- wy (player-y player))) 5.0) ()
+              "minimap center click y should be near player, got ~f vs ~f"
+              wy (player-y player)))))
+
+;;; ============================================================
+;;; Bug 4 Part 3: Multi-hop minimap pathing tests
+;;; ============================================================
+
+(defun make-zone-bounds-index-for-test (zone-ids tile-size half-w half-h width height)
+  "Create a zone-bounds index for testing with all zones having same dimensions."
+  (let ((index (make-hash-table :test 'eq :size (length zone-ids))))
+    (dolist (zid zone-ids)
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (zone-bounds-zero-origin tile-size width height half-w half-h)
+        (setf (gethash zid index)
+              (make-array 4 :element-type 'single-float
+                            :initial-contents (list min-x max-x min-y max-y)))))
+    index))
+
+(defun make-3x3-test-world-for-minimap ()
+  "Create a 3x3 grid world with zone-bounds index for minimap path testing.
+   All zones are 10x10 tiles, 64px tile size, 16px collision half.
+   Layout:  NW  N  NE
+            W   C  E
+            SW  S  SE"
+  (let* ((tile-size 64.0)
+         (half-w 16.0)
+         (half-h 16.0)
+         (zone-ids '(:zone-nw :zone-n :zone-ne
+                     :zone-w :zone-c :zone-e
+                     :zone-sw :zone-s :zone-se))
+         (edges (list
+                 ;; Center row
+                 '(:from :zone-c :to :zone-e :edge :east :offset :preserve-y)
+                 '(:from :zone-e :to :zone-c :edge :west :offset :preserve-y)
+                 '(:from :zone-c :to :zone-w :edge :west :offset :preserve-y)
+                 '(:from :zone-w :to :zone-c :edge :east :offset :preserve-y)
+                 ;; Center column
+                 '(:from :zone-c :to :zone-n :edge :north :offset :preserve-x)
+                 '(:from :zone-n :to :zone-c :edge :south :offset :preserve-x)
+                 '(:from :zone-c :to :zone-s :edge :south :offset :preserve-x)
+                 '(:from :zone-s :to :zone-c :edge :north :offset :preserve-x)
+                 ;; North row
+                 '(:from :zone-n :to :zone-ne :edge :east :offset :preserve-y)
+                 '(:from :zone-ne :to :zone-n :edge :west :offset :preserve-y)
+                 '(:from :zone-n :to :zone-nw :edge :west :offset :preserve-y)
+                 '(:from :zone-nw :to :zone-n :edge :east :offset :preserve-y)
+                 ;; South row
+                 '(:from :zone-s :to :zone-se :edge :east :offset :preserve-y)
+                 '(:from :zone-se :to :zone-s :edge :west :offset :preserve-y)
+                 '(:from :zone-s :to :zone-sw :edge :west :offset :preserve-y)
+                 '(:from :zone-sw :to :zone-s :edge :east :offset :preserve-y)
+                 ;; West column
+                 '(:from :zone-w :to :zone-nw :edge :north :offset :preserve-x)
+                 '(:from :zone-nw :to :zone-w :edge :south :offset :preserve-x)
+                 '(:from :zone-w :to :zone-sw :edge :south :offset :preserve-x)
+                 '(:from :zone-sw :to :zone-w :edge :north :offset :preserve-x)
+                 ;; East column
+                 '(:from :zone-e :to :zone-ne :edge :north :offset :preserve-x)
+                 '(:from :zone-ne :to :zone-e :edge :south :offset :preserve-x)
+                 '(:from :zone-e :to :zone-se :edge :south :offset :preserve-x)
+                 '(:from :zone-se :to :zone-e :edge :north :offset :preserve-x)))
+         (bounds-index (make-zone-bounds-index-for-test zone-ids tile-size half-w half-h 10 10))
+         (graph (%make-world-graph
+                 :edges-by-zone (normalize-world-graph-edges edges)
+                 :zone-paths (make-hash-table :test 'eq)
+                 :zone-bounds-index bounds-index))
+         (zone (%make-zone :id :zone-c :width 10 :height 10
+                           :collision-tiles nil :objects nil)))
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (zone-bounds-zero-origin tile-size 10 10 half-w half-h)
+      (%make-world :tile-dest-size tile-size
+                   :collision-half-width half-w
+                   :collision-half-height half-h
+                   :wall-min-x min-x :wall-max-x max-x
+                   :wall-min-y min-y :wall-max-y max-y
+                   :zone zone
+                   :world-graph graph))))
+
+(defun test-resolve-click-destination-zone ()
+  "resolve-click-destination-zone walks through zones to find where click lands."
+  (let ((world (make-3x3-test-world-for-minimap)))
+    ;; Click inside current zone — destination is current zone
+    (multiple-value-bind (dest-id walked-zones walked-edges)
+        (resolve-click-destination-zone world 320.0 320.0)
+      (assert (eq dest-id :zone-c) ()
+              "resolve inside: should be :zone-c, got ~a" dest-id)
+      (assert (null walked-zones) ()
+              "resolve inside: should have no walked zones"))
+    ;; Click far east — should land in :zone-e
+    (multiple-value-bind (dest-id walked-zones walked-edges)
+        (resolve-click-destination-zone world 700.0 320.0)
+      (declare (ignore walked-edges))
+      (assert (eq dest-id :zone-e) ()
+              "resolve east: should be :zone-e, got ~a" dest-id)
+      (assert (= (length walked-zones) 1) ()
+              "resolve east: should walk through 1 zone, got ~d" (length walked-zones)))))
+
+(defun test-translate-click-along-path-multihop ()
+  "translate-click-along-path chains seam translations and returns hop targets."
+  (let ((world (make-3x3-test-world-for-minimap)))
+    ;; Translate from center through east (1-hop)
+    (multiple-value-bind (fx fy hop-targets)
+        (translate-click-along-path world 700.0 320.0 :zone-c '(:zone-e))
+      (assert fx () "1-hop translate should return fx")
+      (assert fy () "1-hop translate should return fy")
+      ;; x should be translated into east zone's coordinate space
+      (assert (> fx 0.0) () "1-hop fx should be positive, got ~,2f" fx)
+      ;; Should have 1 hop target
+      (assert (= (length hop-targets) 1) ()
+              "1-hop should have 1 hop-target, got ~d" (length hop-targets))
+      ;; The hop target is in source (zone-c) coords — should be the raw click x=700
+      (let ((ht (first hop-targets)))
+        (assert (< (abs (- (car ht) 700.0)) 0.01) ()
+                "1-hop target x should be ~700, got ~,2f" (car ht))))
+    ;; Translate from center through east then NE (2-hop)
+    (multiple-value-bind (fx fy hop-targets)
+        (translate-click-along-path world 700.0 -100.0 :zone-c '(:zone-e :zone-ne))
+      (assert fx () "2-hop translate should return fx")
+      (assert fy () "2-hop translate should return fy")
+      (assert (= (length hop-targets) 2) ()
+              "2-hop should have 2 hop-targets, got ~d" (length hop-targets)))))
+
+(defun test-compute-minimap-click-path-inside ()
+  "Minimap click inside current zone returns NIL (no path needed)."
+  (let* ((world (make-3x3-test-world-for-minimap))
+         (player (%make-player)))
+    (setf (player-x player) 320.0 (player-y player) 320.0
+          (player-zone-id player) :zone-c)
+    (multiple-value-bind (path edge-list hop-targets fx fy)
+        (compute-minimap-click-path world player 320.0 320.0)
+      (assert (null path) ()
+              "minimap inside: path should be NIL, got ~a" path)
+      (assert (null edge-list) ()
+              "minimap inside: edge-list should be NIL, got ~a" edge-list)
+      (assert (null hop-targets) ()
+              "minimap inside: hop-targets should be NIL, got ~a" hop-targets))))
+
+(defun test-compute-minimap-click-path-adjacent ()
+  "Minimap click in adjacent zone produces 1-hop path."
+  (let* ((world (make-3x3-test-world-for-minimap))
+         (player (%make-player)))
+    (setf (player-x player) 320.0 (player-y player) 320.0
+          (player-zone-id player) :zone-c)
+    ;; Click far east (past zone bounds)
+    (multiple-value-bind (path edge-list hop-targets fx fy)
+        (compute-minimap-click-path world player 700.0 320.0)
+      (assert path () "minimap east: should have a path")
+      (assert (= (length path) 1) ()
+              "minimap east: path should be 1 hop, got ~d: ~a" (length path) path)
+      (assert (eq (first path) :zone-e) ()
+              "minimap east: should go to :zone-e, got ~a" (first path))
+      (assert edge-list () "minimap east: should have edge-list")
+      (assert (= (length edge-list) 1) ()
+              "minimap east: edge-list should be 1 hop, got ~d" (length edge-list))
+      (assert (eq (first edge-list) :east) ()
+              "minimap east: edge should be :east, got ~a" (first edge-list))
+      (assert hop-targets () "minimap east: should have hop-targets")
+      (assert (= (length hop-targets) 1) ()
+              "minimap east: hop-targets should be 1, got ~d" (length hop-targets))
+      (assert fx () "minimap east: should have final-x")
+      (assert fy () "minimap east: should have final-y"))))
+
+(defun test-compute-minimap-click-path-diagonal ()
+  "Minimap click at diagonal zone produces 2-hop path."
+  (let* ((world (make-3x3-test-world-for-minimap))
+         (player (%make-player)))
+    (setf (player-x player) 320.0 (player-y player) 320.0
+          (player-zone-id player) :zone-c)
+    ;; Click far east AND far south (diagonal) — should resolve to :zone-se
+    (multiple-value-bind (path edge-list hop-targets fx fy)
+        (compute-minimap-click-path world player 700.0 700.0)
+      (assert path () "minimap diagonal: should have a path")
+      (assert (= (length path) 2) ()
+              "minimap diagonal: should be 2 hops, got ~d: ~a" (length path) path)
+      (assert (eq (car (last path)) :zone-se) ()
+              "minimap diagonal: should end at :zone-se, got ~a" (car (last path)))
+      (assert edge-list () "minimap diagonal: should have edge-list")
+      (assert (= (length edge-list) 2) ()
+              "minimap diagonal: edge-list should be 2 hops, got ~d" (length edge-list))
+      (assert hop-targets () "minimap diagonal: should have hop-targets")
+      (assert (= (length hop-targets) 2) ()
+              "minimap diagonal: hop-targets should be 2, got ~d" (length hop-targets))
+      (assert fx () "minimap diagonal: should have final-x")
+      (assert fy () "minimap diagonal: should have final-y"))))
+
+(defun test-continuation-pops-multihop-path ()
+  "handle-zone-transition continuation advances through multi-zone path."
+  ;; Simulate the continuation logic directly (no full game needed)
+  (let* ((game (%make-game :world (make-3x3-test-world-for-minimap)
+                           :player (%make-player)
+                           :players (vector (%make-player))
+                           :npcs (vector)
+                           :entities (vector)
+                           :net-role :local
+                           :client-intent (make-intent))))
+    (setf (player-x (game-player game)) 320.0
+          (player-y (game-player game)) 320.0
+          (player-zone-id (game-player game)) :zone-c
+          (player-intent (game-player game)) (make-intent))
+    ;; Set a 2-hop path: C -> E -> SE with parallel hop-targets
+    (setf (game-zone-click-path game) (list :zone-e :zone-se)
+          (game-zone-click-edges game) (list :east :south)
+          (game-zone-click-hop-targets game) (list (cons 700.0 320.0)
+                                                   (cons 320.0 700.0))
+          (game-zone-click-final-x game) 320.0
+          (game-zone-click-final-y game) 320.0)
+    ;; Simulate arriving at :zone-e — pop all three parallel lists
+    (let ((remaining (game-zone-click-path game))
+          (remaining-edges (game-zone-click-edges game))
+          (remaining-targets (game-zone-click-hop-targets game)))
+      (let ((pos (position :zone-e remaining)))
+        (assert (= pos 0) () "continuation: :zone-e should be at position 0")
+        (setf (game-zone-click-path game) (nthcdr (1+ pos) remaining))
+        (setf (game-zone-click-edges game) (nthcdr (1+ pos) remaining-edges))
+        (setf (game-zone-click-hop-targets game) (nthcdr (1+ pos) remaining-targets))))
+    (assert (equal (game-zone-click-path game) '(:zone-se)) ()
+            "continuation: after popping :zone-e, should have (:zone-se), got ~a"
+            (game-zone-click-path game))
+    (assert (equal (game-zone-click-edges game) '(:south)) ()
+            "continuation: edges should be (:south), got ~a"
+            (game-zone-click-edges game))
+    (let ((ht (first (game-zone-click-hop-targets game))))
+      (assert (< (abs (- (car ht) 320.0)) 0.01) ()
+              "continuation: remaining hop-target x should be ~320, got ~,2f" (car ht)))
+    ;; Simulate arriving at :zone-se — pop, path empty = final
+    (let ((remaining (game-zone-click-path game))
+          (remaining-edges (game-zone-click-edges game))
+          (remaining-targets (game-zone-click-hop-targets game)))
+      (let ((pos (position :zone-se remaining)))
+        (assert (= pos 0) () "continuation: :zone-se should be at position 0")
+        (setf (game-zone-click-path game) (nthcdr (1+ pos) remaining))
+        (setf (game-zone-click-edges game) (nthcdr (1+ pos) remaining-edges))
+        (setf (game-zone-click-hop-targets game) (nthcdr (1+ pos) remaining-targets))))
+    (assert (null (game-zone-click-path game)) ()
+            "continuation: path should be empty after reaching final zone")
+    (assert (null (game-zone-click-hop-targets game)) ()
+            "continuation: hop-targets should be empty after reaching final zone")))
+
+(defun test-zone-path-edge-list ()
+  "zone-path-edge-list computes per-hop edge directions for a zone path."
+  (let ((graph (make-test-graph-3x3)))
+    ;; 1-hop: C -> E
+    (let ((edges (zone-path-edge-list graph :zone-c '(:zone-e))))
+      (assert (equal edges '(:east)) ()
+              "edge-list 1-hop: C->E should be (:east), got ~a" edges))
+    ;; 2-hop: C -> E -> SE
+    (let ((edges (zone-path-edge-list graph :zone-c '(:zone-e :zone-se))))
+      (assert (equal edges '(:east :south)) ()
+              "edge-list 2-hop: C->E->SE should be (:east :south), got ~a" edges))
+    ;; 3-hop: C -> N -> NE -> E
+    (let ((edges (zone-path-edge-list graph :zone-c '(:zone-n :zone-ne :zone-e))))
+      (assert (equal edges '(:north :east :south)) ()
+              "edge-list 3-hop: should be (:north :east :south), got ~a" edges))
+    ;; Disconnected path returns NIL
+    (let ((edges (zone-path-edge-list graph :zone-c '(:zone-ne))))
+      (assert (null edges) ()
+              "edge-list disconnected: C->NE (no direct edge) should be NIL, got ~a" edges))
+    ;; Empty path
+    (assert (null (zone-path-edge-list graph :zone-c nil)) ()
+            "edge-list empty: nil path should be NIL")))
+
+(defun test-continuation-pops-edges-parallel ()
+  "Continuation logic pops edges and hop-targets in parallel with zone-click-path."
+  (let* ((game (%make-game :world (make-3x3-test-world-for-minimap)
+                           :player (%make-player)
+                           :players (vector (%make-player))
+                           :npcs (vector)
+                           :entities (vector)
+                           :net-role :local
+                           :client-intent (make-intent))))
+    (setf (player-x (game-player game)) 320.0
+          (player-y (game-player game)) 320.0
+          (player-zone-id (game-player game)) :zone-c
+          (player-intent (game-player game)) (make-intent))
+    ;; Set a 2-hop path: C -> E -> SE with edges and hop-targets
+    (setf (game-zone-click-path game) (list :zone-e :zone-se)
+          (game-zone-click-edges game) (list :east :south)
+          (game-zone-click-hop-targets game) (list (cons 700.0 320.0)
+                                                   (cons 320.0 700.0))
+          (game-zone-click-final-x game) 320.0
+          (game-zone-click-final-y game) 320.0)
+    ;; Pop first hop (arriving at :zone-e)
+    (let ((pos (position :zone-e (game-zone-click-path game))))
+      (setf (game-zone-click-path game) (nthcdr (1+ pos) (game-zone-click-path game)))
+      (setf (game-zone-click-edges game) (nthcdr (1+ pos) (game-zone-click-edges game)))
+      (setf (game-zone-click-hop-targets game)
+            (nthcdr (1+ pos) (game-zone-click-hop-targets game))))
+    ;; After pop: path=(:zone-se), edges=(:south), hop-targets has 1 entry
+    (assert (equal (game-zone-click-path game) '(:zone-se)) ()
+            "edges-parallel: path should be (:zone-se), got ~a"
+            (game-zone-click-path game))
+    (assert (equal (game-zone-click-edges game) '(:south)) ()
+            "edges-parallel: edges should be (:south), got ~a"
+            (game-zone-click-edges game))
+    (assert (= (length (game-zone-click-hop-targets game)) 1) ()
+            "edges-parallel: hop-targets should have 1 entry, got ~d"
+            (length (game-zone-click-hop-targets game)))
+    ;; Pop second hop (arriving at :zone-se)
+    (let ((pos (position :zone-se (game-zone-click-path game))))
+      (setf (game-zone-click-path game) (nthcdr (1+ pos) (game-zone-click-path game)))
+      (setf (game-zone-click-edges game) (nthcdr (1+ pos) (game-zone-click-edges game)))
+      (setf (game-zone-click-hop-targets game)
+            (nthcdr (1+ pos) (game-zone-click-hop-targets game))))
+    ;; All three should be empty
+    (assert (null (game-zone-click-path game)) ()
+            "edges-parallel: path should be nil after final pop")
+    (assert (null (game-zone-click-edges game)) ()
+            "edges-parallel: edges should be nil after final pop")
+    (assert (null (game-zone-click-hop-targets game)) ()
+            "edges-parallel: hop-targets should be nil after final pop")))
+
+(defun test-continuation-seam-rebase ()
+  "Continuation uses precomputed hop targets from translate-click-along-path."
+  ;; Verify that hop targets produced by translate-click-along-path are in
+  ;; source-zone coordinate space (the raw click translated to each hop),
+  ;; NOT derived from the player's runtime position.
+  (let* ((world (make-3x3-test-world-for-minimap)))
+    ;; 1-hop east: raw click at x=700 (past zone-c's max-x=624)
+    ;; The hop target for the first hop should be x=700 (the raw click coords
+    ;; in zone-c space, BEFORE seam translation).
+    (multiple-value-bind (fx fy hop-targets)
+        (translate-click-along-path world 700.0 320.0 :zone-c '(:zone-e))
+      (assert hop-targets () "seam-rebase: should have hop-targets")
+      (let ((ht (first hop-targets)))
+        (assert ht () "seam-rebase: first hop-target should exist")
+        ;; Target should be the raw click coords (700, 320) — NOT the player's
+        ;; current position.  This is the key guarantee: the continuation sets
+        ;; this as the walk target, not a seam-translated player position.
+        (assert (< (abs (- (car ht) 700.0)) 0.01) ()
+                "seam-rebase: hop-target x should be ~700 (raw click), got ~,2f" (car ht))
+        (assert (< (abs (- (cdr ht) 320.0)) 0.01) ()
+                "seam-rebase: hop-target y should be ~320 (raw click), got ~,2f" (cdr ht)))
+      ;; Final coords should be in destination zone's space (different from raw)
+      (assert fx () "seam-rebase: should have final-x")
+      (assert fy () "seam-rebase: should have final-y"))))
+
+(defun test-zone-bounds-with-origin ()
+  "zone-bounds-with-origin incorporates tile origin offsets into bounds."
+  ;; Zero origin: same as zone-bounds-zero-origin
+  (multiple-value-bind (min-x max-x min-y max-y)
+      (zone-bounds-with-origin 64.0 10 10 0 0 16.0 16.0)
+    ;; min = 0*64 + 16 = 16, max = 10*64 - 16 = 624
+    (assert (< (abs (- min-x 16.0)) 0.01) ()
+            "origin(0,0) min-x should be 16, got ~,2f" min-x)
+    (assert (< (abs (- max-x 624.0)) 0.01) ()
+            "origin(0,0) max-x should be 624, got ~,2f" max-x)
+    (assert (< (abs (- min-y 16.0)) 0.01) ()
+            "origin(0,0) min-y should be 16, got ~,2f" min-y)
+    (assert (< (abs (- max-y 624.0)) 0.01) ()
+            "origin(0,0) max-y should be 624, got ~,2f" max-y))
+  ;; Non-zero origin: offsets shift the bounds
+  (multiple-value-bind (min-x max-x min-y max-y)
+      (zone-bounds-with-origin 64.0 10 10 5 3 16.0 16.0)
+    ;; min-x = 5*64 + 16 = 336, max-x = (5+10)*64 - 16 = 944
+    ;; min-y = 3*64 + 16 = 208, max-y = (3+10)*64 - 16 = 816
+    (assert (< (abs (- min-x 336.0)) 0.01) ()
+            "origin(5,3) min-x should be 336, got ~,2f" min-x)
+    (assert (< (abs (- max-x 944.0)) 0.01) ()
+            "origin(5,3) max-x should be 944, got ~,2f" max-x)
+    (assert (< (abs (- min-y 208.0)) 0.01) ()
+            "origin(5,3) min-y should be 208, got ~,2f" min-y)
+    (assert (< (abs (- max-y 816.0)) 0.01) ()
+            "origin(5,3) max-y should be 816, got ~,2f" max-y)))
+
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
     'test-compute-transition-overstep-north
@@ -1758,4 +2463,28 @@
     'test-apply-zone-to-world-sets-minimap-dirty
     'test-apply-zone-to-world-no-zone-paths-rebuild
     ;; Spawn position rounding (Bug 3 tile shift fix)
-    'test-spawn-position-rounded-for-camera-snap))
+    'test-spawn-position-rounded-for-camera-snap
+    ;; Bug 4: Diagonal zone click pathing
+    'test-compute-diagonal-click-path-diagonal
+    'test-compute-diagonal-click-path-orthogonal
+    'test-compute-diagonal-click-path-inside
+    'test-translate-click-to-final-zone
+    'test-clear-zone-click-path
+    'test-compute-diagonal-no-route
+    ;; Bug 4 Part 2: Zone-bounds index, unified fallback, minimap parity
+    'test-build-zone-bounds-index
+    'test-world-graph-zone-bounds-lookup
+    'test-get-zone-bounds-uses-index-fallback
+    'test-translate-click-no-preview-uses-index
+    'test-minimap-screen-to-world-extends-past-bounds
+    ;; Bug 4 Part 3: Multi-hop minimap pathing
+    'test-resolve-click-destination-zone
+    'test-translate-click-along-path-multihop
+    'test-compute-minimap-click-path-inside
+    'test-compute-minimap-click-path-adjacent
+    'test-compute-minimap-click-path-diagonal
+    'test-continuation-pops-multihop-path
+    'test-zone-path-edge-list
+    'test-continuation-pops-edges-parallel
+    'test-continuation-seam-rebase
+    'test-zone-bounds-with-origin))

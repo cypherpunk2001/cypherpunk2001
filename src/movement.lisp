@@ -61,6 +61,15 @@
                    wall-map-height
                    tile-size-f
                    tile-dest-size)
+      ;; Phase 4 (Bug 4): Build zone-bounds index for diagonal click pathing.
+      ;; Pre-computes collision bounds for all zones from file headers so
+      ;; multi-hop translation works without preview/LRU caches.
+      (when (and graph (world-graph-zone-paths graph))
+        (setf (world-graph-zone-bounds-index graph)
+              (build-zone-bounds-index (world-graph-zone-paths graph)
+                                       tile-dest-size
+                                       collision-half-width
+                                       collision-half-height)))
       (setf (world-minimap-spawns world)
             (build-adjacent-minimap-spawns world))
       (setf (world-minimap-collisions world)

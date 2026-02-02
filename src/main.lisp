@@ -207,7 +207,8 @@
                      (set-player-walk-target player client-intent
                                              context-x
                                              context-y
-                                             t world))
+                                             t world)
+                     (maybe-set-diagonal-path game))
                     ((eq action :attack)
                      (let ((npc (find-npc-by-id npcs context-id)))
                        (when npc
@@ -345,10 +346,11 @@
                                      :target-id (and npc (npc-id npc))
                                      :target-type (if npc :npc :world)))))
           (setf click-consumed t))
-        (unless input-blocked
-          (let ((minimap-handled (and (not click-consumed)
-                                      (update-target-from-minimap player client-intent ui world
-                                                                  dt mouse-clicked mouse-down))))
+        (let ((minimap-handled nil))
+          (unless input-blocked
+            (setf minimap-handled (and (not click-consumed)
+                                       (update-target-from-minimap player client-intent ui world
+                                                                   dt mouse-clicked mouse-down)))
             (unless (or click-consumed minimap-handled)
               (let ((mouse-npc nil)
                     (mouse-object nil))
@@ -378,11 +380,19 @@
                 (when (and mouse-down (not mouse-clicked)
                            (not mouse-npc) (not mouse-object))
                   (update-target-from-mouse player client-intent camera dt
-                                            mouse-clicked mouse-down world)))))))
+                                            mouse-clicked mouse-down world))))))
+        ;; Bug 4: After any click sets a walk target, check for cross-zone path
+        ;; Both floor and minimap clicks use bounds-based destination resolution
+        (when mouse-clicked
+          (maybe-set-diagonal-path game)))
       (unless (or (editor-active editor)
                   (ui-inventory-open ui)
                   (ui-chat-active ui))
-        (update-input-direction player client-intent mouse-clicked))
+        (update-input-direction player client-intent mouse-clicked)
+        ;; Bug 4: Keyboard movement cancels diagonal zone-click path
+        (when (or (not (zerop (intent-move-dx client-intent)))
+                  (not (zerop (intent-move-dy client-intent))))
+          (clear-zone-click-path game)))
       (unless (or (ui-menu-open ui)
                   (editor-active editor)
                   (ui-inventory-open ui)
@@ -658,6 +668,34 @@
    are cached before the player reaches the commit line."
   nil)
 
+(defun maybe-set-diagonal-path (game)
+  "After a click sets a walk target, detect cross-zone clicks and populate zone-click-path.
+   Uses bounds-based destination resolution for all click types (floor and minimap).
+   Floor clicks have camera-limited raw coordinates (typically 1-2 hop), minimap clicks
+   can reach further, but both use the same resolve/translate code path."
+  (let* ((ci (game-client-intent game))
+         (world (game-world game))
+         (player (game-player game)))
+    ;; Always clear old path first — new click overrides any in-progress path
+    (clear-zone-click-path game)
+    (when (and ci world player
+               (intent-target-clamped-p ci)
+               (intent-target-active ci))
+      (let ((raw-x (intent-target-raw-x ci))
+            (raw-y (intent-target-raw-y ci)))
+        (when (and raw-x raw-y)
+          (multiple-value-bind (zone-path edge-list hop-targets final-x final-y)
+              (compute-minimap-click-path world player raw-x raw-y)
+            (when (and zone-path edge-list hop-targets final-x final-y)
+              (setf (game-zone-click-path game) zone-path
+                    (game-zone-click-edges game) edge-list
+                    (game-zone-click-hop-targets game) hop-targets
+                    (game-zone-click-final-x game) final-x
+                    (game-zone-click-final-y game) final-y)
+              (log-verbose "Click path: ~a -> ~{~a~^ -> ~} final=(~,1f,~,1f)"
+                           (player-zone-id player) zone-path
+                           final-x final-y))))))))
+
 (defun handle-zone-transition (game &key (old-x 0.0f0) (old-y 0.0f0) old-zone-id old-world-bounds)
   "Sync client-facing state after a zone change.
    Step 6: No loading overlay for locomotion transitions.
@@ -809,6 +847,70 @@
                         src-min-x src-max-x src-min-y src-max-y
                         dst-min-x dst-max-x dst-min-y dst-max-y
                         rebased))))))))
+    ;; Bug 4: Multi-hop zone-click continuation
+    ;; After a hop completes, if we have a zone-click-path, advance through it.
+    ;; The path, edges, and hop-targets are parallel lists.  When we arrive at
+    ;; a zone in the path, pop everything up to and including it.
+    ;; The continuation uses PRECOMPUTED hop targets (derived from the original
+    ;; raw click) rather than the player's runtime position, so the walk target
+    ;; is always correct regardless of where the player stands in the zone.
+    (when (and (game-zone-click-path game) zone-id)
+      (let ((remaining (game-zone-click-path game))
+            (remaining-edges (game-zone-click-edges game))
+            (remaining-targets (game-zone-click-hop-targets game))
+            (ci (game-client-intent game))
+            (p-intent (and player (player-intent player))))
+        (let ((pos (position zone-id remaining)))
+          (cond
+            (pos
+             ;; Arrived at a zone in our path — advance past it
+             (setf (game-zone-click-path game) (nthcdr (1+ pos) remaining))
+             (setf (game-zone-click-edges game) (nthcdr (1+ pos) remaining-edges))
+             (setf (game-zone-click-hop-targets game) (nthcdr (1+ pos) remaining-targets))
+             (let ((still-remaining (game-zone-click-path game))
+                   (still-targets (game-zone-click-hop-targets game)))
+               (if (null still-remaining)
+                   ;; Final destination reached — set final target, clear path
+                   (let ((fx (game-zone-click-final-x game))
+                         (fy (game-zone-click-final-y game)))
+                     (when ci
+                       (set-intent-target ci fx fy)
+                       (setf (intent-target-raw-x ci) fx
+                             (intent-target-raw-y ci) fy
+                             (intent-target-clamped-p ci) nil))
+                     (when p-intent
+                       (set-intent-target p-intent fx fy)
+                       (setf (intent-target-raw-x p-intent) fx
+                             (intent-target-raw-y p-intent) fy
+                             (intent-target-clamped-p p-intent) nil))
+                     (log-verbose "Multi-hop path: arrived at final zone ~a, target=(~,1f,~,1f)"
+                                  zone-id fx fy)
+                     (clear-zone-click-path game))
+                   ;; More hops remain — use the precomputed walk target for
+                   ;; this hop.  The target was derived from the original raw
+                   ;; click coordinates translated through each seam, so it
+                   ;; points toward the correct edge regardless of where the
+                   ;; player currently stands.
+                   (let ((hop-target (first still-targets)))
+                     (if hop-target
+                         (let ((target-x (car hop-target))
+                               (target-y (cdr hop-target)))
+                           (when (and ci player)
+                             (set-player-walk-target player ci target-x target-y nil world))
+                           (when p-intent
+                             (set-player-walk-target player p-intent target-x target-y nil world))
+                           (log-verbose "Multi-hop path: zone ~a, hop target=(~,1f,~,1f) (~d hops left)"
+                                        zone-id target-x target-y (length still-remaining)))
+                         ;; No target stored — clear path (fallback)
+                         (progn
+                           (log-verbose "Multi-hop path: no hop target from ~a, clearing path"
+                                        zone-id)
+                           (clear-zone-click-path game)))))))
+            (t
+             ;; Landed in unexpected zone — clear path (fallback)
+             (log-verbose "Multi-hop path: unexpected zone ~a (expected one of ~a), clearing"
+                          zone-id remaining)
+             (clear-zone-click-path game))))))
     ;; Clear stale edge-strips from the old zone. Between zone change and
     ;; next snapshot, old edge-strips would render as ghost sprites at wrong
     ;; positions. New edge-strips arrive with the next server snapshot.

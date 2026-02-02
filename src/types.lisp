@@ -435,7 +435,19 @@
   ;; Seamless zone loading state (client-only)
   (zone-cache nil)           ; zone-cache struct (LRU)
   (preload-queue nil)        ; List of (zone-id . path) pairs to preload
-  (edge-strips nil))
+  (edge-strips nil)
+  ;; Multi-hop zone-click path state (client-only, ephemeral)
+  ;; Stores remaining zone-ids to traverse for cross-zone clicks
+  (zone-click-path nil :type list)
+  ;; Per-hop edge directions (parallel to zone-click-path)
+  (zone-click-edges nil :type list)
+  ;; Precomputed per-hop walk targets (parallel to zone-click-path).
+  ;; Each element is (x . y) — the raw target for the player to walk
+  ;; toward on that hop.  Computed once from the original click coords
+  ;; by translating through each seam.
+  (zone-click-hop-targets nil :type list)
+  (zone-click-final-x 0.0 :type single-float)
+  (zone-click-final-y 0.0 :type single-float))
 
 (defun queue-net-request (game request)
   ;; Queue a network request for the client to send.

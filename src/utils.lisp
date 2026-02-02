@@ -501,3 +501,17 @@
   (if *window-resize-enabled*
       (raylib:get-screen-height)
       *window-height*))
+
+(defun zone-bounds-zero-origin (tile-dest-size width height collision-half-w collision-half-h)
+  "Calculate movement bounds for a zone with zero-origin wall-map.
+   Bounds include tile 0 and tile (width-1) so the visible boundary ring is walkable.
+   Unlike zone-bounds-from-dimensions, this ignores *wall-origin-x/y* globals
+   since per-zone wall-maps are always zero-indexed.
+   INVARIANT: All zone files use zero-origin wall-maps (no origin field in
+   zone data format).  build-zone-bounds-index enforces this at startup by
+   warning if *wall-origin-x/y* are non-zero."
+  (let* ((wall-min-x (+ (* 0 tile-dest-size) collision-half-w))
+         (wall-max-x (- (* width tile-dest-size) collision-half-w))
+         (wall-min-y (+ (* 0 tile-dest-size) collision-half-h))
+         (wall-max-y (- (* height tile-dest-size) collision-half-h)))
+    (values wall-min-x wall-max-x wall-min-y wall-max-y)))

@@ -144,6 +144,17 @@
   "When player is within this many tiles of the commit line, pop ALL remaining
    preload entries per frame (instead of 1) to guarantee the target zone is cached.")
 
+;;; Minimap multi-hop pathing limits (Bug 4 Part 3)
+(defparameter *minimap-resolve-max-hops* 8
+  "Maximum zone hops when walking click coordinates through zone boundaries
+   to resolve the destination zone. If hit, the click is silently dropped.
+   Should be >= world diameter for full minimap coverage.")
+
+(defparameter *bfs-max-hops* 32
+  "Maximum BFS depth when searching for shortest path between zones.
+   Acts as a safety bound; should be >= number of zones in the world graph.
+   If hit, the path is considered unreachable.")
+
 ;;; Evaluation Metrics (Step 12)
 (defparameter *verbose-zone-transitions* nil
   "Enable zone transition diagnostics (cooldown, hysteresis, directional gating).

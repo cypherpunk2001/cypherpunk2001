@@ -33,6 +33,14 @@ Key functions
 - `zone-path-for-id`: convenience wrapper to get zone path from world's graph for a zone-id. Returns nil if zone-id not found.
 - `zone-path-for-id-exists-p`: returns T if zone-id has a valid path in world's graph. Used for zone validation.
 
+BFS pathfinding (Bug 4 Part 3)
+- `world-graph-find-path`: BFS shortest path over spatial edges. Returns ordered list of zone-ids (excluding source, including destination), or NIL if unreachable/same zone. Capped at `*bfs-max-hops*` (configurable, default 32). Logs a warning when the cap is hit.
+- `world-graph-edge-between`: returns the edge direction (:north/:south/:east/:west) between two directly connected zones, or NIL.
+
+Zone bounds validation
+- `build-zone-bounds-index` reads `:width`, `:height`, and optional `:origin-x`/`:origin-y` from each zone file header. Origin defaults to `(0,0)` when absent. Bounds are computed via `zone-bounds-with-origin`, which incorporates the tile origin offset into the collision bounds calculation.
+- Validates zone bounds uniformity at startup. If any zone's bounds differ from the reference, a warning is logged. This catches potential issues before they cause incorrect minimap pathing.
+
 Design note
 - Edge links are directional; define both directions if you want two-way travel.
 - Zone IDs are resolved to files via `:zone-root`, so file names and `:id` values

@@ -46,6 +46,53 @@ Phase 3: Fallback Behavior
 - If path cannot be found, revert to current single-edge behavior.
 - If target is in an orthogonal neighbor, path length = 1 (current behavior).
 
+Part 2: Minimap Diagonal Click Parity
+-------------------------------------
+Goal: minimap clicks (including far/diagonal targets) behave identically to
+floor-map clicks, even when preview zones are not loaded.
+
+Phase 4: Zone-Bounds Index (No Preview Dependency)
+--------------------------------------------------
+1) Build a lightweight zone-bounds index at startup:
+   - For every zone in world-graph, store world-min/max bounds.
+   - Prefer reading bounds from data metadata; if absent, derive from zone
+     tile dimensions and zone origin.
+2) Store the index on the world struct (client-only):
+   - Use a simple mapping: zone-id -> (min-x max-x min-y max-y).
+   - Ensure it is always available, independent of preview/LRU caches.
+
+Phase 5: Unify Click Translation
+--------------------------------
+1) Refactor click translation to consult the bounds index first:
+   - Determine destination zone for any click (floor or minimap) by bounds.
+   - Only fall back to preview/LRU caches for optional details.
+2) Use the bounds index for multi-hop rebasing:
+   - Each hop uses bounds for current and next zone from the index.
+   - Avoid loading zones just to compute rebases.
+
+Phase 6: Minimap Click Flow
+---------------------------
+1) On minimap click:
+   - Compute dest-zone-id via bounds index.
+   - Compute zone path (BFS over world-graph).
+   - Store zone-click path + final target in game state as in Part 1.
+2) Keep current fallback semantics:
+   - If bounds are missing (should not happen), revert to single-edge behavior.
+
+Testing Addendum
+----------------
+- Clear preview/LRU caches, then minimap-click diagonally; verify multi-hop.
+- Minimap-click to far zones (not adjacent); verify path is computed and
+  player arrives at destination.
+- Regression: floor clicks unchanged; orthogonal minimap clicks unchanged.
+
+Decision (Scope)
+----------------
+Minimap clicks should be treated as true world-space destinations. Use the
+zone-bounds index to resolve the destination zone and compute a full multi-hop
+path across the world-graph (BFS), not just a 2-hop diagonal. This gives the
+best player experience and keeps the implementation generalized and predictable.
+
 UI/UX Notes
 -----------
 - Keep click marker in the original world position (optional) or update

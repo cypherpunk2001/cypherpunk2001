@@ -23,6 +23,9 @@ Key helpers
 - `vector-pool` helpers: reuse fixed-size vectors for hot serialization paths.
 - `current-screen-width`, `current-screen-height`: dynamic window dimensions for resize support.
 
+Zone bounds
+- `zone-bounds-zero-origin`: calculate movement bounds for a zero-origin zone wall-map. Moved from movement-core.lisp to fix load-order inversion (world-graph.lisp loads before movement-core.lisp but needs this function).
+
 Retry utilities
 - `with-retry-exponential`: retry critical operations with exponential backoff
 - `with-retry-linear`: retry network operations with fixed delay
