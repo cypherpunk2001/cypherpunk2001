@@ -421,16 +421,26 @@
              (has-prior-data (and player
                                   buffer
                                   (> (interpolation-buffer-count buffer) 0)))
-             ;; Capture pre-snapshot position for teleport detection
+             ;; Capture pre-snapshot position, zone, and world bounds for transition detection.
+             ;; World bounds reflect the OLD zone before apply-game-state overwrites them.
              (old-x (if player (player-x player) 0.0f0))
-             (old-y (if player (player-y player) 0.0f0)))
+             (old-y (if player (player-y player) 0.0f0))
+             (old-zone-id (and player (player-zone-id player)))
+             (world (game-world game))
+             (old-world-min-x (if world (world-wall-min-x world) 0.0))
+             (old-world-max-x (if world (world-wall-max-x world) 0.0))
+             (old-world-min-y (if world (world-wall-min-y world) 0.0))
+             (old-world-max-y (if world (world-wall-max-y world) 0.0)))
         (when player-id
           (setf (game-net-player-id game) player-id))
         (multiple-value-bind (zone-id zone-changed delta-positions)
             (apply-game-state game state :apply-zone t)
           (when zone-changed
             (log-verbose "Client zone transitioned to ~a" zone-id)
-            (handle-zone-transition game :old-x old-x :old-y old-y))
+            (handle-zone-transition game :old-x old-x :old-y old-y
+                                          :old-zone-id old-zone-id
+                                          :old-world-bounds (list old-world-min-x old-world-max-x
+                                                                  old-world-min-y old-world-max-y)))
           ;; Detect same-zone teleport (unstuck) - reset sync state if position jumped
           ;; Only check if we had prior data to avoid first-snapshot false positives
           (let* ((new-player (game-player game))

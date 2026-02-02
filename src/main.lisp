@@ -658,13 +658,16 @@
    are cached before the player reaches the commit line."
   nil)
 
-(defun handle-zone-transition (game &key (old-x 0.0f0) (old-y 0.0f0))
+(defun handle-zone-transition (game &key (old-x 0.0f0) (old-y 0.0f0) old-zone-id old-world-bounds)
   "Sync client-facing state after a zone change.
    Step 6: No loading overlay for locomotion transitions.
    Step 12: Per-transition diagnostics (cache hit/miss, preload queue depth).
    ADDENDUM 4: Soft reset — only clear interpolation/prediction buffers
    when position delta exceeds *soft-reset-threshold-sq*. Small deltas
-   (typical of seamless walk-through transitions) preserve buffer continuity."
+   (typical of seamless walk-through transitions) preserve buffer continuity.
+   Phase 1 Bug 1 fix: Rebase cross-zone click targets on BOTH player-intent
+   and game-client-intent so the player walks to the intended destination
+   in the new zone. Non-crossing targets are cleared."
   (let* ((t0 (when *verbose-zone-transitions* (get-internal-real-time)))
          (editor (game-editor game))
          (world (game-world game))
@@ -713,18 +716,99 @@
       (when (and pred player (not large-delta-p))
         (setf (prediction-state-predicted-x pred) (player-x player)
               (prediction-state-predicted-y pred) (player-y player))))
-    ;; Clear stale targets — old zone's NPCs/targets are no longer valid.
-    ;; Click-to-move target MUST be cleared: it's in the old zone's coordinate
-    ;; space and would cause the player to walk across the entire new zone
-    ;; toward the stale target position. (Server rebases the target via
-    ;; transition-zone, but that only runs server-side. The client's local
-    ;; intent target is never rebased — clear it so the player stops.)
+    ;; Clear stale NPC targets — old zone's NPCs are no longer valid.
     (when player
       (setf (player-attack-target-id player) 0
-            (player-follow-target-id player) 0)
-      (let ((intent (player-intent player)))
-        (when intent
-          (clear-intent-target intent))))
+            (player-follow-target-id player) 0))
+    ;; Rebase or clear click-to-move targets on BOTH player-intent and
+    ;; game-client-intent. The server rebases via transition-zone, but that
+    ;; only runs server-side. The client must do its own rebasing here.
+    ;; game-client-intent is the source of truth (it's what the client sends
+    ;; to the server every frame and what run-local applies via apply-client-intent).
+    (let* ((ci (game-client-intent game))
+           (p-intent (and player (player-intent player)))
+           (had-target (and ci (intent-target-active ci)))
+           (target-clamped (and had-target (intent-target-clamped-p ci)))
+           (target-raw-x (and had-target (intent-target-raw-x ci)))
+           (target-raw-y (and had-target (intent-target-raw-y ci)))
+           (target-x (and had-target
+                          (if target-clamped
+                              target-raw-x
+                              (intent-target-x ci))))
+           (target-y (and had-target
+                          (if target-clamped
+                              target-raw-y
+                              (intent-target-y ci))))
+           (new-zone-id zone-id)
+           (wg (and world (world-world-graph world)))
+           ;; Find the exit edge from old zone to new zone
+           (exit-edge (when (and wg old-zone-id new-zone-id)
+                        (let ((exits (world-graph-exits wg old-zone-id)))
+                          (loop :for ex :in exits
+                                :when (eq (getf ex :to) new-zone-id)
+                                :return (getf ex :edge)))))
+           ;; Get collision bounds for old and new zones.
+           ;; Client often lacks zone-state, so fall back to world bounds:
+           ;;   - Source (old zone): use old-world-bounds captured BEFORE apply-game-state
+           ;;   - Dest (new zone): use current world bounds (now reflect new zone)
+           (tile-size (and world (world-tile-dest-size world)))
+           (half-w (and world (world-collision-half-width world)))
+           (half-h (and world (world-collision-half-height world))))
+      (multiple-value-bind (zone-src-min-x zone-src-max-x zone-src-min-y zone-src-max-y)
+          (if (and old-zone-id tile-size half-w half-h)
+              (get-zone-collision-bounds old-zone-id tile-size half-w half-h)
+              (values nil nil nil nil))
+        ;; Source bounds: prefer per-zone, fall back to old world bounds
+        (let* ((src-min-x (or zone-src-min-x (and old-world-bounds (first old-world-bounds))))
+               (src-max-x (or zone-src-max-x (and old-world-bounds (second old-world-bounds))))
+               (src-min-y (or zone-src-min-y (and old-world-bounds (third old-world-bounds))))
+               (src-max-y (or zone-src-max-y (and old-world-bounds (fourth old-world-bounds)))))
+          (multiple-value-bind (zone-dst-min-x zone-dst-max-x zone-dst-min-y zone-dst-max-y)
+              (if (and new-zone-id tile-size half-w half-h)
+                  (get-zone-collision-bounds new-zone-id tile-size half-w half-h)
+                  (values nil nil nil nil))
+            ;; Dest bounds: prefer per-zone, fall back to current world bounds (new zone)
+            (let* ((dst-min-x (or zone-dst-min-x (and world (world-wall-min-x world))))
+                   (dst-max-x (or zone-dst-max-x (and world (world-wall-max-x world))))
+                   (dst-min-y (or zone-dst-min-y (and world (world-wall-min-y world))))
+                   (dst-max-y (or zone-dst-max-y (and world (world-wall-max-y world)))))
+          (let* ((crossing-p (and had-target exit-edge
+                                  src-min-x src-max-x src-min-y src-max-y
+                                  (or target-clamped
+                                      (< target-x src-min-x) (> target-x src-max-x)
+                                      (< target-y src-min-y) (> target-y src-max-y))))
+                 (rebased nil))
+            (when (and crossing-p
+                       dst-min-x dst-max-x dst-min-y dst-max-y)
+              ;; Rebase the target across the seam
+              (multiple-value-bind (tx ty)
+                  (seam-translate-position exit-edge target-x target-y
+                                           src-min-x src-max-x src-min-y src-max-y
+                                           dst-min-x dst-max-x dst-min-y dst-max-y)
+                (let ((rx (clamp tx dst-min-x dst-max-x))
+                      (ry (clamp ty dst-min-y dst-max-y)))
+                  (setf rebased t)
+                  ;; Set rebased target on both intents
+                  (when ci
+                    (set-intent-target ci rx ry)
+                    (setf (intent-target-raw-x ci) rx
+                          (intent-target-raw-y ci) ry
+                          (intent-target-clamped-p ci) nil))
+                  (when p-intent
+                    (set-intent-target p-intent rx ry)
+                    (setf (intent-target-raw-x p-intent) rx
+                          (intent-target-raw-y p-intent) ry
+                          (intent-target-clamped-p p-intent) nil)))))
+            ;; If not crossing or rebasing failed, clear both intents
+            (unless rebased
+              (when ci (clear-intent-target ci))
+              (when p-intent (clear-intent-target p-intent)))
+            (when *verbose-zone-transitions*
+              (log-zone "Target rebase: old=~a new=~a edge=~a src=(~a ~a ~a ~a) dst=(~a ~a ~a ~a) rebased=~a"
+                        old-zone-id new-zone-id exit-edge
+                        src-min-x src-max-x src-min-y src-max-y
+                        dst-min-x dst-max-x dst-min-y dst-max-y
+                        rebased))))))))
     ;; Clear stale edge-strips from the old zone. Between zone change and
     ;; next snapshot, old edge-strips would render as ghost sprites at wrong
     ;; positions. New edge-strips arrive with the next server snapshot.

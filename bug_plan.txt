@@ -13,7 +13,7 @@ REMAINING BUGS — 3 open
 =========================
 
 Phase 1: Fix infinite walking (Bug 1) — HIGHEST PRIORITY
-----------------------------------------------------------
+---------------------------------------------------------
 Files: src/main.lisp
 
 ROOT CAUSE CONFIRMED: The previous fix cleared (player-intent player)
@@ -32,14 +32,62 @@ target fields on game-client-intent:
 This ensures the stale target is not re-sent to the server or re-applied
 locally. The existing player-intent clear stays as a belt-and-suspenders.
 
-Consider also: Reset the mouse-hold/click-to-move input state so the
-client doesn't immediately re-issue a walk command from the still-held
-mouse button. Check update-client-input for persistent click state.
+Revision (based on staging behavior): clearing BOTH intents stops the
+infinite walk, but it also stops legitimate cross-zone click targets.
+We need to PRESERVE cross-zone targets by rebasing them on the client,
+while still clearing non-crossing targets.
+
+Next steps:
+  1) In handle-zone-transition, capture client intent target BEFORE
+     clearing. Use game-client-intent as the source of truth.
+  2) Detect whether the target crosses zones:
+     - had-target = intent-target-active
+     - crossing = intent-target-clamped-p OR raw target outside OLD bounds
+       (use old zone-id + get-zone-collision-bounds)
+  3) Determine transition EDGE:
+     - Prefer world-graph lookup: find exit from old-zone-id to new zone-id,
+       use its :edge. If missing, fall back to edge inference from old position
+       vs old bounds.
+  4) If crossing AND edge found:
+     - Rebase target using seam-translate-position with old/new bounds
+     - Clamp to new bounds
+     - Set target on BOTH player-intent and game-client-intent
+     - Reset target-raw-x/y to rebased coords and clear clamped flag
+     - (Optional) update click marker to rebased coords for visual continuity
+  5) If not crossing (or edge unknown), clear target as before.
+
+Consider also: Reset the mouse-hold/click-to-move input state only when
+the target is cleared (to avoid immediate re-issue).
 
 Tests:
   - Verify game-client-intent target is cleared after zone change
   - Verify walk terminates in destination zone (not infinite)
   - Verify stale target is not re-applied after one sim tick
+  - NEW: click-to-move across zone continues to intended destination
+
+
+Phase 1 Addendum: Client Bounds Fallback (required for rebasing)
+-----------------------------------------------------------------
+Problem: handle-zone-transition rebasing depends on get-zone-collision-bounds,
+but the client does not always have zone-state for the destination zone.
+When bounds are NIL, rebasing fails and the target is cleared, causing the
+player to stop immediately after crossing.
+
+Required changes:
+  1) Capture OLD bounds before apply-game-state on the client:
+     - In apply-snapshot, before apply-game-state, compute old bounds from the
+       current world (old zone) and pass them to handle-zone-transition.
+  2) Use DESTINATION bounds even without zone-state:
+     - After apply-game-state, world-wall-min/max reflect the new zone,
+       so use those as fallback when get-zone-collision-bounds returns NIL.
+     - Alternative fallback: compute bounds from the cached zone object in the LRU
+       if available (zone-width/height + tile size).
+  3) Rebase with mixed sources:
+     - Source bounds: prefer old-zone collision bounds; fallback to captured old
+       world bounds.
+     - Destination bounds: prefer new-zone collision bounds; fallback to new world bounds.
+  4) Add a one-line verbose log when rebasing fails to show:
+     old-zone-id, new-zone-id, exit-edge, src-bounds, dst-bounds, rebased flag.
 
 
 Phase 2: Fix audio skip (Bug 2) and tile shift (Bug 3)

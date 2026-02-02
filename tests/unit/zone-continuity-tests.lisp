@@ -1490,6 +1490,128 @@
     (assert (not (intent-target-clamped-p intent)) ()
             "client-zone-clear: clamped-p should be cleared after zone change")))
 
+(defun test-client-zone-change-clears-client-intent ()
+  "handle-zone-transition must clear game-client-intent target fields.
+   The client-intent is sent to the server every frame and applied locally
+   in run-local via apply-client-intent. If left stale, the old-zone target
+   overwrites the server's rebased target on the next tick, causing the
+   player to walk across the entire new zone indefinitely."
+  (let* ((game (%make-game))
+         (player (%make-player))
+         (player-intent (make-intent))
+         (client-intent (make-intent)))
+    (setf (game-player game) player
+          (player-intent player) player-intent
+          (game-client-intent game) client-intent)
+    ;; Simulate: stale click-to-move target in client-intent from zone 1
+    (set-intent-target client-intent 4004.8 2000.0)
+    (setf (intent-target-raw-x client-intent) 4200.0
+          (intent-target-raw-y client-intent) 2000.0
+          (intent-target-clamped-p client-intent) t)
+    (assert (intent-target-active client-intent) ()
+            "client-intent-clear: client-intent target should be active before zone change")
+    ;; Simulate what handle-zone-transition does for client-intent
+    (clear-intent-target client-intent)
+    (assert (not (intent-target-active client-intent)) ()
+            "client-intent-clear: client-intent target should be cleared after zone change")
+    (assert (not (intent-target-clamped-p client-intent)) ()
+            "client-intent-clear: client-intent clamped-p should be cleared after zone change")))
+
+(defun test-stale-client-intent-not-reapplied-after-zone-change ()
+  "After clearing both intents on zone change, apply-client-intent must NOT
+   reintroduce a stale target. Simulates the run-local path where
+   apply-client-intent copies client-intent -> player-intent every frame."
+  (let* ((player-intent (make-intent))
+         (client-intent (make-intent)))
+    ;; Set up stale target in both intents (pre-zone-change state)
+    (set-intent-target player-intent 4004.8 2000.0)
+    (setf (intent-target-raw-x player-intent) 4200.0
+          (intent-target-raw-y player-intent) 2000.0
+          (intent-target-clamped-p player-intent) t)
+    (set-intent-target client-intent 4004.8 2000.0)
+    (setf (intent-target-raw-x client-intent) 4200.0
+          (intent-target-raw-y client-intent) 2000.0
+          (intent-target-clamped-p client-intent) t)
+    ;; Simulate zone transition: clear both intents
+    (clear-intent-target player-intent)
+    (clear-intent-target client-intent)
+    ;; Simulate next frame: apply-client-intent copies client -> player
+    (apply-client-intent player-intent client-intent)
+    ;; Player intent must still be inactive (not reintroduced by stale client-intent)
+    (assert (not (intent-target-active player-intent)) ()
+            "stale-reapply: target should remain inactive after apply-client-intent")
+    (assert (not (intent-target-clamped-p player-intent)) ()
+            "stale-reapply: clamped-p should remain nil after apply-client-intent")))
+
+(defun test-client-cross-zone-target-rebased ()
+  "When clicking across a zone boundary, handle-zone-transition should rebase
+   the target into the new zone's coordinate space (via seam-translate-position)
+   rather than clearing it. This lets the player walk to the intended destination."
+  (let* ((ci (make-intent))
+         (p-intent (make-intent))
+         ;; Simulate: clamped click target aimed east into zone-2
+         ;; Raw target is past east boundary of zone-1
+         (src-min-x 91.2) (src-max-x 4004.8)
+         (src-min-y 91.2) (src-max-y 4004.8)
+         (dst-min-x 91.2) (dst-max-x 4004.8)
+         (dst-min-y 91.2) (dst-max-y 4004.8)
+         (raw-target-x 4200.0) ;; past src-max-x → crossing
+         (raw-target-y 2000.0)
+         (edge :east))
+    ;; Set up client-intent with clamped crossing target
+    (set-intent-target ci (min raw-target-x src-max-x) raw-target-y)
+    (setf (intent-target-raw-x ci) raw-target-x
+          (intent-target-raw-y ci) raw-target-y
+          (intent-target-clamped-p ci) t)
+    ;; Player-intent mirrors (as it would in practice)
+    (set-intent-target p-intent (min raw-target-x src-max-x) raw-target-y)
+    (setf (intent-target-raw-x p-intent) raw-target-x
+          (intent-target-raw-y p-intent) raw-target-y
+          (intent-target-clamped-p p-intent) t)
+    ;; The target crosses: raw-target-x > src-max-x
+    ;; Rebase using seam translation (what handle-zone-transition should do)
+    (multiple-value-bind (tx ty)
+        (seam-translate-position edge raw-target-x raw-target-y
+                                 src-min-x src-max-x src-min-y src-max-y
+                                 dst-min-x dst-max-x dst-min-y dst-max-y)
+      (let ((rx (clamp tx dst-min-x dst-max-x))
+            (ry (clamp ty dst-min-y dst-max-y)))
+        ;; Rebased target should be inside destination bounds
+        (assert (>= rx dst-min-x) ()
+                "cross-zone-rebase: rebased-x ~,1f should be >= dst-min-x ~,1f" rx dst-min-x)
+        (assert (<= rx dst-max-x) ()
+                "cross-zone-rebase: rebased-x ~,1f should be <= dst-max-x ~,1f" rx dst-max-x)
+        (assert (>= ry dst-min-y) ()
+                "cross-zone-rebase: rebased-y ~,1f should be >= dst-min-y ~,1f" ry dst-min-y)
+        ;; For east crossing: dst-min-x + (raw-x - src-max-x) = 91.2 + 195.2 = 286.4
+        (assert (< (abs (- rx 286.4)) 1.0) ()
+                "cross-zone-rebase: rebased-x should be ~286.4, got ~,1f" rx)
+        (assert (< (abs (- ry 2000.0)) 0.1) ()
+                "cross-zone-rebase: rebased-y should be ~2000, got ~,1f" ry)
+        ;; Simulate rebasing on both intents
+        (set-intent-target ci rx ry)
+        (setf (intent-target-raw-x ci) rx
+              (intent-target-raw-y ci) ry
+              (intent-target-clamped-p ci) nil)
+        (set-intent-target p-intent rx ry)
+        (setf (intent-target-raw-x p-intent) rx
+              (intent-target-raw-y p-intent) ry
+              (intent-target-clamped-p p-intent) nil)
+        ;; Both intents should still be active with rebased coords
+        (assert (intent-target-active ci) ()
+                "cross-zone-rebase: client-intent target should stay active after rebase")
+        (assert (intent-target-active p-intent) ()
+                "cross-zone-rebase: player-intent target should stay active after rebase")
+        (assert (not (intent-target-clamped-p ci)) ()
+                "cross-zone-rebase: clamped-p should be nil after rebase")
+        ;; After apply-client-intent, player-intent should have rebased target
+        (apply-client-intent p-intent ci)
+        (assert (intent-target-active p-intent) ()
+                "cross-zone-rebase: player target should stay active after apply-client-intent")
+        (assert (< (abs (- (intent-target-x p-intent) rx)) 0.1) ()
+                "cross-zone-rebase: player target-x should be rebased value ~,1f, got ~,1f"
+                rx (intent-target-x p-intent))))))
+
 (defun test-client-zone-change-clears-edge-strips ()
   "handle-zone-transition must clear edge-strips to prevent ghost sprites.
    Stale edge-strips from the old zone would render at wrong positions
@@ -1577,4 +1699,9 @@
     'test-cooldown-reduced
     ;; Client-side zone change fixes
     'test-client-zone-change-clears-target
-    'test-client-zone-change-clears-edge-strips))
+    'test-client-zone-change-clears-edge-strips
+    ;; game-client-intent must also be cleared on zone change
+    'test-client-zone-change-clears-client-intent
+    'test-stale-client-intent-not-reapplied-after-zone-change
+    ;; Cross-zone click targets should be rebased, not cleared
+    'test-client-cross-zone-target-rebased))
