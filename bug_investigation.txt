@@ -4,88 +4,8 @@ Zone Transition Bugs — Root Cause Investigation (2026-02-02)
 FIXED BUGS (committed in 0a58afe)
 ==================================
 
-[FIXED] Tile Skipping — spawning tiles deep into destination zone
------------------------------------------------------------------
-Root cause: seam translation used player-attempted-x/y (raw click target,
-potentially hundreds of px past the edge) instead of actual position.
-Fix: Use player-x/y + 1px edge-push for seam translation. Cap overstep.
-File: src/movement-transition.lisp:680
-
-[FIXED] Keyboard Crossing Difficulty — player felt "stuck" at edge
--------------------------------------------------------------------
-Root cause: (zerop dx) check too strict; floating-point residuals from
-collision prevented forced-attempted from firing. 1.5s cooldown too long.
-Fix: Near-zero threshold (< abs 0.5), cooldown reduced to 0.5s.
-Files: src/movement-transition.lisp:82-93, src/config.lisp:109
-
-
 OPEN BUGS
 ==========
-
-Bug 1: Infinite Walking — ROOT CAUSE PARTIALLY IDENTIFIED
------------------------------------------------------------
-Status: First fix attempt (clear-intent-target in handle-zone-transition)
-did NOT resolve the bug. The user still sees infinite walking after
-click-to-move zone crossing.
-
-What we know:
-  update-zone-transition only runs on the SERVER (main.lisp:828, guarded
-  by (not (eq (game-net-role game) :client))). The server rebases the
-  click target for the new zone (lines 814-820), but the CLIENT's local
-  intent target was stale.
-
-What we tried:
-  Added clear-intent-target in handle-zone-transition (main.lisp:716-729).
-  This should have cleared the client's stale target on zone change.
-  The fix DID NOT work — user reports infinite walking persists.
-
-Remaining theories to investigate:
-  1. Timing: handle-zone-transition may fire BEFORE the snapshot fully
-     applies the new position, so clear-intent-target runs but then the
-     snapshot re-applies stale intent fields (target-x, target-active).
-     Need to check: does apply-snapshot overwrite intent fields?
-
-  2. Local prediction: The client may re-derive movement from its own
-     input state. If the mouse button is still "held" or the click-to-move
-     input state persists across the zone change, the client re-issues a
-     new walk command in the old coordinate space.
-
-  3. Server-side issue: The server's rebased target may itself be wrong.
-     If the rebased target lands outside walkable bounds or on a collision
-     tile, the player walks toward it forever without reaching it.
-
-  4. Snapshot propagation: The server may broadcast the stale pre-rebase
-     target in the snapshot, overwriting the client's cleared target.
-
-Next steps: Trace the full lifecycle of a click-to-move target through
-zone transition on BOTH server and client. Add verbose logging to
-handle-zone-transition, apply-snapshot, and update-player-position to
-see exact values at each step.
-
-
-Bug 2: Audio Skips — ROOT CAUSE IDENTIFIED (PROBABLE)
-------------------------------------------------------
-transition-zone calls apply-zone-to-world synchronously (line 666):
-
-    (apply-zone-to-world world zone)
-
-This function (src/movement.lisp:88) rebuilds wall-map bounds, rescans
-the zone directory on disk (build-zone-paths), rebuilds minimap data,
-and recalculates collision. This takes 5-20ms synchronously on the main
-thread.
-
-At 60 FPS, a frame budget is 16.67ms. A 10-20ms spike in the game loop
-causes a frame drop. If audio playback relies on the game loop's frame
-callbacks (or shares the main thread), the spike causes a skip.
-
-The client-zone-change-hook (rendering-tiles.lisp:302-307) also
-invalidates all cached render textures, making the NEXT frame expensive
-too (potential double-frame drop).
-
-CONCLUSION: Synchronous reconstruction work in apply-zone-to-world is
-the audio skip source. The zone data is already cached in LRU — the
-hitch is from rebuilding derived data structures, not from disk I/O.
-
 
 Bug 3: Ground/Tile Shift — ROOT CAUSE IDENTIFIED (PROBABLE)
 -------------------------------------------------------------
@@ -121,6 +41,60 @@ it's a single rounding discontinuity, not oscillation.
 CONCLUSION: The snap formula creates a sub-pixel alignment difference
 between old and new camera positions. Combined with the frame spike from
 Bug 2, the shift is visible for 1-2 frames.
+
+
+Bug 4: Diagonal cross-zone click routes to wrong adjacent zone
+---------------------------------------------------------------
+Status: Newly reported. Not yet fixed.
+
+Symptom:
+Click-to-move across diagonal zones (e.g., zone 1 → zone 4 or zone 2 → zone 3)
+does not reach the clicked tile. The player crosses into an orthogonal neighbor
+and may end in the wrong adjacent zone (1 or 4) instead of the diagonal target.
+
+What we know from code:
+1) Zone transitions are edge-based and cardinal only. update-zone-transition
+   chooses a single edge based on arm/commit bands + directional gating.
+2) The edge chosen is the one with the strongest directional alignment
+   (dominant axis), not a multi-step path toward a diagonal target.
+3) Seam translation and target rebasing only handle a single edge transition.
+   There is no multi-zone routing for a diagonal destination.
+4) Diagonal zone IDs are used for preview rendering only
+   (movement-preview.lisp / world-diagonal-zone-id) — not for transition logic.
+
+Likely root cause:
+The system has no notion of a multi-step path to a diagonal zone. A diagonal
+click produces a movement vector with both X and Y components. The transition
+state machine picks ONE cardinal edge (dominant axis), and the click target
+is rebased across that edge only. After entering the adjacent zone, the player
+often drifts into the wrong next zone because the intended diagonal destination
+was never encoded as a multi-zone path.
+
+Contributing factors:
+- Directional gating and arm-band selection favor one axis (dominant dot).
+- Collision at corners can bias which edge is crossed first.
+- Target rebasing only accounts for a single seam; it does not store a
+  destination zone or a path for subsequent transitions.
+
+Next steps:
+1) Encode a multi-zone target for click-to-move:
+   - Determine destination zone-id from raw click (screen->world + preview zones).
+   - Compute a zone-path (world-graph shortest path) from current zone to
+     destination zone.
+   - Store remaining zone-path in intent or client-only state.
+2) On each zone transition:
+   - Pop the next zone from the path.
+   - Rebase the target across the correct edge for that next hop.
+3) If diagonal target is within corner adjacency, allow an explicit two-step
+   path (e.g., prefer preserving axis of greater distance first, or preserve
+   the axis defined by the destination offset ratio).
+4) Add verbose logging for chosen edge vs intended destination zone to confirm
+   path selection during testing.
+
+Conclusion:
+This is a pathing/zone-routing gap, not a simple target-rebase bug. The current
+logic only handles a single edge transition and lacks a multi-hop plan to reach
+diagonal zones.
 
 
 ADDITIONAL FINDINGS (2026-02-02)

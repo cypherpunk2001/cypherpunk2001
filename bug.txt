@@ -1,22 +1,6 @@
 Zone Transition Bugs — Current State (2026-02-02)
 ==================================================
 
-Bug 1: Click-to-move to another zone — character walks indefinitely
--------------------------------------------------------------------
-When clicking on a location in an adjacent zone, the character transitions
-to the new zone but then walks forever without stopping. The walk target
-is never reached or cleared. The player must click again or press a key
-to interrupt the movement.
-
-Repro: In zone 1, click on a visible tile in zone 2. Character walks to
-the edge, transitions, then continues walking in the new zone without
-ever stopping at the intended destination.
-
-Bug 2: Audio skips on zone switch
-----------------------------------
-A brief audio glitch/skip is audible when the zone transition fires.
-The audio drops out momentarily during the switch.
-
 Bug 3: Ground/tile shift on zone transition
 --------------------------------------------
 On zone switch, the tiles visually shift in one direction underneath the
@@ -24,3 +8,15 @@ character — like the camera or tile layer jumps briefly. Not a shake
 (no oscillation), just a single-direction shift that settles. Looks
 like a brief earthquake or the camera snapping to a new position.
 Likely related to the same frame spike that causes the audio skip.
+
+Bug 4: Diagonal cross-zone click routes to wrong adjacent zone
+---------------------------------------------------------------
+Click-to-move across diagonal zones (e.g., zone 1 → zone 4, or zone 2 → zone 3)
+does not route to the clicked destination. The player often crosses into one
+of the orthogonally adjacent zones instead, ending in the wrong zone and never
+reaching the clicked tile.
+
+Repro:
+1) Stand in zone 3 and click a tile in zone 2 (diagonal target).
+2) Player walks, but transitions into zone 1 or 4 instead of zone 2.
+3) Same issue for zone 1 → zone 4 and zone 2 → zone 3, both directions.
