@@ -109,7 +109,11 @@
                 :client-intent nil
                 :net-role :server
                 :net-requests nil
-                :net-player-id nil)))
+                :net-player-id nil
+                ;; Zone cache and preload queue for server-side transition smoothness
+                :zone-cache (make-zone-lru-cache)
+                :preload-queue nil
+                :edge-strips nil)))
 
 (defun apply-client-intent (server-intent client-intent)
   ;; Copy the client intent payload into the server intent for this frame.
@@ -124,6 +128,9 @@
           (intent-face-dy server-intent) (intent-face-dy client-intent)
           (intent-target-x server-intent) (intent-target-x client-intent)
           (intent-target-y server-intent) (intent-target-y client-intent)
+          (intent-target-raw-x server-intent) (intent-target-raw-x client-intent)
+          (intent-target-raw-y server-intent) (intent-target-raw-y client-intent)
+          (intent-target-clamped-p server-intent) (intent-target-clamped-p client-intent)
           (intent-target-active server-intent) (intent-target-active client-intent)
           (intent-attack server-intent) (intent-attack client-intent)
           (intent-run-toggle server-intent) (intent-run-toggle client-intent)

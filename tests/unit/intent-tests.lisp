@@ -49,6 +49,25 @@
     (assert (= (intent-requested-pickup-ty intent) 3) () "pickup-ty valid -> 3")
     (assert (= (intent-requested-drop-slot-index intent) 1) () "drop-slot valid -> 1")))
 
+(defun test-intent-plist-roundtrip-raw-target ()
+  "intent->plist and apply-intent-plist should preserve raw target and clamped flag."
+  (let* ((intent (make-intent))
+         (plist nil)
+         (other (make-intent)))
+    (setf (intent-target-x intent) 100.0
+          (intent-target-y intent) 200.0
+          (intent-target-raw-x intent) 500.0
+          (intent-target-raw-y intent) 600.0
+          (intent-target-clamped-p intent) t
+          (intent-target-active intent) t)
+    (setf plist (intent->plist intent))
+    (apply-intent-plist other plist)
+    (assert (and (= (intent-target-raw-x other) 500.0)
+                 (= (intent-target-raw-y other) 600.0)) ()
+            "intent-plist: raw target should roundtrip")
+    (assert (intent-target-clamped-p other) ()
+            "intent-plist: clamped flag should roundtrip")))
+
 ;;; ============================================================
 
 ;;; NEW INTENT TESTS (Priority 5)
@@ -160,5 +179,6 @@
     test-request-drop-item
     test-request-inventory-swap
     test-trade-intent-functions
-    test-apply-intent-plist-rejects-bad-pickup)
+    test-apply-intent-plist-rejects-bad-pickup
+    test-intent-plist-roundtrip-raw-target)
   "Intent domain test functions.")

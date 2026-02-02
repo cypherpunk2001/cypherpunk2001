@@ -493,6 +493,75 @@
                 (<= (- py min-y) urgent-px)
                 (<= (- max-y py) urgent-px))))))))
 
+(defun player-near-edge-for-zone-p (player world zone-id edge)
+  "Return T if PLAYER is within *zone-preload-radius* tiles of EDGE in ZONE-ID.
+   Server/local helper that uses per-zone bounds."
+  (let* ((tile-size (world-tile-dest-size world))
+         (radius-px (* *zone-preload-radius* tile-size))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (when zone-id
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (if (get-zone-wall-map zone-id)
+              (get-zone-collision-bounds zone-id tile-size half-w half-h)
+              (values (world-wall-min-x world) (world-wall-max-x world)
+                      (world-wall-min-y world) (world-wall-max-y world)))
+        (when (and min-x max-x min-y max-y)
+          (let ((dist (player-distance-to-edge player edge min-x max-x min-y max-y)))
+            (<= dist radius-px)))))))
+
+(defun player-within-urgent-preload-distance-for-zone-p (player world zone-id urgent-px)
+  "Return T if PLAYER is within URGENT-PX of any zone edge for ZONE-ID."
+  (declare (type single-float urgent-px))
+  (let* ((tile-size (world-tile-dest-size world))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world)))
+    (when zone-id
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (if (get-zone-wall-map zone-id)
+              (get-zone-collision-bounds zone-id tile-size half-w half-h)
+              (values (world-wall-min-x world) (world-wall-max-x world)
+                      (world-wall-min-y world) (world-wall-max-y world)))
+        (when (and min-x max-x min-y max-y)
+          (let ((px (player-x player))
+                (py (player-y player)))
+            (or (<= (- px min-x) urgent-px)
+                (<= (- max-x px) urgent-px)
+                (<= (- py min-y) urgent-px)
+                (<= (- max-y py) urgent-px))))))))
+
+(defun update-server-preloading (game)
+  "Queue adjacent zones for preloading on the server.
+   Uses all active players and their current zone-id."
+  (let* ((world (game-world game))
+         (zone-lru (game-zone-cache game))
+         (graph (and world (world-world-graph world)))
+         (players (game-players game)))
+    (when (and world zone-lru graph players (> (length players) 0))
+      (loop :for player :across players
+            :when player
+            :do (let ((zone-id (player-zone-id player)))
+                  (when zone-id
+                    (dolist (edge '(:north :south :east :west))
+                      (when (player-near-edge-for-zone-p player world zone-id edge)
+                        (let ((exit (find edge (world-graph-exits graph zone-id)
+                                          :key (lambda (e) (getf e :edge)) :test #'eq)))
+                          (when (and exit (spatial-exit-p exit))
+                            (let ((target-id (getf exit :to)))
+                              (queue-zone-preload game zone-lru graph target-id
+                                                  (format nil "server near ~a edge" edge))
+                              ;; Diagonal neighbors via perpendicular exits
+                              (when target-id
+                                (let ((perp-edges (case edge
+                                                    ((:north :south) '(:east :west))
+                                                    ((:east :west) '(:north :south)))))
+                                  (dolist (perp perp-edges)
+                                    (let ((diag-exit (find perp (world-graph-exits graph target-id)
+                                                           :key (lambda (e) (getf e :edge)) :test #'eq)))
+                                      (when (and diag-exit (spatial-exit-p diag-exit))
+                                        (queue-zone-preload game zone-lru graph (getf diag-exit :to)
+                                                            (format nil "server diagonal ~a->~a" edge perp))))))))))))))))))
+
 (defun queue-zone-preload (game zone-lru graph target-id reason)
   "Queue TARGET-ID for preloading if not already cached or queued."
   (when (and target-id
@@ -717,6 +786,20 @@
                                                          (intent-run-toggle current-intent))))
                   (update-player-position current-player current-intent world speed-mult dt)
                   (update-player-pickup-target current-player world))))
+    ;; Server-side preloading: warm adjacent zones to avoid sync load stalls.
+    (when (eq (game-net-role game) :server)
+      (update-server-preloading game)
+      (let ((queue (game-preload-queue game)))
+        (when (and queue (> (length queue) 0))
+          (let* ((tile-size (world-tile-dest-size world))
+                 (urgent-px (* *zone-urgent-preload-tiles* tile-size))
+                 (urgent (loop :for p :across players
+                               :thereis (and p
+                                             (player-within-urgent-preload-distance-for-zone-p
+                                              p world (player-zone-id p) urgent-px)))))
+            (if urgent
+                (process-preload-queue game :count (length queue))
+                (process-preload-queue game)))))
     ;; Task 4.1: Refresh occupied zones cache once per tick
     ;; This populates *occupied-zones-cache* without allocating a new list
     (refresh-occupied-zones-cache players)
@@ -837,7 +920,7 @@
       (loop :for current-player :across players
             :do (incf (player-playtime current-player) dt))
       (log-gc-delta)  ; Log allocation for this tick (Task 6.2)
-      transitioned))))
+      transitioned)))))
 
 (defun process-combat-events (game)
   ;; Process combat events from simulation and write to UI (client-side rendering).

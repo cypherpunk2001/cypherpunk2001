@@ -151,12 +151,22 @@
         (intent-target-raw-y intent) world-y
         (intent-target-clamped-p intent) nil)
   (when world
-    (let ((clamped-x (clamp world-x (world-wall-min-x world) (world-wall-max-x world)))
-          (clamped-y (clamp world-y (world-wall-min-y world) (world-wall-max-y world))))
-      (when (or (/= clamped-x world-x) (/= clamped-y world-y))
-        (setf (intent-target-clamped-p intent) t))
-      (setf world-x clamped-x
-            world-y clamped-y)))
+    (let* ((tile-size (world-tile-dest-size world))
+           (half-w (world-collision-half-width world))
+           (half-h (world-collision-half-height world))
+           (zone-id (and player (player-zone-id player))))
+      (multiple-value-bind (min-x max-x min-y max-y)
+          (if (and zone-id (get-zone-wall-map zone-id))
+              (get-zone-collision-bounds zone-id tile-size half-w half-h)
+              (values (world-wall-min-x world) (world-wall-max-x world)
+                      (world-wall-min-y world) (world-wall-max-y world)))
+        (when (and min-x max-x min-y max-y)
+          (let ((clamped-x (clamp world-x min-x max-x))
+                (clamped-y (clamp world-y min-y max-y)))
+            (when (or (/= clamped-x world-x) (/= clamped-y world-y))
+              (setf (intent-target-clamped-p intent) t))
+            (setf world-x clamped-x
+                  world-y clamped-y))))))
   (set-intent-target intent world-x world-y)
   (clear-requested-attack-target intent)
   (clear-requested-follow-target intent)
@@ -166,7 +176,13 @@
   ;; Clear any NPC-tracking marker (walk overrides attack target)
   (setf (player-click-marker-target-id player) 0)
   (when mark-p
-    (trigger-click-marker player world-x world-y :walk)))
+    (let ((marker-x (if (intent-target-clamped-p intent)
+                        (intent-target-raw-x intent)
+                        world-x))
+          (marker-y (if (intent-target-clamped-p intent)
+                        (intent-target-raw-y intent)
+                        world-y)))
+      (trigger-click-marker player marker-x marker-y :walk))))
 
 (defun set-player-attack-target (player intent npc &optional (mark-p t))
   ;; Request an NPC attack target via intent (server validates and sets authoritative target).

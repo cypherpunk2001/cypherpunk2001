@@ -831,6 +831,39 @@
     (assert (not (intent-target-clamped-p intent)) ()
             "boundary-ring: click on tile-0 center should not set clamped flag")))
 
+(defun test-walk-target-clamps-to-zone-bounds ()
+  "When player has a loaded zone wall-map, clamping uses zone collision bounds
+   instead of world bounds."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 27.2))
+         (zone-id :test-zone)
+         (wall-map (make-array '(64 64) :element-type 'fixnum :initial-element 0))
+         (saved-zone-states (make-hash-table :test 'eq)))
+    (setf (player-intent player) intent
+          (player-zone-id player) zone-id)
+    ;; Save and replace zone-state cache
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           (clrhash *zone-states*)
+           (setf (gethash zone-id *zone-states*)
+                 (make-zone-state :zone-id zone-id :wall-map wall-map))
+           ;; World bounds differ from zone bounds; zone should win.
+           (setf (world-wall-min-x world) 100.0
+                 (world-wall-max-x world) 2000.0
+                 (world-wall-min-y world) 100.0
+                 (world-wall-max-y world) 2000.0)
+           (set-player-walk-target player intent 10.0 10.0 t world)
+           (assert (< (abs (- (intent-target-x intent) 27.2)) 0.01) ()
+                   "zone-clamp: target-x should use zone bounds (27.2), got ~,2f"
+                   (intent-target-x intent))
+           (assert (< (abs (- (intent-target-y intent) 27.2)) 0.01) ()
+                   "zone-clamp: target-y should use zone bounds (27.2), got ~,2f"
+                   (intent-target-y intent)))
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
+
 (defun test-walk-target-no-clamp-without-world ()
   "set-player-walk-target does NOT clamp when world is nil (backward compat)."
   (let* ((player (%make-player))
@@ -840,6 +873,76 @@
     (assert (< (abs (- (intent-target-x intent) 10.0)) 0.01) ()
             "no-world: target-x should remain 10.0, got ~,2f"
             (intent-target-x intent))))
+
+(defun test-clamped-target-not-cleared-when-blocked ()
+  "When a clamped target is active but movement is blocked, the target should
+   remain active so zone transitions can arm/commit."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-id :blocked-zone)
+         (wall-map (make-array '(4 4) :element-type 'fixnum :initial-element 0))
+         (saved-zone-states (make-hash-table :test 'eq)))
+    ;; Block tile (2,1) so eastward move from tile (1,1) is blocked.
+    (setf (aref wall-map 1 2) 1)
+    (setf (player-intent player) intent
+          (player-zone-id player) zone-id
+          (player-x player) 96.0
+          (player-y player) 96.0)
+    ;; Save/replace zone-state cache
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           (clrhash *zone-states*)
+           (setf (gethash zone-id *zone-states*)
+                 (make-zone-state :zone-id zone-id :wall-map wall-map))
+           ;; Clamped target beyond blocked tile
+           (set-intent-target intent 224.0 96.0)
+           (setf (intent-target-raw-x intent) 320.0
+                 (intent-target-raw-y intent) 96.0
+                 (intent-target-clamped-p intent) t)
+           ;; Movement attempt should be blocked, but target stays active
+           (update-player-position player intent world 1.0 0.3)
+           (assert (intent-target-active intent) ()
+                   "blocked-clamped: target should remain active when clamped and blocked"))
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
+
+(defun test-clamped-blocked-uses-raw-target-for-crossing ()
+  "When clamped movement is blocked, attempted position uses raw target so
+   world-crossing-edge can detect a boundary crossing."
+  (let* ((player (%make-player))
+         (intent (make-intent))
+         (world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-id :blocked-zone)
+         (wall-map (make-array '(4 4) :element-type 'fixnum :initial-element 0))
+         (saved-zone-states (make-hash-table :test 'eq)))
+    ;; Block tile (2,1) so eastward move from tile (1,1) is blocked.
+    (setf (aref wall-map 1 2) 1)
+    (setf (player-intent player) intent
+          (player-zone-id player) zone-id
+          (player-x player) 96.0
+          (player-y player) 96.0)
+    ;; Save/replace zone-state cache
+    (maphash (lambda (k v) (setf (gethash k saved-zone-states) v)) *zone-states*)
+    (unwind-protect
+         (progn
+           (clrhash *zone-states*)
+           (setf (gethash zone-id *zone-states*)
+                 (make-zone-state :zone-id zone-id :wall-map wall-map))
+           ;; Clamped target inside bounds, raw target beyond east edge
+           (set-intent-target intent 224.0 96.0)
+           (setf (intent-target-raw-x intent) 320.0
+                 (intent-target-raw-y intent) 96.0
+                 (intent-target-clamped-p intent) t)
+           (update-player-position player intent world 1.0 0.3)
+           (multiple-value-bind (min-x max-x min-y max-y)
+               (get-zone-collision-bounds zone-id 64.0 16.0 16.0)
+             (let ((edge (world-crossing-edge player min-x max-x min-y max-y)))
+               (assert (eq edge :east) ()
+                       "blocked-crossing: expected :east, got ~a" edge))))
+      (clrhash *zone-states*)
+      (maphash (lambda (k v) (setf (gethash k *zone-states*) v)) saved-zone-states))))
 
 (defun test-reduced-arm-band-no-false-arm ()
   "With *zone-hysteresis-in* = 2.0, a player 3 tiles from the edge must NOT be in
@@ -1016,10 +1119,9 @@
                      "transition-anim: player should be in zone-b"))
         (delete-file tmp-path)))))
 
-(defun test-clamped-nudge-sets-move-direction ()
-  "When a clamped target is reached, the raw-target nudge also sets move-dx/dy
-   on the intent so that player-intent-direction returns non-zero. Without this,
-   the pending cancel gate sees (0,0) and cancels before world-crossing-edge runs."
+(defun test-clamped-nudge-uses-raw-direction ()
+  "When a clamped target is reached, the raw-target nudge keeps the target active
+   and player-intent-direction uses the raw target so pending isn't cancelled."
   (let* ((player (%make-player))
          (intent (make-intent))
          (world (make-test-world :tile-size 64.0 :collision-half 16.0)))
@@ -1038,13 +1140,21 @@
           (intent-target-clamped-p intent) t)
     ;; Run movement — clamped nudge branch should fire
     (update-player-position player intent world 1.0 0.016)
-    ;; move-dx should be set to raw direction (eastward ≈ 1.0)
-    (assert (> (intent-move-dx intent) 0.5) ()
-            "nudge-direction: move-dx should be positive (east), got ~,2f"
-            (intent-move-dx intent))
+    ;; Target should remain active for cross-zone commit and reapply
+    (assert (intent-target-active intent) ()
+            "nudge-direction: target should remain active when clamped")
+    ;; player-intent-direction should use raw target (eastward)
+    (multiple-value-bind (dx dy)
+        (player-intent-direction player)
+      (declare (ignore dy))
+      (assert (> dx 0.5) ()
+              "nudge-direction: player-intent-direction should be east, got ~,2f"
+              dx))
     ;; edge-direction-passes-p should now pass for :east
-    (assert (edge-direction-passes-p (intent-move-dx intent) (intent-move-dy intent) :east) ()
-            "nudge-direction: direction should pass for :east")))
+    (multiple-value-bind (dx dy)
+        (player-intent-direction player)
+      (assert (edge-direction-passes-p dx dy :east) ()
+              "nudge-direction: direction should pass for :east"))))
 
 (defun test-client-cache-gate-defers-when-uncached ()
   "Client cache gate: when game is a client and target zone is not in the
@@ -1082,6 +1192,43 @@
                        (zone-cache-lookup zone-lru target-id))))
       (assert cached ()
               "cache-gate: server should always pass cache gate"))))
+
+(defun test-server-preloading-queues-adjacent ()
+  "Server preloading should queue adjacent zones when a player is near an edge."
+  (let* ((world (make-test-world :tile-size 64.0 :collision-half 16.0))
+         (zone-a (%make-zone :id :zone-a :width 10 :height 10 :collision-tiles nil :objects nil))
+         (player (%make-player))
+         (game (%make-game :world world
+                           :players (vector player)
+                           :zone-cache (make-zone-cache :capacity 4)
+                           :preload-queue nil))
+         (target-id :zone-b))
+    (setf (world-zone world) zone-a
+          (world-wall-min-x world) 16.0
+          (world-wall-max-x world) 624.0
+          (world-wall-min-y world) 16.0
+          (world-wall-max-y world) 624.0)
+    (setf (player-zone-id player) :zone-a
+          (player-x player) 620.0
+          (player-y player) 300.0)
+    (let ((tmp-path (format nil "/tmp/test-zone-preload-~a.lisp" (get-universal-time))))
+      (with-open-file (out tmp-path :direction :output :if-exists :supersede)
+        (write (list :id target-id :width 10 :height 10
+                     :tile-layers nil :collision-tiles nil :objects nil)
+               :stream out))
+      (let* ((edges-by-zone (make-hash-table :test 'eq))
+             (paths (make-hash-table :test 'eq)))
+        (setf (gethash :zone-a edges-by-zone)
+              (list '(:edge :east :to :zone-b :offset :preserve-y)))
+        (setf (gethash target-id paths) tmp-path)
+        (setf (world-world-graph world)
+              (%make-world-graph :edges-by-zone edges-by-zone :zone-paths paths)))
+      (unwind-protect
+           (progn
+             (update-server-preloading game)
+             (assert (assoc target-id (game-preload-queue game)) ()
+                     "server-preload: target zone should be queued for preloading"))
+        (delete-file tmp-path)))))
 
 (defparameter *tests-zone-continuity* (list
     ;; ADDENDUM 1: Overstep preservation tests
@@ -1122,6 +1269,7 @@
     'test-reset-frame-intent-preserving-movement
     ;; Click-to-move target clamping (Issue 2 fix)
     'test-walk-target-clamped-to-bounds
+    'test-walk-target-clamps-to-zone-bounds
     'test-walk-target-no-clamp-without-world
     ;; Reduced ARM band depth (Issue 1 fix)
     'test-reduced-arm-band-no-false-arm
@@ -1130,9 +1278,13 @@
     'test-clamped-click-sets-raw-target
     'test-clamped-click-produces-attempted-past-boundary
     'test-click-inside-bounds-no-crossing
+    'test-clamped-target-not-cleared-when-blocked
+    'test-clamped-blocked-uses-raw-target-for-crossing
     ;; Issue 3 integration: movement preserved across transition-zone
     'test-transition-preserves-movement-integration
     ;; Issue 2b: direction preserved for pending cancel gate
-    'test-clamped-nudge-sets-move-direction
+    'test-clamped-nudge-uses-raw-direction
     ;; Issue 6: client cache gate defers commit when not cached
-    'test-client-cache-gate-defers-when-uncached))
+    'test-client-cache-gate-defers-when-uncached
+    ;; Server-side preloading to avoid sync load stalls
+    'test-server-preloading-queues-adjacent))

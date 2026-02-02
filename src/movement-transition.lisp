@@ -51,14 +51,20 @@
          (half-h (world-collision-half-height world))
          (tile-size (world-tile-dest-size world)))
     (declare (type single-float x y input-dx input-dy dx dy half-w half-h tile-size))
-    ;; Define move helper that uses per-zone or global collision
-    (flet ((do-move (from-x from-y dir-x dir-y step)
-             (if zone-wall-map
-                 (attempt-move-with-map zone-wall-map from-x from-y dir-x dir-y step
-                                        half-w half-h tile-size)
-                 (attempt-move world from-x from-y dir-x dir-y step
-                               half-w half-h tile-size))))
-      (cond
+    ;; Precompute collision bounds for clamping/zone-crossing checks
+    (multiple-value-bind (min-x max-x min-y max-y)
+        (if zone-wall-map
+            (get-zone-collision-bounds player-zone tile-size half-w half-h)
+            (values (world-wall-min-x world) (world-wall-max-x world)
+                    (world-wall-min-y world) (world-wall-max-y world)))
+      ;; Define move helper that uses per-zone or global collision
+      (flet ((do-move (from-x from-y dir-x dir-y step)
+               (if zone-wall-map
+                   (attempt-move-with-map zone-wall-map from-x from-y dir-x dir-y step
+                                          half-w half-h tile-size)
+                   (attempt-move world from-x from-y dir-x dir-y step
+                                 half-w half-h tile-size))))
+        (cond
         ((or (not (zerop input-dx))
              (not (zerop input-dy)))
          (clear-intent-target intent)
@@ -71,38 +77,43 @@
         ((intent-target-active intent)
          (let* ((target-x (intent-target-x intent))
                 (target-y (intent-target-y intent))
+                (raw-x (if (intent-target-clamped-p intent)
+                           (intent-target-raw-x intent)
+                           target-x))
+                (raw-y (if (intent-target-clamped-p intent)
+                           (intent-target-raw-y intent)
+                           target-y))
                 (to-x (- target-x x))
                 (to-y (- target-y y))
-                (dist (sqrt (+ (* to-x to-x) (* to-y to-y)))))
+                (dist (sqrt (+ (* to-x to-x) (* to-y to-y))))
+                (crossing-target-p (and min-x max-x min-y max-y
+                                        (or (< raw-x min-x) (> raw-x max-x)
+                                            (< raw-y min-y) (> raw-y max-y)))))
            (if (<= dist *target-epsilon*)
-               (progn
-                 (setf (intent-target-active intent) nil
-                       dx 0.0
-                       dy 0.0)
-                 (if (intent-target-clamped-p intent)
-                     ;; Target was clamped from an out-of-bounds click.
-                     ;; Use raw target to compute attempted position so
-                     ;; world-crossing-edge can detect the zone transition.
-                     (let* ((raw-x (intent-target-raw-x intent))
-                            (raw-y (intent-target-raw-y intent))
-                            (raw-dx (- raw-x x))
-                            (raw-dy (- raw-y y))
-                            (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
-                       (if (> raw-dist 0.001)
-                           (let* ((rdir-x (/ raw-dx raw-dist))
-                                  (rdir-y (/ raw-dy raw-dist))
-                                  (nudge 1.0))
-                             (setf (player-attempted-x player) (+ x (* rdir-x nudge))
-                                   (player-attempted-y player) (+ y (* rdir-y nudge)))
-                             ;; Set move direction so player-intent-direction returns
-                             ;; the raw-target direction. Without this, the pending
-                             ;; cancel gate sees (0,0) and cancels before
-                             ;; world-crossing-edge can detect the boundary crossing.
-                             (set-intent-move intent rdir-x rdir-y))
-                           (setf (player-attempted-x player) x
-                                 (player-attempted-y player) y))
-                       (setf (intent-target-clamped-p intent) nil))
-                     ;; Normal stationary: attempted = actual
+               (if (or (intent-target-clamped-p intent) crossing-target-p)
+                   ;; Target was clamped from an out-of-bounds click.
+                   ;; Keep target active, but use raw target direction to nudge
+                   ;; attempted past the boundary for commit detection.
+                   (let* ((raw-dx (- raw-x x))
+                          (raw-dy (- raw-y y))
+                          (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
+                     (if (> raw-dist 0.001)
+                         (let* ((rdir-x (/ raw-dx raw-dist))
+                                (rdir-y (/ raw-dy raw-dist)))
+                           (setf (player-attempted-x player) raw-x
+                                 (player-attempted-y player) raw-y
+                                 ;; Preserve walking animation while pushing
+                                 dx rdir-x
+                                 dy rdir-y))
+                         (setf (player-attempted-x player) x
+                               (player-attempted-y player) y
+                               dx 0.0
+                               dy 0.0)))
+                   ;; Normal stationary: clear target and stop.
+                   (progn
+                     (setf (intent-target-active intent) nil
+                           dx 0.0
+                           dy 0.0)
                      (setf (player-attempted-x player) x
                            (player-attempted-y player) y)))
                (let* ((dir-x (/ to-x dist))
@@ -113,8 +124,25 @@
                        (player-attempted-y player) (+ y (* dir-y step)))
                  (multiple-value-setq (x y dx dy)
                    (do-move x y dir-x dir-y step))
+                 ;; If we're blocked by collision but the target was clamped
+                 ;; (click beyond edge), keep target active and use raw target
+                 ;; to drive attempted position across the boundary.
+                 (when (and (or (intent-target-clamped-p intent) crossing-target-p)
+                            (zerop dx) (zerop dy))
+                   (let* ((raw-dx (- raw-x x))
+                          (raw-dy (- raw-y y))
+                          (raw-dist (sqrt (+ (* raw-dx raw-dx) (* raw-dy raw-dy)))))
+                     (when (> raw-dist 0.001)
+                       (let ((rdir-x (/ raw-dx raw-dist))
+                             (rdir-y (/ raw-dy raw-dist)))
+                         (setf (player-attempted-x player) raw-x
+                               (player-attempted-y player) raw-y
+                               dx rdir-x
+                               dy rdir-y)))))
                  (when (or (<= dist step)
-                           (and (zerop dx) (zerop dy)))
+                           (and (zerop dx) (zerop dy)
+                                (not (or (intent-target-clamped-p intent)
+                                         crossing-target-p))))
                    (setf (intent-target-active intent) nil))))))
         (t
          (setf dx 0.0
@@ -122,12 +150,7 @@
          ;; Stationary: attempted = actual (prevents stale values)
          (setf (player-attempted-x player) x
                (player-attempted-y player) y))))
-    ;; Clamp to zone bounds if available, otherwise global world bounds
-    (multiple-value-bind (min-x max-x min-y max-y)
-        (if zone-wall-map
-            (get-zone-collision-bounds player-zone tile-size half-w half-h)
-            (values (world-wall-min-x world) (world-wall-max-x world)
-                    (world-wall-min-y world) (world-wall-max-y world)))
+      ;; Clamp to zone bounds if available, otherwise global world bounds
       (setf x (clamp x min-x max-x)
             y (clamp y min-y max-y)))
     (let ((old-x (player-x player))
@@ -164,8 +187,14 @@
       ((or (not (zerop dx)) (not (zerop dy)))
        (values dx dy))
       ((intent-target-active intent)
-       (normalize-vector (- (intent-target-x intent) (player-x player))
-                         (- (intent-target-y intent) (player-y player))))
+       (let ((tx (if (intent-target-clamped-p intent)
+                     (intent-target-raw-x intent)
+                     (intent-target-x intent)))
+             (ty (if (intent-target-clamped-p intent)
+                     (intent-target-raw-y intent)
+                     (intent-target-y intent))))
+         (normalize-vector (- tx (player-x player))
+                           (- ty (player-y player)))))
       (t
        (values 0.0 0.0)))))
 
@@ -534,10 +563,18 @@
          (target-id (getf exit :to))
          (target-path (and graph (world-graph-zone-path graph target-id)))
          (had-target (intent-target-active intent))
+         (target-x (when had-target
+                     (if (intent-target-clamped-p intent)
+                         (intent-target-raw-x intent)
+                         (intent-target-x intent))))
+         (target-y (when had-target
+                     (if (intent-target-clamped-p intent)
+                         (intent-target-raw-y intent)
+                         (intent-target-y intent))))
          (target-offset-x (when had-target
-                            (- (intent-target-x intent) (player-x player))))
+                            (- target-x (player-x player))))
          (target-offset-y (when had-target
-                            (- (intent-target-y intent) (player-y player))))
+                            (- target-y (player-y player))))
          (carry (collect-transition-npcs current-npcs player world))
          (carry-table (and carry (build-carry-npc-table carry))))
     (when (and target-path (probe-file target-path))
@@ -719,7 +756,11 @@
           (when had-target
             (set-intent-target intent
                                (+ (player-x player) target-offset-x)
-                               (+ (player-y player) target-offset-y)))
+                               (+ (player-y player) target-offset-y))
+            ;; After transition, treat target as in-bounds for the new zone.
+            (setf (intent-target-raw-x intent) (intent-target-x intent)
+                  (intent-target-raw-y intent) (intent-target-y intent)
+                  (intent-target-clamped-p intent) nil))
           (setf (player-attacking player) nil
                 (player-attack-hit player) nil
                     (player-attack-timer player) 0.0)
