@@ -1,0 +1,859 @@
+MMORPG_ENV=dev sbcl --script scripts/client.lisp
+CLIENT: cwd -> /home/telecommuter/repos/mmorpg/src/
+To load "mmorpg":
+  Load 1 ASDF system:
+    mmorpg
+; Loading "mmorpg"
+....................................
+CLIENT: verbose mode enabled
+CLIENT: verbose coordinates mode enabled
+CLIENT: running
+[VERBOSE] Client starting: connecting to 127.0.0.1:1337
+INFO: Initializing raylib 5.5
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Device initialized successfully
+INFO:     > Display size: 2560 x 1440
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 239
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   AMD
+INFO:     > Renderer: AMD Radeon RX 9070 XT (radeonsi, gfx1201, LLVM 21.1.6, DRM 3.64, 6.18.7-arch1-1)
+INFO:     > Version:  4.6 (Core Profile) Mesa 25.3.4-arch1.1
+INFO:     > GLSL:     4.60
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - X11): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: /home/telecommuter/repos/mmorpg/src
+INFO: TIMER: Target time per frame: 16.667 milliseconds
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | PulseAudio
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit Signed Integer
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  3600
+[VERBOSE] Loading game data from /home/telecommuter/repos/mmorpg/data/game-data.lisp
+[VERBOSE] Game data ready: animations=10 npcs=4 items=7 objects=1 loot=4
+[VERBOSE] Zone loaded: data/zones/zone-1.lisp id=ZONE-1 size=64x64 layers=3
+[VERBOSE] Loading world graph from data/world-graph.lisp
+[VERBOSE] World graph ready: edges=256 zones=256
+[VERBOSE] World ready: zone=ZONE-1 walls=64x64 tile=16.00 dest=64.00
+[VERBOSE] Sim state initialized: player-id=1 npcs=4 zone=ZONE-1
+[VERBOSE COORDS] tile-size=64.00 collider-half=27.20,27.20 wall=[91.20..4004.80, 91.20..4004.80]
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Title Screen.wav] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  498071
+[VERBOSE] Loaded music track: ../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Title Screen.wav
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 1.wav] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  3274608
+[VERBOSE] Loaded music track: ../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 1.wav
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 2.wav] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  3210313
+[VERBOSE] Loaded music track: ../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 2.wav
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 3.wav] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  3611603
+[VERBOSE] Loaded music track: ../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Level 3.wav
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Ending.wav] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  1969117
+[VERBOSE] Loaded music track: ../assets/6 Soundtrack/Juhani Junkala [Retro Game Music Pack] Ending.wav
+[VERBOSE] Audio ready: tracks=5 volume=1/10
+INFO: FILEIO: [../assets/Zelda-like/Overworld.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (640x576 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 3] Texture loaded successfully (640x576 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (tileset): ../assets/Zelda-like/Overworld.png
+INFO: FILEIO: [../assets/1 Characters/3/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 4] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-down-idle): ../assets/1 Characters/3/D_Idle.png
+INFO: FILEIO: [../assets/1 Characters/3/D_Walk.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-down-walk): ../assets/1 Characters/3/D_Walk.png
+INFO: FILEIO: [../assets/1 Characters/3/D_Attack.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-down-attack): ../assets/1 Characters/3/D_Attack.png
+INFO: FILEIO: [../assets/1 Characters/3/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-up-idle): ../assets/1 Characters/3/U_Idle.png
+INFO: FILEIO: [../assets/1 Characters/3/U_Walk.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-up-walk): ../assets/1 Characters/3/U_Walk.png
+INFO: FILEIO: [../assets/1 Characters/3/U_Attack.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-up-attack): ../assets/1 Characters/3/U_Attack.png
+INFO: FILEIO: [../assets/1 Characters/3/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-side-idle): ../assets/1 Characters/3/S_Idle.png
+INFO: FILEIO: [../assets/1 Characters/3/S_Walk.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (192x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-side-walk): ../assets/1 Characters/3/S_Walk.png
+INFO: FILEIO: [../assets/1 Characters/3/S_Attack.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (player-side-attack): ../assets/1 Characters/3/S_Attack.png
+INFO: FILEIO: [../assets/1 Characters/Other/D_Blood.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (blood-down): ../assets/1 Characters/Other/D_Blood.png
+INFO: FILEIO: [../assets/1 Characters/Other/U_Blood.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (blood-up): ../assets/1 Characters/Other/U_Blood.png
+INFO: FILEIO: [../assets/1 Characters/Other/S_Blood.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (blood-side): ../assets/1 Characters/Other/S_Blood.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-RAT-down-idle): ../assets/3 Dungeon Enemies/1/D_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-RAT-up-idle): ../assets/3 Dungeon Enemies/1/U_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-RAT-side-idle): ../assets/3 Dungeon Enemies/1/S_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/2/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-GOBLIN-down-idle): ../assets/3 Dungeon Enemies/2/D_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/2/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-GOBLIN-up-idle): ../assets/3 Dungeon Enemies/2/U_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/2/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-GOBLIN-side-idle): ../assets/3 Dungeon Enemies/2/S_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/3/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-ORC-down-idle): ../assets/3 Dungeon Enemies/3/D_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/3/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-ORC-up-idle): ../assets/3 Dungeon Enemies/3/U_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/3/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-ORC-side-idle): ../assets/3 Dungeon Enemies/3/S_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/4/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-WITCH-DOCTOR-down-idle): ../assets/3 Dungeon Enemies/4/D_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/4/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-WITCH-DOCTOR-up-idle): ../assets/3 Dungeon Enemies/4/U_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/4/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 27] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-WITCH-DOCTOR-side-idle): ../assets/3 Dungeon Enemies/4/S_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/D_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-down-idle): ../assets/3 Dungeon Enemies/1/D_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/U_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-up-idle): ../assets/3 Dungeon Enemies/1/U_Idle.png
+INFO: FILEIO: [../assets/3 Dungeon Enemies/1/S_Idle.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (128x32 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Loaded texture (npc-NPC-side-idle): ../assets/3 Dungeon Enemies/1/S_Idle.png
+INFO: FILEIO: [../assets/1 Characters/Other/Arrow.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (11x3 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (11x3 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/1 Characters/Other/Arrow.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (11x3 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (11x3 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/2.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (7x6 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (7x6 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/1.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (7x6 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (7x6 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/4.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (9x7 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (9x7 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/5.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (5x6 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (5x6 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/3.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (9x7 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (9x7 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [../assets/2 Dungeon Tileset/2 Objects/Other/6.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (5x5 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (5x5 | R8G8B8A8 | 1 mipmaps)
+[VERBOSE] Assets ready: npcs=5 objects=1 items=7
+[VERBOSE] Client game initialized: player-id=1 npcs=4 zone=ZONE-1
+[VERBOSE] Server ping: 17ms
+[VERBOSE] Sending login request for tele (Enter key)
+[VERBOSE] Assigned player ID: 1
+[VERBOSE] Authentication successful
+[VERBOSE] Unexpected message during login: :SNAPSHOT
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-3.lisp id=ZONE-3 size=64x64 layers=4
+[VERBOSE] Client NPC zone-state synced (zone-id=ZONE-1 npcs=4)
+[VERBOSE] Client NPC zone-state synced (zone-id=ZONE-1 npcs=4)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 1] Framebuffer object created successfully
+INFO: TEXTURE: [ID 40] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 2] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 2] Framebuffer object created successfully
+INFO: TEXTURE: [ID 41] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 3] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 3] Framebuffer object created successfully
+INFO: TEXTURE: [ID 42] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 4] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 4] Framebuffer object created successfully
+INFO: TEXTURE: [ID 43] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 5] Framebuffer object created successfully
+INFO: FILEIO: [/home/telecommuter/repos/mmorpg/assets/Zelda-like/objects.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (528x320 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (528x320 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 6] Framebuffer object created successfully
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-123.lisp id=ZONE-123 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-137.lisp id=ZONE-137 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-4.lisp id=ZONE-4 size=64x64 layers=5
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-2.lisp id=ZONE-2 size=64x64 layers=2
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-107.lisp id=ZONE-107 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-109.lisp id=ZONE-109 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-108.lisp id=ZONE-108 size=64x64 layers=0
+[VERBOSE] Client NPC zone-state synced (zone-id=ZONE-1 npcs=4)
+[VERBOSE] Client NPC zone-state synced (zone-id=ZONE-1 npcs=4)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 7] Framebuffer object created successfully
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 8] Framebuffer object created successfully
+INFO: TEXTURE: [ID 48] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 9] Framebuffer object created successfully
+INFO: TEXTURE: [ID 49] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 10] Framebuffer object created successfully
+INFO: TEXTURE: [ID 50] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 11] Framebuffer object created successfully
+INFO: FILEIO: [/home/telecommuter/repos/mmorpg/assets/Zelda-like/cave.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (640x400 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 51] Texture loaded successfully (640x400 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 52] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 12] Framebuffer object created successfully
+INFO: TEXTURE: [ID 53] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 13] Framebuffer object created successfully
+INFO: TEXTURE: [ID 54] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 14] Framebuffer object created successfully
+INFO: TEXTURE: [ID 55] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 15] Framebuffer object created successfully
+INFO: TEXTURE: [ID 56] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 16] Framebuffer object created successfully
+INFO: TEXTURE: [ID 57] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 17] Framebuffer object created successfully
+INFO: TEXTURE: [ID 58] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 18] Framebuffer object created successfully
+INFO: TEXTURE: [ID 59] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 19] Framebuffer object created successfully
+INFO: TEXTURE: [ID 60] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 20] Framebuffer object created successfully
+INFO: TEXTURE: [ID 61] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 21] Framebuffer object created successfully
+INFO: TEXTURE: [ID 62] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 22] Framebuffer object created successfully
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+INFO: TEXTURE: [ID 63] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 23] Framebuffer object created successfully
+INFO: TEXTURE: [ID 64] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 24] Framebuffer object created successfully
+INFO: TEXTURE: [ID 65] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 25] Framebuffer object created successfully
+INFO: TEXTURE: [ID 66] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 26] Framebuffer object created successfully
+INFO: TEXTURE: [ID 67] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 27] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 27] Framebuffer object created successfully
+INFO: TEXTURE: [ID 68] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 28] Framebuffer object created successfully
+INFO: TEXTURE: [ID 69] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 29] Framebuffer object created successfully
+INFO: TEXTURE: [ID 70] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 30] Framebuffer object created successfully
+INFO: TEXTURE: [ID 71] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 31] Framebuffer object created successfully
+INFO: TEXTURE: [ID 72] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 32] Framebuffer object created successfully
+INFO: TEXTURE: [ID 73] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 33] Framebuffer object created successfully
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+INFO: FBO: [ID 1] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 2] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 3] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 4] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 5] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 6] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 23] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 24] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 25] Unloaded framebuffer from VRAM (GPU)
+[VERBOSE] Client zone transitioned to ZONE-3
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-1.lisp id=ZONE-1 size=64x64 layers=3
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-152.lisp id=ZONE-152 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-153.lisp id=ZONE-153 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-151.lisp id=ZONE-151 size=64x64 layers=0
+INFO: TEXTURE: [ID 39] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 1] Framebuffer object created successfully
+INFO: TEXTURE: [ID 40] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 2] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 2] Framebuffer object created successfully
+INFO: TEXTURE: [ID 41] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 3] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 3] Framebuffer object created successfully
+INFO: TEXTURE: [ID 42] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 4] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 4] Framebuffer object created successfully
+INFO: TEXTURE: [ID 43] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 5] Framebuffer object created successfully
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 6] Framebuffer object created successfully
+INFO: TEXTURE: [ID 63] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 23] Framebuffer object created successfully
+INFO: TEXTURE: [ID 64] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 24] Framebuffer object created successfully
+INFO: TEXTURE: [ID 65] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 25] Framebuffer object created successfully
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-137.lisp id=ZONE-137 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-123.lisp id=ZONE-123 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-2.lisp id=ZONE-2 size=64x64 layers=2
+INFO: FBO: [ID 7] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 8] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 9] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 10] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 11] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 12] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 13] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 14] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 15] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 16] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 17] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 18] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 19] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 20] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 21] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 22] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 26] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 27] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 28] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 29] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 30] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 31] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 32] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 33] Unloaded framebuffer from VRAM (GPU)
+[VERBOSE] Client zone transitioned to ZONE-1
+[VERBOSE] Client NPC zone-state synced (zone-id=ZONE-1 npcs=4)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 7] Framebuffer object created successfully
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 8] Framebuffer object created successfully
+INFO: TEXTURE: [ID 48] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 9] Framebuffer object created successfully
+INFO: TEXTURE: [ID 49] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 10] Framebuffer object created successfully
+INFO: TEXTURE: [ID 50] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 11] Framebuffer object created successfully
+INFO: TEXTURE: [ID 52] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 12] Framebuffer object created successfully
+INFO: TEXTURE: [ID 53] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 13] Framebuffer object created successfully
+INFO: TEXTURE: [ID 54] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 14] Framebuffer object created successfully
+INFO: TEXTURE: [ID 55] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 15] Framebuffer object created successfully
+INFO: TEXTURE: [ID 56] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 16] Framebuffer object created successfully
+INFO: TEXTURE: [ID 57] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 17] Framebuffer object created successfully
+INFO: TEXTURE: [ID 58] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 18] Framebuffer object created successfully
+INFO: TEXTURE: [ID 59] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 19] Framebuffer object created successfully
+INFO: TEXTURE: [ID 60] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 20] Framebuffer object created successfully
+INFO: TEXTURE: [ID 61] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 21] Framebuffer object created successfully
+INFO: TEXTURE: [ID 62] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 22] Framebuffer object created successfully
+INFO: TEXTURE: [ID 66] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 26] Framebuffer object created successfully
+INFO: TEXTURE: [ID 67] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 27] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 27] Framebuffer object created successfully
+INFO: TEXTURE: [ID 68] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 28] Framebuffer object created successfully
+INFO: TEXTURE: [ID 69] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 29] Framebuffer object created successfully
+INFO: TEXTURE: [ID 70] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 30] Framebuffer object created successfully
+INFO: TEXTURE: [ID 71] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 31] Framebuffer object created successfully
+INFO: TEXTURE: [ID 72] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 32] Framebuffer object created successfully
+INFO: TEXTURE: [ID 73] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 33] Framebuffer object created successfully
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-4.lisp id=ZONE-4 size=64x64 layers=5
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-107.lisp id=ZONE-107 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-109.lisp id=ZONE-109 size=64x64 layers=0
+[VERBOSE] Zone loaded: /home/telecommuter/repos/mmorpg/data/zones/zone-3.lisp id=ZONE-3 size=64x64 layers=4
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] DELTA-DESER: received 1 objects
+[VERBOSE] Shutting down game resources
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: TEXTURE: [ID 51] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: FBO: [ID 1] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 2] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 3] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 4] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 5] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 6] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 23] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 24] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 25] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 7] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 8] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 9] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 10] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 11] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 12] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 13] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 14] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 15] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 16] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 17] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 18] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 19] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 20] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 21] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 22] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 26] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 27] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 28] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 29] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 30] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 31] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 32] Unloaded framebuffer from VRAM (GPU)
+INFO: FBO: [ID 33] Unloaded framebuffer from VRAM (GPU)
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+CLIENT: ok
