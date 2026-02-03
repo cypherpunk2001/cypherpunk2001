@@ -763,6 +763,11 @@
     ;; only runs server-side. The client must do its own rebasing here.
     ;; game-client-intent is the source of truth (it's what the client sends
     ;; to the server every frame and what run-local applies via apply-client-intent).
+    ;; Bug 5/6: Skip rebase when a multi-hop path is active -- the continuation
+    ;; below will set the correct next-hop target. The rebase block can clear
+    ;; intents (line "unless rebased") which would deactivate intent-target-active
+    ;; before the continuation runs.
+    (unless (game-zone-click-path game)
     (let* ((ci (game-client-intent game))
            (p-intent (and player (player-intent player)))
            (had-target (and ci (intent-target-active ci)))
@@ -846,7 +851,7 @@
                         old-zone-id new-zone-id exit-edge
                         src-min-x src-max-x src-min-y src-max-y
                         dst-min-x dst-max-x dst-min-y dst-max-y
-                        rebased))))))))
+                        rebased))))))))) ; end unless game-zone-click-path
     ;; Bug 4: Multi-hop zone-click continuation
     ;; After a hop completes, if we have a zone-click-path, advance through it.
     ;; The path, edges, and hop-targets are parallel lists.  When we arrive at
@@ -895,10 +900,13 @@
                      (if hop-target
                          (let ((target-x (car hop-target))
                                (target-y (cdr hop-target)))
+                           ;; Bug 5/6: Pass nil for world to skip clamping -- hop targets
+                           ;; are intentionally past the zone edge to trigger crossings.
+                           ;; Pass nil for mark-p to suppress click marker on continuation hops.
                            (when (and ci player)
-                             (set-player-walk-target player ci target-x target-y nil world))
+                             (set-player-walk-target player ci target-x target-y nil nil))
                            (when p-intent
-                             (set-player-walk-target player p-intent target-x target-y nil world))
+                             (set-player-walk-target player p-intent target-x target-y nil nil))
                            (log-verbose "Multi-hop path: zone ~a, hop target=(~,1f,~,1f) (~d hops left)"
                                         zone-id target-x target-y (length still-remaining)))
                          ;; No target stored — clear path (fallback)
@@ -907,10 +915,55 @@
                                         zone-id)
                            (clear-zone-click-path game)))))))
             (t
-             ;; Landed in unexpected zone — clear path (fallback)
-             (log-verbose "Multi-hop path: unexpected zone ~a (expected one of ~a), clearing"
-                          zone-id remaining)
-             (clear-zone-click-path game))))))
+             ;; Bug 5/6: Unexpected zone -- try to recompute path from here to final destination
+             (let ((final-dest (car (last remaining))))
+               (if (and final-dest
+                        (not (game-zone-click-retry-p game)))  ; one retry only
+                   (let* ((path-world (game-world game))
+                          (graph (and path-world (world-world-graph path-world)))
+                          (new-path (and graph (world-graph-find-path graph zone-id final-dest))))
+                     (if new-path
+                         (let ((new-edges (and graph (zone-path-edge-list graph zone-id new-path))))
+                           (if new-edges
+                               ;; Reverse-translate final-dest coords from destination-zone
+                               ;; local space back to current zone's local space, then
+                               ;; forward-translate along the new path.
+                               (multiple-value-bind (local-x local-y)
+                                   (reverse-translate-along-path path-world
+                                     (game-zone-click-final-x game)
+                                     (game-zone-click-final-y game)
+                                     zone-id new-path)
+                                 (if (and local-x local-y)
+                               (multiple-value-bind (fx fy new-targets)
+                                   (translate-click-along-path path-world
+                                     local-x local-y
+                                     zone-id new-path)
+                                 (if (and fx fy new-targets)
+                                     (progn
+                                       (setf (game-zone-click-path game) new-path
+                                             (game-zone-click-edges game) new-edges
+                                             (game-zone-click-hop-targets game) new-targets
+                                             (game-zone-click-final-x game) fx
+                                             (game-zone-click-final-y game) fy
+                                             (game-zone-click-retry-p game) t)
+                                       ;; Set first hop target
+                                       (let ((hop-target (first new-targets)))
+                                         (when hop-target
+                                           (set-player-walk-target player ci
+                                             (car hop-target) (cdr hop-target) nil nil)
+                                           (when p-intent
+                                             (set-player-walk-target player p-intent
+                                               (car hop-target) (cdr hop-target) nil nil))))
+                                       (log-verbose "Multi-hop: recomputed path from ~a: ~a"
+                                                    zone-id new-path))
+                                     (clear-zone-click-path game)))
+                                 (clear-zone-click-path game))) ; reverse-translate failed
+                               (clear-zone-click-path game)))
+                         (clear-zone-click-path game)))
+                   (progn
+                     (log-verbose "Multi-hop path: unexpected zone ~a (expected one of ~a), clearing"
+                                  zone-id remaining)
+                     (clear-zone-click-path game)))))))))
     ;; Clear stale edge-strips from the old zone. Between zone change and
     ;; next snapshot, old edge-strips would render as ghost sprites at wrong
     ;; positions. New edge-strips arrive with the next server snapshot.

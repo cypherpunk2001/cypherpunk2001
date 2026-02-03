@@ -285,6 +285,18 @@
         (cancel-px (* *zone-hysteresis-out* tile-dest-size)))
     (> dist cancel-px)))
 
+(defun player-attempted-past-edge-p (player edge min-x max-x min-y max-y)
+  "Return T if player's attempted position is past the boundary for EDGE.
+   No directional gating — used for forced multi-hop commits (Bug 5/6)."
+  (let ((ax (player-attempted-x player))
+        (ay (player-attempted-y player)))
+    (case edge
+      (:north (< ay min-y))
+      (:south (> ay max-y))
+      (:west  (< ax min-x))
+      (:east  (> ax max-x))
+      (t nil))))
+
 (defun world-exit-edge-with-bounds (player min-x max-x min-y max-y
                                     &optional (commit-margin 0.0))
   "Return the edge the player is pushing against using specified bounds.
@@ -926,19 +938,38 @@
                                  ((null exit)
                                   (setf (player-zone-transition-pending player) nil))
                                  ;; Cancel: intent dropped below direction threshold
-                                 ((multiple-value-bind (dx dy) (player-intent-direction player)
-                                    (not (edge-direction-passes-p dx dy pending)))
+                                 ;; Bug 5/6: Skip directional cancel when pending matches
+                                 ;; stored edge from multi-hop path — stored edge is authoritative.
+                                 ((and (multiple-value-bind (dx dy) (player-intent-direction player)
+                                         (not (edge-direction-passes-p dx dy pending)))
+                                       (let ((stored-edge (and (game-zone-click-edges game)
+                                                               (first (game-zone-click-edges game)))))
+                                         (not (and stored-edge
+                                                   (game-zone-click-path game)
+                                                   (eq pending stored-edge)))))
                                   (when *verbose-zone-transitions*
                                     (log-zone "Zone transition: cancel for edge ~a (intent dropped)" pending))
                                   (setf (player-zone-transition-pending player) nil))
                                  ;; Commit or edge-change: check if attempted position
                                  ;; crosses the zone boundary (strict inequality)
                                  (t
-                                  (let ((actual-edge (world-crossing-edge
-                                                      player min-x max-x min-y max-y)))
+                                  (let* ((actual-edge (world-crossing-edge
+                                                       player min-x max-x min-y max-y))
+                                         ;; Bug 5/6: Force commit when stored edge matches
+                                         ;; pending and attempted position is past the edge,
+                                         ;; even if world-crossing-edge disagrees due to
+                                         ;; directional gating picking a different axis.
+                                         (stored-edge (and (game-zone-click-edges game)
+                                                           (first (game-zone-click-edges game))))
+                                         (force-commit-p (and stored-edge
+                                                              (game-zone-click-path game)
+                                                              (eq pending stored-edge)
+                                                              (player-attempted-past-edge-p
+                                                                player pending
+                                                                min-x max-x min-y max-y))))
                                     (cond
-                                      ;; Commit: at the pending edge
-                                      ((eq actual-edge pending)
+                                      ;; Commit: at the pending edge (or forced by stored path)
+                                      ((or (eq actual-edge pending) force-commit-p)
                                        ;; Client cache gate: defer commit if target zone
                                        ;; is not yet cached (avoids sync disk load hitch).
                                        ;; Server always commits immediately.
@@ -975,30 +1006,44 @@
                                       (t nil)))))))
                             ;; === NO PENDING: check for arm ===
                             (t
-                             ;; Pick the edge with strongest directional alignment
-                             ;; (dominant direction), not first match from dolist.
-                             (let ((graph (world-world-graph world)))
-                               (when graph
-                                 (multiple-value-bind (dx dy) (player-intent-direction player)
-                                   (let ((best-edge nil)
-                                         (best-dot 0.0))
-                                     (declare (type single-float best-dot))
-                                     (dolist (exit-spec (world-graph-exits graph player-zone-id))
-                                       (let ((edge (getf exit-spec :edge)))
-                                         (when (and edge
-                                                    (player-in-arm-band-p player edge
-                                                                          min-x max-x min-y max-y tile-size)
-                                                    (edge-direction-passes-p dx dy edge))
-                                           ;; Rank by dot product with edge normal
-                                           (let ((dot (edge-direction-dot dx dy edge)))
-                                             (when (> dot best-dot)
-                                               (setf best-edge edge
-                                                     best-dot dot))))))
-                                     (when best-edge
-                                       (when *verbose-zone-transitions*
-                                         (log-zone "Zone transition: ARM edge ~a for player ~a (dot=~,2f)"
-                                                   best-edge (player-id player) best-dot))
-                                       (setf (player-zone-transition-pending player) best-edge)))))))))))))))
+                             ;; Bug 5/6: When a multi-hop path is active, force-arm the stored edge
+                             ;; instead of relying on directional alignment which can pick the wrong axis.
+                             (let* ((stored-edge (and (game-zone-click-edges game)
+                                                      (first (game-zone-click-edges game))))
+                                    (force-arm-p (and stored-edge
+                                                      (game-zone-click-path game)
+                                                      (world-edge-exit-for-zone world player-zone-id stored-edge)
+                                                      (player-in-arm-band-p player stored-edge
+                                                                            min-x max-x min-y max-y tile-size))))
+                               (if force-arm-p
+                                   (progn
+                                     (setf (player-zone-transition-pending player) stored-edge)
+                                     (log-verbose "Multi-hop: force-arm edge ~a" stored-edge))
+                                   ;; No stored edge or not in arm band — fall through to existing logic
+                                   ;; Pick the edge with strongest directional alignment
+                                   ;; (dominant direction), not first match from dolist.
+                                   (let ((graph (world-world-graph world)))
+                                     (when graph
+                                       (multiple-value-bind (dx dy) (player-intent-direction player)
+                                         (let ((best-edge nil)
+                                               (best-dot 0.0))
+                                           (declare (type single-float best-dot))
+                                           (dolist (exit-spec (world-graph-exits graph player-zone-id))
+                                             (let ((edge (getf exit-spec :edge)))
+                                               (when (and edge
+                                                          (player-in-arm-band-p player edge
+                                                                                min-x max-x min-y max-y tile-size)
+                                                          (edge-direction-passes-p dx dy edge))
+                                                 ;; Rank by dot product with edge normal
+                                                 (let ((dot (edge-direction-dot dx dy edge)))
+                                                   (when (> dot best-dot)
+                                                     (setf best-edge edge
+                                                           best-dot dot))))))
+                                           (when best-edge
+                                             (when *verbose-zone-transitions*
+                                               (log-zone "Zone transition: ARM edge ~a for player ~a (dot=~,2f)"
+                                                         best-edge (player-id player) best-dot))
+                                             (setf (player-zone-transition-pending player) best-edge)))))))))))))))))
     transition-count))
 
 ;;;; ========================================================================

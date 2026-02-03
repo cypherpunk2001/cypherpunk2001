@@ -21,6 +21,7 @@ Multi-hop click pathing (Bug 4 Part 3)
 - `zone-path-edge-list`: compute per-hop edge directions for a zone path.
 - Multi-hop continuation uses precomputed per-hop targets (derived from the original raw click, not the player's runtime position) so the walk direction is always correct regardless of where the player stands in the zone.
 - Note: `zone-bounds-zero-origin` moved to utils.lisp to fix load-order inversion.
+- Bug 5/6: `clear-zone-click-path` also clears `zone-click-retry-p` (single retry flag for unexpected-zone recompute).
 
 Zone bounds
 - `build-zone-bounds-index` reads `:origin-x`/`:origin-y` from zone files (defaulting to 0) and incorporates origin offsets into bounds calculation via `zone-bounds-with-origin`.

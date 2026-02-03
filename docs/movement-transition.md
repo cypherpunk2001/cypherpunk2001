@@ -12,6 +12,12 @@ Key responsibilities
 - Coordinate remapping from source zone space to destination zone space.
 - Continuity handling to prevent visual teleport artifacts during transitions.
 
+Bug 5/6 fixes: diagonal multi-hop
+- `player-attempted-past-edge-p`: helper for forced commit detection (no directional gating).
+- When `game-zone-click-path` is active, arm/commit phases force the stored edge from `game-zone-click-edges` instead of auto-detecting via directional alignment. This prevents diagonal hops from picking the wrong axis.
+- Directional cancel is skipped when pending matches the stored edge.
+- Force-commit fires when attempted position is past the stored edge boundary, even if `world-crossing-edge` returns a different edge.
+
 Load order
 - Loaded last among movement files: `movement-core` -> `movement-collision` -> `movement-preview` -> `movement-transition`.
 - Depends on all other movement files; integrates zone state, collision, and world graph for complete transition logic.

@@ -447,7 +447,9 @@
   ;; by translating through each seam.
   (zone-click-hop-targets nil :type list)
   (zone-click-final-x 0.0 :type single-float)
-  (zone-click-final-y 0.0 :type single-float))
+  (zone-click-final-y 0.0 :type single-float)
+  ;; Bug 5/6: Single retry flag — set after unexpected-zone recompute to prevent loops
+  (zone-click-retry-p nil :type boolean))
 
 (defun queue-net-request (game request)
   ;; Queue a network request for the client to send.

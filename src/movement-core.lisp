@@ -436,7 +436,8 @@
         (game-zone-click-edges game) nil
         (game-zone-click-hop-targets game) nil
         (game-zone-click-final-x game) 0.0
-        (game-zone-click-final-y game) 0.0))
+        (game-zone-click-final-y game) 0.0
+        (game-zone-click-retry-p game) nil))
 
 (defun compute-diagonal-click-path (world player raw-x raw-y)
   "Check if a click at RAW-X/RAW-Y requires diagonal (2-hop) zone traversal.
@@ -657,6 +658,64 @@
           (push edge edges))
         (setf prev next-zone))
       (nreverse edges))))
+
+(defun opposite-edge (edge)
+  "Return the opposite cardinal edge direction."
+  (case edge
+    (:north :south)
+    (:south :north)
+    (:east  :west)
+    (:west  :east)
+    (t nil)))
+
+(defun reverse-translate-along-path (world dest-x dest-y from-id zone-path
+                                     &optional zone-lru-cache)
+  "Reverse-translate DEST-X/DEST-Y from the last zone in ZONE-PATH back to
+   FROM-ID's local coordinate space.  ZONE-PATH is ordered from FROM-ID to
+   destination (excluding FROM-ID, same format as translate-click-along-path).
+   Returns (values from-x from-y) or NIL if any hop fails.
+   Used by the retry path to convert destination-zone coords into the current
+   zone's local space before feeding into translate-click-along-path."
+  (let* ((tile-size (world-tile-dest-size world))
+         (half-w (world-collision-half-width world))
+         (half-h (world-collision-half-height world))
+         (graph (world-world-graph world)))
+    (when (and tile-size half-w half-h graph zone-path)
+      (let ((cur-x (float dest-x 1.0))
+            (cur-y (float dest-y 1.0))
+            ;; Build the full chain: (from-id zone-1 zone-2 ... dest)
+            (chain (cons from-id zone-path)))
+        ;; Walk backward through consecutive pairs.
+        ;; chain = (A B C D). Pairs forward: A->B, B->C, C->D.
+        ;; Reverse order: C->D, B->C, A->B (i.e. translate D-space -> A-space).
+        (let ((pairs nil))
+          (loop :for (a b) :on chain
+                :while b
+                :do (push (cons a b) pairs))
+          ;; pairs is now ((C . D) (B . C) (A . B)) — reverse hop order
+          (dolist (pair pairs)
+            (let* ((src-zone (car pair))   ; the zone we're translating INTO
+                   (dst-zone (cdr pair))   ; the zone we're translating FROM
+                   (fwd-edge (world-graph-edge-between graph src-zone dst-zone)))
+              (unless fwd-edge (return-from reverse-translate-along-path nil))
+              (let ((rev-edge (opposite-edge fwd-edge)))
+                (unless rev-edge (return-from reverse-translate-along-path nil))
+                (multiple-value-bind (dst-min-x dst-max-x dst-min-y dst-max-y)
+                    (get-zone-bounds-from-any-cache dst-zone world tile-size half-w half-h
+                                                    zone-lru-cache)
+                  (multiple-value-bind (src-min-x src-max-x src-min-y src-max-y)
+                      (get-zone-bounds-from-any-cache src-zone world tile-size half-w half-h
+                                                      zone-lru-cache)
+                    (unless (and dst-min-x dst-max-x dst-min-y dst-max-y
+                                 src-min-x src-max-x src-min-y src-max-y)
+                      (return-from reverse-translate-along-path nil))
+                    ;; Reverse: seam-translate with opposite edge, swapping src/dst
+                    (multiple-value-bind (tx ty)
+                        (seam-translate-position rev-edge cur-x cur-y
+                                                 dst-min-x dst-max-x dst-min-y dst-max-y
+                                                 src-min-x src-max-x src-min-y src-max-y)
+                      (setf cur-x tx cur-y ty))))))))
+        (values cur-x cur-y)))))
 
 (defun compute-minimap-click-path (world player raw-x raw-y)
   "Compute a multi-hop zone path for any cross-zone click.
