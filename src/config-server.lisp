@@ -67,6 +67,12 @@
    Prevents message flood from starving auth integration and snapshots.
    Override via MMORPG_MAX_MESSAGES_PER_TICK environment variable.")
 
+;;; Auth Metrics Logging
+(defparameter *auth-metrics-logging* nil
+  "When T, log auth metrics every 30s (only when metrics change).
+   Disabled by default to reduce log noise during normal local play.
+   Override via MMORPG_AUTH_METRICS=1 environment variable.")
+
 ;;; Password Hashing (PBKDF2-SHA256)
 (defparameter *password-hash-iterations* 10000
   "PBKDF2-SHA256 iteration count for password hashing.

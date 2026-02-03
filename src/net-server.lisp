@@ -104,7 +104,9 @@
           (auth-queue-max-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_AUTH_QUEUE_MAX")
                                   #-sbcl (uiop:getenv "MMORPG_AUTH_QUEUE_MAX")))
           (max-msg-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_MAX_MESSAGES_PER_TICK")
-                           #-sbcl (uiop:getenv "MMORPG_MAX_MESSAGES_PER_TICK"))))
+                           #-sbcl (uiop:getenv "MMORPG_MAX_MESSAGES_PER_TICK")))
+          (auth-metrics-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_AUTH_METRICS")
+                                #-sbcl (uiop:getenv "MMORPG_AUTH_METRICS"))))
       (when auth-workers-str
         (let ((n (parse-integer auth-workers-str :junk-allowed t)))
           (when (and n (> n 0) (<= n 32))
@@ -116,7 +118,10 @@
       (when max-msg-str
         (let ((n (parse-integer max-msg-str :junk-allowed t)))
           (when (and n (> n 0))
-            (setf *max-messages-per-tick* n)))))
+            (setf *max-messages-per-tick* n))))
+      (when (and auth-metrics-str (string= auth-metrics-str "1"))
+        (setf *auth-metrics-logging* t)
+        (format t "~&SERVER: Auth metrics logging enabled~%")))
     ;; Step 11: Configurable PBKDF2 iteration count
     (let ((hash-iter-str (or #+sbcl (sb-ext:posix-getenv "MMORPG_PASSWORD_HASH_ITERATIONS")
                               #-sbcl (uiop:getenv "MMORPG_PASSWORD_HASH_ITERATIONS"))))
@@ -153,6 +158,13 @@
            (last-flush-time 0.0)
            (last-ownership-refresh-time 0.0)
            (last-auth-metrics-time 0.0)
+           ;; Delta tracking for auth metrics (only log when changed)
+           (prev-auth-queued 0)
+           (prev-auth-processed 0)
+           (prev-auth-success 0)
+           (prev-auth-fail 0)
+           (prev-auth-expired 0)
+           (prev-auth-rejected 0)
            ;; Auth worker threads for non-blocking login/registration
            (auth-request-queue (make-auth-queue-instance))
            (auth-result-queue (make-auth-queue-instance :max-depth 0)) ; result queue unbounded
@@ -310,18 +322,40 @@
                          (when (>= (- elapsed last-flush-time) *batch-flush-interval*)
                            (flush-dirty-players)
                            (setf last-flush-time elapsed))
-                         ;; 3b2. Periodic auth metrics logging (every 30s)
+                         ;; 3b2. Periodic auth metrics logging (every 30s, only when enabled and changed)
                          (when (>= (- elapsed last-auth-metrics-time) 30.0)
-                           (when (> (auth-metrics-queued *auth-metrics*) 0)
-                             (format t "[AUTH] queued=~d processed=~d success=~d fail=~d expired=~d rejected=~d queue-depth=~d~%"
-                                     (auth-metrics-queued *auth-metrics*)
-                                     (auth-metrics-processed *auth-metrics*)
-                                     (auth-metrics-success *auth-metrics*)
-                                     (auth-metrics-fail *auth-metrics*)
-                                     (auth-metrics-expired *auth-metrics*)
-                                     (auth-metrics-rejected-busy *auth-metrics*)
-                                     (auth-queue-count auth-request-queue))
-                             (finish-output))
+                           (when *auth-metrics-logging*
+                             (let* ((cur-queued (auth-metrics-queued *auth-metrics*))
+                                    (cur-processed (auth-metrics-processed *auth-metrics*))
+                                    (cur-success (auth-metrics-success *auth-metrics*))
+                                    (cur-fail (auth-metrics-fail *auth-metrics*))
+                                    (cur-expired (auth-metrics-expired *auth-metrics*))
+                                    (cur-rejected (auth-metrics-rejected-busy *auth-metrics*))
+                                    (d-queued (- cur-queued prev-auth-queued))
+                                    (d-processed (- cur-processed prev-auth-processed))
+                                    (d-success (- cur-success prev-auth-success))
+                                    (d-fail (- cur-fail prev-auth-fail))
+                                    (d-expired (- cur-expired prev-auth-expired))
+                                    (d-rejected (- cur-rejected prev-auth-rejected)))
+                               ;; Only log if any metric changed
+                               (when (or (> d-queued 0) (> d-processed 0) (> d-success 0)
+                                         (> d-fail 0) (> d-expired 0) (> d-rejected 0))
+                                 (format t "[AUTH] queued=~d(+~d) processed=~d(+~d) success=~d(+~d) fail=~d(+~d) expired=~d(+~d) rejected=~d(+~d) depth=~d~%"
+                                         cur-queued d-queued
+                                         cur-processed d-processed
+                                         cur-success d-success
+                                         cur-fail d-fail
+                                         cur-expired d-expired
+                                         cur-rejected d-rejected
+                                         (auth-queue-count auth-request-queue))
+                                 (finish-output))
+                               ;; Update previous values for next delta
+                               (setf prev-auth-queued cur-queued
+                                     prev-auth-processed cur-processed
+                                     prev-auth-success cur-success
+                                     prev-auth-fail cur-fail
+                                     prev-auth-expired cur-expired
+                                     prev-auth-rejected cur-rejected)))
                            (setf last-auth-metrics-time elapsed))
                          ;; 3c. Periodic session ownership refresh (every ~30s, half of TTL)
                          (when (>= (- elapsed last-ownership-refresh-time) *ownership-refresh-interval*)

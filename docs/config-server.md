@@ -50,6 +50,13 @@ How it connects
 
 *Why restart:* Client must know server's public key to encrypt credentials. Server generates this at startup.
 
+### Auth Metrics Logging
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*auth-metrics-logging*` | `nil` | Enable periodic auth metrics logging (every 30s, only when changed). Override via `MMORPG_AUTH_METRICS=1` |
+
+*Why:* Disabled by default to reduce log noise during normal local play. When enabled, logs show cumulative totals with deltas in parentheses (e.g., `queued=5(+2)` means 5 total, 2 new since last log). Only logs when at least one metric has changed.
+
 ### Player Data Structures
 | Parameter | Default | Description |
 |-----------|---------|-------------|
