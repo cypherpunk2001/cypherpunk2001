@@ -100,6 +100,7 @@
       (raylib:toggle-fullscreen))
     (update-audio audio)
     (update-camera-zoom camera)
+    (update-camera-leash camera player world editor)
     (update-ui-loading ui dt)
     (update-ui-hud-log ui dt)
     (update-click-marker player dt npcs)
@@ -355,32 +356,34 @@
               (let ((mouse-npc nil)
                     (mouse-object nil))
                 (when (or mouse-clicked mouse-down)
-                  (multiple-value-bind (world-x world-y)
-                      (screen-to-world mouse-x mouse-y
-                                       (player-x player)
-                                       (player-y player)
-                                       (camera-offset camera)
-                                       (camera-zoom camera))
-                    (setf mouse-npc (find-npc-at-world npcs world world-x world-y)
-                          mouse-object (find-object-at-world world world-x world-y))
-                    (when mouse-clicked
-                      (cond
-                        (mouse-npc
-                         (set-player-attack-target player client-intent mouse-npc t))
-                        (mouse-object
-                         ;; Task 5.5: Use zone-object struct accessors
-                         (set-player-pickup-target player client-intent world
-                                                   (zone-object-id mouse-object)
-                                                   (zone-object-x mouse-object)
-                                                   (zone-object-y mouse-object)
-                                                   t))
-                        (t
-                         (update-target-from-mouse player client-intent camera dt
-                                                   mouse-clicked mouse-down world))))))
+                  ;; Use camera focus (leash or editor) for screen-to-world conversion
+                  (multiple-value-bind (cam-x cam-y)
+                      (editor-camera-target editor player camera)
+                    (multiple-value-bind (world-x world-y)
+                        (screen-to-world mouse-x mouse-y
+                                         cam-x cam-y
+                                         (camera-offset camera)
+                                         (camera-zoom camera))
+                      (setf mouse-npc (find-npc-at-world npcs world world-x world-y)
+                            mouse-object (find-object-at-world world world-x world-y))
+                      (when mouse-clicked
+                        (cond
+                          (mouse-npc
+                           (set-player-attack-target player client-intent mouse-npc t))
+                          (mouse-object
+                           ;; Task 5.5: Use zone-object struct accessors
+                           (set-player-pickup-target player client-intent world
+                                                     (zone-object-id mouse-object)
+                                                     (zone-object-x mouse-object)
+                                                     (zone-object-y mouse-object)
+                                                     t))
+                          (t
+                           (update-target-from-mouse player client-intent camera dt
+                                                     mouse-clicked mouse-down world editor)))))))
                 (when (and mouse-down (not mouse-clicked)
                            (not mouse-npc) (not mouse-object))
                   (update-target-from-mouse player client-intent camera dt
-                                            mouse-clicked mouse-down world))))))
+                                            mouse-clicked mouse-down world editor))))))
         ;; Bug 4: After any click sets a walk target, check for cross-zone path
         ;; Both floor and minimap clicks use bounds-based destination resolution
         (when mouse-clicked

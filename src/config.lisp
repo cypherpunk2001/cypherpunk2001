@@ -155,6 +155,20 @@
    Acts as a safety bound; should be >= number of zones in the world graph.
    If hit, the path is considered unreachable.")
 
+;;;; ========================================================================
+;;;; CAMERA LEASH CONFIG
+;;;; Allows the player to move within a small radius before the camera follows.
+;;;; Reduces camera jitter for small movements.
+;;;; ========================================================================
+
+(defparameter *camera-leash-enabled* t
+  "When T, player can move within a radius before the camera follows.
+   Reduces jitter for small movements. Feature flag for quick disable.")
+
+(defparameter *camera-leash-radius-tiles* 2.0
+  "Radius in tiles that the player can move before the camera follows.
+   Diameter ~4 tiles. Larger = more freedom before camera shifts.")
+
 ;;; Evaluation Metrics (Step 12)
 (defparameter *verbose-zone-transitions* nil
   "Enable zone transition diagnostics (cooldown, hysteresis, directional gating).

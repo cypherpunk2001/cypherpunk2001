@@ -40,18 +40,28 @@
                             best-edge edge)))))
               best-edge))))))
 
-(defun camera-view-center (player editor)
-  ;; Return the current camera focus point.
-  (if (and editor (editor-active editor))
-      (values (editor-camera-x editor) (editor-camera-y editor))
-      (values (player-x player) (player-y player))))
+(defun camera-view-center (player editor &optional camera)
+  "Return the current camera focus point.
+   When camera is provided and has leash state, uses leash target.
+   Otherwise falls back to editor camera or player position."
+  (cond
+    ((and editor (editor-active editor))
+     (values (editor-camera-x editor) (editor-camera-y editor)))
+    ((and camera
+          *camera-leash-enabled*
+          (camera-leash-x camera)
+          (camera-leash-y camera))
+     (values (camera-leash-x camera) (camera-leash-y camera)))
+    (t
+     (values (player-x player) (player-y player)))))
 
 (defun camera-view-bounds (camera player editor)
-  ;; Return view bounds in world coordinates for the current camera focus.
+  "Return view bounds in world coordinates for the current camera focus.
+   Uses camera leash when available via camera-view-center."
   (let* ((zoom (camera-zoom camera))
          (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
          (half-view-height (/ (current-screen-height) (* 2.0 zoom))))
-    (multiple-value-bind (x y) (camera-view-center player editor)
+    (multiple-value-bind (x y) (camera-view-center player editor camera)
       (values (- x half-view-width) (+ x half-view-width)
               (- y half-view-height) (+ y half-view-height)))))
 

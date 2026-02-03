@@ -231,6 +231,7 @@
   menu-toggle-gap menu-debug-size menu-debug-x menu-debug-y menu-debug-label
   menu-editor-size menu-editor-x menu-editor-y menu-editor-label
   menu-fullscreen-size menu-fullscreen-x menu-fullscreen-y menu-fullscreen-label
+  menu-leash-size menu-leash-x menu-leash-y menu-leash-label
   hud-bg-color menu-overlay-color menu-panel-color menu-text-color
   menu-button-color menu-button-hover-color
   inventory-open
@@ -276,7 +277,11 @@
 
 (defstruct (camera (:constructor %make-camera))
   ;; Camera state used by 2D mode.
-  offset zoom)
+  offset zoom
+  ;; Leash target: persistent camera position that trails the player.
+  ;; When nil, leash is uninitialized (will snap to player on first update).
+  (leash-x nil :type (or null single-float))
+  (leash-y nil :type (or null single-float)))
 
 (defstruct (editor (:constructor %make-editor))
   ;; Editor state for in-game map editing.

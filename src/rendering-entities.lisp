@@ -259,7 +259,7 @@
          (objects (and zone (zone-objects zone))))
     (when objects
       (multiple-value-bind (camera-x camera-y)
-          (editor-camera-target editor player)
+          (editor-camera-target editor player camera)
         (let* ((tile-size (world-tile-dest-size world))
                (zoom (camera-zoom camera))
                (half-view-width (/ (current-screen-width) (* 2.0 zoom)))

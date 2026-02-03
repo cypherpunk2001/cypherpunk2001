@@ -564,6 +564,114 @@
 
 ;;; ============================================================
 
+;;; CAMERA LEASH TESTS
+;;; ============================================================
+
+(defun test-camera-leash-initialization ()
+  "Camera leash snaps to player on first update."
+  (let ((camera (%make-camera :offset (raylib:make-vector2 :x 0.0 :y 0.0)
+                               :zoom 1.0))
+        (player (%make-player))
+        (*camera-leash-enabled* t))
+    (setf (player-x player) 100.0
+          (player-y player) 200.0)
+    ;; Initially nil
+    (assert (null (camera-leash-x camera)) ()
+            "leash-init: leash-x initially nil")
+    (assert (null (camera-leash-y camera)) ()
+            "leash-init: leash-y initially nil")
+    ;; After update, snaps to player
+    (update-camera-leash camera player nil nil)
+    (assert (= (camera-leash-x camera) 100.0) ()
+            "leash-init: leash-x snaps to player")
+    (assert (= (camera-leash-y camera) 200.0) ()
+            "leash-init: leash-y snaps to player")))
+
+(defun test-camera-leash-within-radius ()
+  "Camera stays put when player is within leash radius."
+  (let ((camera (%make-camera :offset (raylib:make-vector2 :x 0.0 :y 0.0)
+                               :zoom 1.0
+                               :leash-x 100.0
+                               :leash-y 100.0))
+        (player (%make-player))
+        (*camera-leash-enabled* t)
+        (*camera-leash-radius-tiles* 4.0))
+    ;; Player at 150,150 is ~70px from camera at 100,100
+    ;; With 4 tile radius = 256px (default 64px tiles), player is well within
+    (setf (player-x player) 150.0
+          (player-y player) 150.0)
+    (update-camera-leash camera player nil nil)
+    ;; Camera should not move
+    (assert (= (camera-leash-x camera) 100.0) ()
+            "leash-within: camera x unchanged")
+    (assert (= (camera-leash-y camera) 100.0) ()
+            "leash-within: camera y unchanged")))
+
+(defun test-camera-leash-exceeds-radius ()
+  "Camera follows when player exceeds leash radius."
+  (let ((camera (%make-camera :offset (raylib:make-vector2 :x 0.0 :y 0.0)
+                               :zoom 1.0
+                               :leash-x 100.0
+                               :leash-y 100.0))
+        (player (%make-player))
+        (*camera-leash-enabled* t)
+        (*camera-leash-radius-tiles* 1.0)) ; 64px radius
+    ;; Player at 300,100 is 200px from camera — exceeds 64px radius
+    (setf (player-x player) 300.0
+          (player-y player) 100.0)
+    (update-camera-leash camera player nil nil)
+    ;; Camera should move toward player, keeping player at boundary
+    ;; Distance was 200, radius is 64, so camera moves 136px toward player
+    (let ((new-x (camera-leash-x camera))
+          (new-y (camera-leash-y camera)))
+      (assert (> new-x 100.0) ()
+              "leash-exceed: camera x moved toward player")
+      (assert (= new-y 100.0) ()
+              "leash-exceed: camera y unchanged (player only moved x)")
+      ;; Player should now be ~64px from new camera position
+      (let ((dist (abs (- 300.0 new-x))))
+        (assert (< (abs (- dist 64.0)) 1.0) ()
+                "leash-exceed: player now at boundary, dist=~,2f" dist)))))
+
+(defun test-camera-leash-disabled ()
+  "Camera snaps to player when leash is disabled."
+  (let ((camera (%make-camera :offset (raylib:make-vector2 :x 0.0 :y 0.0)
+                               :zoom 1.0
+                               :leash-x 100.0
+                               :leash-y 100.0))
+        (player (%make-player))
+        (*camera-leash-enabled* nil))
+    (setf (player-x player) 500.0
+          (player-y player) 600.0)
+    (update-camera-leash camera player nil nil)
+    ;; Should snap directly to player
+    (assert (= (camera-leash-x camera) 500.0) ()
+            "leash-disabled: camera x snaps to player")
+    (assert (= (camera-leash-y camera) 600.0) ()
+            "leash-disabled: camera y snaps to player")))
+
+(defun test-editor-camera-target-uses-leash ()
+  "editor-camera-target returns leash position when enabled."
+  (let ((camera (%make-camera :offset (raylib:make-vector2 :x 0.0 :y 0.0)
+                               :zoom 1.0
+                               :leash-x 200.0
+                               :leash-y 300.0))
+        (editor (%make-editor))
+        (player (%make-player))
+        (*camera-leash-enabled* t))
+    (setf (player-x player) 500.0
+          (player-y player) 600.0
+          (editor-active editor) nil)
+    ;; Should return leash position, not player position
+    (multiple-value-bind (x y)
+        (editor-camera-target editor player camera)
+      (assert (= x 200.0) ()
+              "camera-target: returns leash-x when enabled")
+      (assert (= y 300.0) ()
+              "camera-target: returns leash-y when enabled"))))
+
+;;; ============================================================
+
 
 (defvar *tests-movement*
   '(test-wall-blocked-p
@@ -598,5 +706,11 @@
     test-get-zone-wall-map
     test-get-zone-collision-bounds
     test-player-is-stuck-p-for-zone
-    test-get-zone-safe-spawn-for-zone)
+    test-get-zone-safe-spawn-for-zone
+    ;; Camera leash tests
+    test-camera-leash-initialization
+    test-camera-leash-within-radius
+    test-camera-leash-exceeds-radius
+    test-camera-leash-disabled
+    test-editor-camera-target-uses-leash)
   "Movement domain test functions.")

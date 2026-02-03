@@ -32,6 +32,7 @@ Key functions
 - `update-click-marker`: Ticks marker timer; when tracking an NPC (target-id > 0), updates marker position to follow the NPC until it dies.
 - `clear-player-attack-target`, `clear-player-follow-target`, `clear-player-pickup-target`: Clear targeting state and also clear marker tracking (target-id and kind).
 - `update-camera-for-window-resize`: Update camera offset to center on new screen dimensions when window is resized.
+- `update-camera-leash`: Update camera leash target based on player position. When player is within `*camera-leash-radius-tiles*`, camera stays put; when player exceeds radius, camera follows to keep player on boundary.
 
 Walkthrough: mouse click to target
 1) Convert screen coordinates to world coordinates with camera offset/zoom.

@@ -389,13 +389,26 @@
   (or (raylib:is-key-down +key-left-shift+)
       (raylib:is-key-down +key-right-shift+)))
 
-(defun editor-camera-target (editor player)
-  ;; Return the active camera target.
-  (if (editor-active editor)
-      (values (editor-camera-x editor)
-              (editor-camera-y editor))
-      (values (player-x player)
-              (player-y player))))
+(defun editor-camera-target (editor player &optional camera)
+  "Return the active camera target position.
+   When editor is active, returns editor camera position.
+   When editor is inactive and camera has a leash target, returns leash position.
+   Otherwise returns player position directly."
+  (cond
+    ((and editor (editor-active editor))
+     (values (editor-camera-x editor)
+             (editor-camera-y editor)))
+    ;; Use leash target when available and leash is enabled
+    ((and camera
+          *camera-leash-enabled*
+          (camera-leash-x camera)
+          (camera-leash-y camera))
+     (values (camera-leash-x camera)
+             (camera-leash-y camera)))
+    ;; Fallback: direct player position
+    (t
+     (values (player-x player)
+             (player-y player)))))
 
 (defun toggle-editor-mode (editor player)
   ;; Toggle editor state and reset camera to the player.

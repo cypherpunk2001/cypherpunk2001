@@ -20,7 +20,7 @@
            (tile-dest-size (world-tile-dest-size world)))
       (when zone
         (multiple-value-bind (camera-x camera-y)
-            (editor-camera-target editor player)
+            (editor-camera-target editor player camera)
           (let* ((zoom (camera-zoom camera))
                  (half-view-width (/ (current-screen-width) (* 2.0 zoom)))
                  (half-view-height (/ (current-screen-height) (* 2.0 zoom)))
@@ -84,7 +84,7 @@
       (raylib:with-drawing
         (raylib:clear-background raylib:+black+)
         (multiple-value-bind (raw-camera-x raw-camera-y)
-            (editor-camera-target editor player)
+            (editor-camera-target editor player camera)
           (let* ((zoom (camera-zoom camera))
                  ;; Phase 2a: Screen-pixel snap - ensures camera aligns to screen pixels at any zoom
                  ;; Formula: cam' = round(cam * zoom) / zoom

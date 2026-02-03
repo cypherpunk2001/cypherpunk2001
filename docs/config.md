@@ -93,6 +93,14 @@ How it connects
 | `*player-collision-scale*` | `2.0` | Collision box size relative to one tile |
 | `*collision-edge-epsilon*` | `0.01` | Avoid counting exact edge contact as a blocked tile |
 
+### Camera Leash
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*camera-leash-enabled*` | `t` | When T, player can move within a radius before camera follows. Reduces jitter for small movements. Feature flag for quick disable. |
+| `*camera-leash-radius-tiles*` | `2.0` | Radius in tiles that the player can move before the camera follows. Diameter ~4 tiles. Larger = more freedom before camera shifts. |
+
+*How it works:* The camera maintains a "leash target" position. When the player moves within the leash radius, the camera stays put. When the player exceeds the radius, the camera follows just enough to keep the player on the boundary circle. This creates a subtle dead zone that reduces camera jitter during small movements while maintaining smooth following for larger movements.
+
 ---
 
 ## Static Data (Evaluated at Load Time)

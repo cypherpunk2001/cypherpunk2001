@@ -253,17 +253,18 @@
           :when (= (npc-id npc) id)
             :do (return npc))))
 
-(defun find-npc-at-screen (npcs world player camera screen-x screen-y)
-  ;; Return NPC under the cursor and the world coordinates.
-  (multiple-value-bind (world-x world-y)
-      (screen-to-world screen-x screen-y
-                       (player-x player)
-                       (player-y player)
-                       (camera-offset camera)
-                       (camera-zoom camera))
-    (values (find-npc-at-world npcs world world-x world-y)
-            world-x
-            world-y)))
+(defun find-npc-at-screen (npcs world player camera screen-x screen-y &optional editor)
+  "Return NPC under the cursor and the world coordinates.
+   Uses camera focus (leash or editor) for screen-to-world conversion."
+  (multiple-value-bind (cam-x cam-y) (editor-camera-target editor player camera)
+    (multiple-value-bind (world-x world-y)
+        (screen-to-world screen-x screen-y
+                         cam-x cam-y
+                         (camera-offset camera)
+                         (camera-zoom camera))
+      (values (find-npc-at-world npcs world world-x world-y)
+              world-x
+              world-y))))
 
 (defun find-object-at-world (world world-x world-y)
   ;; Return the object at WORLD-X/WORLD-Y, if any.
@@ -284,17 +285,18 @@
                          (eql (zone-object-y object) ty))
                 :do (return object))))))
 
-(defun find-object-at-screen (world player camera screen-x screen-y)
-  ;; Return object under the cursor and the world coordinates.
-  (multiple-value-bind (world-x world-y)
-      (screen-to-world screen-x screen-y
-                       (player-x player)
-                       (player-y player)
-                       (camera-offset camera)
-                       (camera-zoom camera))
-    (values (find-object-at-world world world-x world-y)
-            world-x
-            world-y)))
+(defun find-object-at-screen (world player camera screen-x screen-y &optional editor)
+  "Return object under the cursor and the world coordinates.
+   Uses camera focus (leash or editor) for screen-to-world conversion."
+  (multiple-value-bind (cam-x cam-y) (editor-camera-target editor player camera)
+    (multiple-value-bind (world-x world-y)
+        (screen-to-world screen-x screen-y
+                         cam-x cam-y
+                         (camera-offset camera)
+                         (camera-zoom camera))
+      (values (find-object-at-world world world-x world-y)
+              world-x
+              world-y))))
 
 (defun update-ui-hovered-npc (ui npcs world player camera)
   ;; Update the UI hover label for the NPC under the cursor.
@@ -337,34 +339,34 @@
         (format nil "A ~a." name))))
 
 (defun update-target-from-mouse (player intent camera dt mouse-clicked mouse-down
-                                  &optional world)
-  ;; Handle click/hold to update the player target position.
-  (when mouse-clicked
-    (clear-player-auto-walk player)
-    (multiple-value-bind (target-x target-y)
-        (screen-to-world (raylib:get-mouse-x)
-                         (raylib:get-mouse-y)
-                         (player-x player)
-                         (player-y player)
-                         (camera-offset camera)
-                         (camera-zoom camera))
-      (set-player-walk-target player intent target-x target-y t world)
-      (setf (player-mouse-hold-timer player) 0.0)))
-  (when (and mouse-down (not mouse-clicked))
-    (incf (player-mouse-hold-timer player) dt)
-    (when (>= (player-mouse-hold-timer player) *mouse-hold-repeat-seconds*)
-      (setf (player-mouse-hold-timer player) 0.0)
+                                  &optional world editor)
+  "Handle click/hold to update the player target position.
+   Uses camera focus (leash or editor) for screen-to-world conversion."
+  (multiple-value-bind (cam-x cam-y) (editor-camera-target editor player camera)
+    (when mouse-clicked
       (clear-player-auto-walk player)
       (multiple-value-bind (target-x target-y)
           (screen-to-world (raylib:get-mouse-x)
                            (raylib:get-mouse-y)
-                           (player-x player)
-                           (player-y player)
+                           cam-x cam-y
                            (camera-offset camera)
                            (camera-zoom camera))
-        (set-player-walk-target player intent target-x target-y nil world))))
-  (unless mouse-down
-    (setf (player-mouse-hold-timer player) 0.0)))
+        (set-player-walk-target player intent target-x target-y t world)
+        (setf (player-mouse-hold-timer player) 0.0)))
+    (when (and mouse-down (not mouse-clicked))
+      (incf (player-mouse-hold-timer player) dt)
+      (when (>= (player-mouse-hold-timer player) *mouse-hold-repeat-seconds*)
+        (setf (player-mouse-hold-timer player) 0.0)
+        (clear-player-auto-walk player)
+        (multiple-value-bind (target-x target-y)
+            (screen-to-world (raylib:get-mouse-x)
+                             (raylib:get-mouse-y)
+                             cam-x cam-y
+                             (camera-offset camera)
+                             (camera-zoom camera))
+          (set-player-walk-target player intent target-x target-y nil world))))
+    (unless mouse-down
+      (setf (player-mouse-hold-timer player) 0.0))))
 
 (defun minimap-screen-to-world (ui world player screen-x screen-y)
   ;; Convert minimap screen coordinates into world space.
@@ -520,3 +522,41 @@
       (setf (raylib:vector2-x offset) (/ (current-screen-width) 2.0)
             (raylib:vector2-y offset) (/ (current-screen-height) 2.0))))
   camera)
+
+(defun update-camera-leash (camera player world editor)
+  "Update camera leash target based on player position.
+   When player is within leash radius, camera stays put.
+   When player exceeds radius, camera moves just enough to keep player on boundary.
+   Respects *camera-leash-enabled* flag; when disabled, snaps to player."
+  (when (and camera player)
+    (let ((player-x (player-x player))
+          (player-y (player-y player)))
+      (cond
+        ;; Leash disabled or editor active — snap to player
+        ((or (not *camera-leash-enabled*)
+             (and editor (editor-active editor)))
+         (setf (camera-leash-x camera) player-x
+               (camera-leash-y camera) player-y))
+        ;; Leash uninitialized — snap to player
+        ((or (null (camera-leash-x camera))
+             (null (camera-leash-y camera)))
+         (setf (camera-leash-x camera) player-x
+               (camera-leash-y camera) player-y))
+        ;; Normal leash behavior
+        (t
+         (let* ((tile-size (if world (world-tile-dest-size world) 64.0))
+                (leash-radius (* *camera-leash-radius-tiles* tile-size))
+                (cam-x (camera-leash-x camera))
+                (cam-y (camera-leash-y camera))
+                (dx (- player-x cam-x))
+                (dy (- player-y cam-y))
+                (dist-sq (+ (* dx dx) (* dy dy)))
+                (radius-sq (* leash-radius leash-radius)))
+           (when (> dist-sq radius-sq)
+             ;; Player exceeded leash — move camera to keep player on boundary
+             (let* ((dist (sqrt dist-sq))
+                    (pull (- dist leash-radius))
+                    (nx (/ dx dist))
+                    (ny (/ dy dist)))
+               (setf (camera-leash-x camera) (+ cam-x (* nx pull))
+                     (camera-leash-y camera) (+ cam-y (* ny pull)))))))))))

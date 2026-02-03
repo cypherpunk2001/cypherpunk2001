@@ -84,6 +84,10 @@
          (menu-fullscreen-x menu-debug-x)
          (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
          (menu-fullscreen-label "Fullscreen | Windowed")
+         (menu-leash-size 18)
+         (menu-leash-x menu-debug-x)
+         (menu-leash-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
+         (menu-leash-label "Camera Leash")
          ;; Position Save/Load above Unstuck (from bottom) to avoid overlap with toggles
          (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
          (menu-save-x (+ menu-panel-x menu-padding))
@@ -237,6 +241,10 @@
               :menu-fullscreen-x menu-fullscreen-x
               :menu-fullscreen-y menu-fullscreen-y
               :menu-fullscreen-label menu-fullscreen-label
+              :menu-leash-size menu-leash-size
+              :menu-leash-x menu-leash-x
+              :menu-leash-y menu-leash-y
+              :menu-leash-label menu-leash-label
               :hud-bg-color hud-bg-color
               :menu-overlay-color menu-overlay-color
               :menu-panel-color menu-panel-color
@@ -359,6 +367,9 @@
            (menu-fullscreen-size (ui-menu-fullscreen-size ui))
            (menu-fullscreen-x menu-debug-x)
            (menu-fullscreen-y (+ menu-editor-y menu-editor-size menu-toggle-gap))
+           (menu-leash-size (ui-menu-leash-size ui))
+           (menu-leash-x menu-debug-x)
+           (menu-leash-y (+ menu-fullscreen-y menu-fullscreen-size menu-toggle-gap))
            ;; Save/Load buttons (above Unstuck)
            (menu-save-y (- menu-unstuck-y menu-action-gap menu-nav-button-height))
            (menu-save-x (+ menu-panel-x menu-padding))
@@ -394,7 +405,9 @@
             (ui-menu-editor-x ui) menu-editor-x
             (ui-menu-editor-y ui) menu-editor-y
             (ui-menu-fullscreen-x ui) menu-fullscreen-x
-            (ui-menu-fullscreen-y ui) menu-fullscreen-y)
+            (ui-menu-fullscreen-y ui) menu-fullscreen-y
+            (ui-menu-leash-x ui) menu-leash-x
+            (ui-menu-leash-y ui) menu-leash-y)
       ;; Update save/load buttons
       (setf (ui-menu-save-x ui) menu-save-x
             (ui-menu-save-y ui) menu-save-y
@@ -495,7 +508,12 @@
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
-     (raylib:toggle-fullscreen))))
+     (raylib:toggle-fullscreen))
+    ((point-in-rect-p mouse-x mouse-y
+                      (ui-menu-leash-x ui) (ui-menu-leash-y ui)
+                      (ui-menu-leash-size ui)
+                      (ui-menu-leash-size ui))
+     (setf *camera-leash-enabled* (not *camera-leash-enabled*)))))
 
 (defun update-ui-input (ui audio mouse-clicked)
   ;; Handle UI toggle input and click interactions.
