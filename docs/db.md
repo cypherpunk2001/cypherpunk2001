@@ -53,6 +53,8 @@ The game server and client MUST NOT know where data comes from or where it goes.
   (:documentation "Set KEY only if not exists, with TTL. Returns T if set."))
 (defgeneric storage-refresh-ttl (storage key ttl-seconds)
   (:documentation "Refresh TTL on KEY. Returns T if key exists."))
+(defgeneric storage-refresh-ttl-batch (storage keys ttl-seconds)
+  (:documentation "Refresh TTL on all KEYS. Returns count refreshed. Pipelined on Redis."))
 (defgeneric storage-load-raw (storage key)
   (:documentation "Get raw string value (not deserialized). For size checks before parsing."))
 

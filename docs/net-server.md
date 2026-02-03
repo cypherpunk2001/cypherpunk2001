@@ -6,6 +6,7 @@ Purpose
 Key responsibilities
 - `run-server`: main server entry point that orchestrates all server-side systems.
 - Storage backend initialization from environment variables (`MMORPG_DB_BACKEND`, `MMORPG_REDIS_HOST`, `MMORPG_REDIS_PORT`).
+- Persistent Redis connection for main loop (reduces connection churn for batch flush + ownership refresh).
 - Profiling and GC scheduling initialization from environment variables.
 - Auth worker thread lifecycle (start on boot, stop on shutdown).
 - Non-blocking UDP receive loop with per-tick message cap (`*max-messages-per-tick*`).

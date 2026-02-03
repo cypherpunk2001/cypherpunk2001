@@ -8,6 +8,7 @@ Key responsibilities
 - Tier-1 immediate saves (`db-save-player-immediate`) for critical events (death, level-up).
 - Dirty flag system: `mark-player-dirty`, `flush-dirty-players` for batched tier-2 writes.
 - Session management: `register-player-session`, `db-player-logout` for tier-3 logout saves.
+- Session ownership refresh: `refresh-all-session-ownerships` uses batch TTL refresh for efficiency.
 - ID counter persistence (`db-save-id-counter`, `db-load-id-counter`).
 - Forensic storage of corrupt blobs with TTL for admin inspection.
 - Validation metric counters (ok, clamp, quarantine, reject).

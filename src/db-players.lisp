@@ -457,37 +457,38 @@
    before reporting as lost. This handles transient Redis hiccups where the key
    expired but no other server took ownership.
 
-   Catches storage-error to keep server loop alive on transient Redis failures."
-  (let ((failed-ids nil))
+   Uses batch TTL refresh for efficiency (single pipelined round trip for all
+   verified sessions). Catches storage-error to keep server loop alive."
+  (let ((failed-ids nil)
+        (verified-keys nil)
+        (reclaim-keys nil))
+    ;; First pass: verify ownership and collect keys for batch refresh
     (with-player-sessions-lock
       (maphash (lambda (player-id session)
                  (declare (ignore session))
-                 ;; Verify we still own before refreshing
                  ;; verify-session-ownership already catches storage-error
                  (if (verify-session-ownership player-id)
-                     ;; Catch errors during refresh to avoid unwinding loop
-                     (handler-case
-                         (refresh-session-ownership player-id)
-                       (error (e)
-                         (log-verbose "Refresh failed for player ~a (transient): ~a" player-id e)
-                         ;; Don't mark as failed - will retry next cycle
-                         nil))
-                     ;; Ownership verification failed - try to re-claim before giving up
-                     ;; This handles the case where Redis key expired but no other
-                     ;; server has claimed ownership yet (transient outage)
+                     ;; Verified - collect key for batch refresh
+                     (push (session-owner-key player-id) verified-keys)
+                     ;; Verification failed - try to re-claim
                      (if (claim-session-ownership player-id)
                          (progn
                            (log-verbose "Re-claimed ownership for player ~a after verification failure" player-id)
-                           ;; Successfully re-claimed, refresh TTL
-                           (handler-case
-                               (refresh-session-ownership player-id)
-                             (error (e)
-                               (log-verbose "Refresh after re-claim failed for ~a: ~a" player-id e))))
-                         ;; Re-claim failed - another server owns it now, truly lost
+                           ;; Re-claimed - also needs TTL refresh
+                           (push (session-owner-key player-id) reclaim-keys))
+                         ;; Re-claim failed - truly lost
                          (progn
                            (log-verbose "Ownership truly lost for player ~a (another server owns)" player-id)
                            (push player-id failed-ids)))))
                *player-sessions*))
+    ;; Batch refresh TTLs for all verified + re-claimed sessions
+    (when (or verified-keys reclaim-keys)
+      (let ((all-keys (append verified-keys reclaim-keys)))
+        (handler-case
+            (when *storage*
+              (storage-refresh-ttl-batch *storage* all-keys *session-ownership-ttl-seconds*))
+          (error (e)
+            (log-verbose "Batch TTL refresh failed (transient): ~a" e)))))
     failed-ids))
 
 (defun register-player-session (player &key (zone-id nil) (username nil))

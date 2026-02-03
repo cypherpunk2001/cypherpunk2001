@@ -184,7 +184,10 @@
       (finish-output)
       (unwind-protect
            (handler-case
-               (loop :with elapsed = 0.0
+               ;; Wrap main loop in persistent Redis connection (same pattern as auth workers)
+               ;; This reduces connection churn for batch flush + session ownership refresh
+               (flet ((server-main-loop ()
+                        (loop :with elapsed = 0.0
                      :with frames = 0
                      :with accumulator = 0.0
                      :with snapshot-seq = 0  ; Delta compression sequence counter
@@ -430,7 +433,13 @@
                                 (frame-elapsed (- frame-end frame-start))
                                 (remaining-units (- tick-units frame-elapsed)))
                            (when (> remaining-units 0)
-                             (sleep (/ remaining-units internal-time-units-per-second))))))
+                             (sleep (/ remaining-units internal-time-units-per-second))))))))
+                 ;; Call server-main-loop with or without persistent Redis connection
+                 (if (and *storage* (typep *storage* 'redis-storage))
+                     (redis:with-persistent-connection (:host (redis-storage-host *storage*)
+                                                        :port (redis-storage-port *storage*))
+                       (server-main-loop))
+                     (server-main-loop)))
              #+sbcl
              (sb-sys:interactive-interrupt ()
                (setf stop-flag t stop-reason "interrupt")))

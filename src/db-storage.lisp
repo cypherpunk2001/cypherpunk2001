@@ -269,6 +269,10 @@
 (defgeneric storage-refresh-ttl (storage key ttl-seconds)
   (:documentation "Refresh TTL on KEY. Returns T if key exists, NIL otherwise."))
 
+(defgeneric storage-refresh-ttl-batch (storage keys ttl-seconds)
+  (:documentation "Refresh TTL on all KEYS in one operation. Returns count of keys refreshed.
+   Uses pipelining on Redis for efficiency."))
+
 (defgeneric storage-load-raw (storage key)
   (:documentation "Load raw string value for KEY. Returns string or NIL.
    Does not parse - returns the exact bytes stored in Redis.
@@ -549,6 +553,25 @@
     (error (e)
       (warn "Redis EXPIRE error for key ~a: ~a" key e)
       nil)))
+
+(defmethod storage-refresh-ttl-batch ((storage redis-storage) keys ttl-seconds)
+  "Refresh TTL on all KEYS in a single pipelined round trip.
+   Returns count of keys that were successfully refreshed."
+  (when (null keys)
+    (return-from storage-refresh-ttl-batch 0))
+  (handler-case
+      (redis:with-recursive-connection (:host (redis-storage-host storage)
+                              :port (redis-storage-port storage))
+        (let ((results nil))
+          ;; Pipeline all EXPIRE commands
+          (redis:with-pipelining
+            (dolist (key keys)
+              (push (red:expire key ttl-seconds) results)))
+          ;; Count successful refreshes (EXPIRE returns 1 if key existed)
+          (count-if (lambda (r) (and (numberp r) (= r 1))) results)))
+    (error (e)
+      (warn "Redis batch EXPIRE error: ~a" e)
+      0)))
 
 (defmethod storage-load-raw ((storage redis-storage) key)
   "Load raw string value for KEY (does not parse).
@@ -888,6 +911,19 @@
           t)
         ;; Key doesn't exist or expired
         nil)))
+
+(defmethod storage-refresh-ttl-batch ((storage memory-storage) keys ttl-seconds)
+  "Refresh TTL on all KEYS. Returns count of keys successfully refreshed."
+  (let ((count 0)
+        (now (get-universal-time))
+        (new-expiration (+ (get-universal-time) ttl-seconds)))
+    (dolist (key keys)
+      (let ((current (gethash key (memory-storage-data storage)))
+            (expiration (gethash key *memory-storage-ttls*)))
+        (when (and current expiration (> expiration now))
+          (setf (gethash key *memory-storage-ttls*) new-expiration)
+          (incf count))))
+    count))
 
 (defmethod storage-load-raw ((storage memory-storage) key)
   "Load raw string value for KEY from memory storage.
