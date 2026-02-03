@@ -1,113 +1,54 @@
 Zone Transition Bugs — Root Cause Investigation (2026-02-02)
 =============================================================
 
-FIXED BUGS (committed in 0a58afe)
-==================================
-
 OPEN BUGS
 ==========
 
-Bug 4: Diagonal cross-zone click routes to wrong adjacent zone
----------------------------------------------------------------
-Status: Newly reported. Not yet fixed.
+Bug 5: Diagonal multi-hop fails for floor clicks (except extreme corner)
+------------------------------------------------------------------------
+Observed
+- Diagonal floor clicks only succeed from the single extreme corner tile,
+  and only for the closest diagonal target. Most other positions/clicks fail.
 
-Symptom:
-Click-to-move across diagonal zones (e.g., zone 1 → zone 4 or zone 2 → zone 3)
-does not reach the clicked tile. The player crosses into an orthogonal neighbor
-and may end in the wrong adjacent zone (1 or 4) instead of the diagonal target.
+Root cause (most likely)
+- The computed zone path uses BFS, but BFS path selection is purely based on
+  world-graph exit ordering, not on the player’s actual movement direction.
+- The transition system arms/commits the edge with the strongest directional
+  alignment to the raw click vector. If that first hop doesn’t match the BFS
+  path’s first hop, the player transitions into the “other” adjacent zone and
+  the path is cleared as “unexpected zone,” so the diagonal hop never completes.
+- This mismatch is why it only works when the player is positioned such that
+  the dominant direction happens to match the BFS-chosen first hop (often the
+  closest diagonal tile from the extreme corner).
 
-What we know from code:
-1) Zone transitions are edge-based and cardinal only. update-zone-transition
-   chooses a single edge based on arm/commit bands + directional gating.
-2) The edge chosen is the one with the strongest directional alignment
-   (dominant axis), not a multi-step path toward a diagonal target.
-3) Seam translation and target rebasing only handle a single edge transition.
-   There is no multi-zone routing for a diagonal destination.
-4) Diagonal zone IDs are used for preview rendering only
-   (movement-preview.lisp / world-diagonal-zone-id) — not for transition logic.
+Evidence
+- BFS path selection (no direction bias): compute-minimap-click-path uses
+  world-graph-find-path. (src/movement-core.lisp:661-699, src/world-graph.lisp:182-207)
+- Edge selection uses dominant direction from raw click: update-zone-transition
+  picks the edge with strongest dot product; player-intent-direction uses raw
+  target if clamped. (src/movement-transition.lisp:204-219, 978-997)
+- Path is cleared if the player enters a zone not in the BFS path:
+  handle-zone-transition clears on “unexpected zone.” (src/main.lisp:909-913)
 
-Likely root cause:
-The system has no notion of a multi-step path to a diagonal zone. A diagonal
-click produces a movement vector with both X and Y components. The transition
-state machine picks ONE cardinal edge (dominant axis), and the click target
-is rebased across that edge only. After entering the adjacent zone, the player
-often drifts into the wrong next zone because the intended diagonal destination
-was never encoded as a multi-zone path.
+Bug 6: Minimap diagonal click never completes the hop
+-----------------------------------------------------
+Observed
+- Minimap diagonal clicks never enter the diagonal zone; player walks along
+  the seam of the sideways zone and never completes the second hop.
 
-Contributing factors:
-- Directional gating and arm-band selection favor one axis (dominant dot).
-- Collision at corners can bias which edge is crossed first.
-- Target rebasing only accounts for a single seam; it does not store a
-  destination zone or a path for subsequent transitions.
+Root cause (most likely)
+- Same path/edge mismatch as Bug 5, but more consistent: minimap clicks often
+  produce a strong dominant axis (raw click vector), while BFS path’s first hop
+  is dictated by world-graph exit order. The player crosses the “wrong” first
+  edge, which causes the stored path to be cleared and the diagonal hop to stop.
+- The minimap world conversion only extends the view by one tile, so diagonal
+  targets tend to produce raw vectors that are strongly biased toward a single
+  axis, making the mismatch deterministic.
 
-Next steps:
-1) Encode a multi-zone target for click-to-move:
-   - Determine destination zone-id from raw click (screen->world + preview zones).
-   - Compute a zone-path (world-graph shortest path) from current zone to
-     destination zone.
-   - Store remaining zone-path in intent or client-only state.
-2) On each zone transition:
-   - Pop the next zone from the path.
-   - Rebase the target across the correct edge for that next hop.
-3) If diagonal target is within corner adjacency, allow an explicit two-step
-   path (e.g., prefer preserving axis of greater distance first, or preserve
-   the axis defined by the destination offset ratio).
-4) Add verbose logging for chosen edge vs intended destination zone to confirm
-   path selection during testing.
-
-Conclusion:
-This is a pathing/zone-routing gap, not a simple target-rebase bug. The current
-logic only handles a single edge transition and lacks a multi-hop plan to reach
-diagonal zones.
-
-
-ADDITIONAL FINDINGS (2026-02-02)
-================================
-
-Bug 1: Infinite Walking — ROOT CAUSE CONFIRMED (client-intent not cleared)
----------------------------------------------------------------------------
-The prior fix cleared the PLAYER'S intent during handle-zone-transition,
-but the CLIENT'S intent (game-client-intent) is the one actually sent to
-the server every frame. That stale client intent overwrites the rebased
-target on the next tick, reintroducing the old-zone target and causing
-endless walking.
-
-Evidence from code flow:
-  1. update-client-input writes into (game-client-intent game), not the
-     player's intent (src/main.lisp).
-  2. net-client sends game-client-intent every frame (send-intent-message),
-     and it does NOT clear target-x/target-y/target-active after send
-     (src/net-client.lisp, src/net-snapshot.lisp).
-  3. Server copies ALL target fields from client intent each tick via
-     apply-client-intent (intent-target-x/y/raw/clamped/active)
-     (src/server.lisp:118-160).
-  4. handle-zone-transition only clears (player-intent player), leaving
-     game-client-intent untouched (src/main.lisp:661-729).
-  5. transition-zone rebases the target server-side, but that rebased
-     target is overwritten next tick by the stale client intent.
-
-Why this produces "walk forever":
-  - The stale client target remains in the old zone coordinate space
-    (often far outside new bounds, with target-clamped-p = T and raw
-    target outside). update-player-position treats it as a clamped
-    crossing target and keeps intent-target-active true, so the player
-    keeps moving and never reaches the intended stop point.
-  - This also reproduces in local mode: run-local applies game-client-intent
-    to player intent every frame, reintroducing the stale target after
-    handle-zone-transition clears the player's intent.
-
-Fix direction (not yet implemented):
-  - On zone transition, clear BOTH player-intent and game-client-intent
-    (target-active/raw/clamped), and consider resetting mouse-hold timer
-    to prevent immediate re-issuance.
-  - Alternatively, gate apply-client-intent for one tick after zone-id
-    change so server rebased target is not overwritten by stale client input.
-
-Bug 2: Audio Skips — Additional confirmation
----------------------------------------------
-apply-zone-to-world always rebuilds derived structures (wall-map bounds,
-minimap spawns/collisions, and graph zone paths) synchronously on the
-client transition path (src/movement.lisp:88-122, called from
-apply-game-state in src/save.lisp). This is still on the main thread and
-still coupled to render-cache invalidation, so the frame hitch (and
-audio skip) will persist until the work is deferred/cached.
+Evidence
+- Minimap click pathing uses BFS: compute-minimap-click-path. (src/movement-core.lisp:661-699)
+- Directional gating uses raw click vector: player-intent-direction and
+  update-zone-transition. (src/movement-transition.lisp:204-219, 978-997)
+- Path clears on unexpected zone: handle-zone-transition. (src/main.lisp:909-913)
+- Minimap click world mapping has only 1-tile margin: minimap-screen-to-world.
+  (src/input.lisp:348-387)

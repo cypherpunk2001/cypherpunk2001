@@ -1,0 +1,368 @@
+Bug 5 & Bug 6 — Deep Dive Investigation
+=========================================
+Date: 2026-02-02
+
+Bug 5: Diagonal multi-hop fails for floor clicks (except extreme corner)
+Bug 6: Minimap diagonal click never completes the hop
+
+
+Executive Summary
+-----------------
+Both bugs share a single root cause: set-player-walk-target clamps hop targets
+to the current zone's collision bounds.  When the continuation sets the next
+walk target for a multi-hop path, the target is designed to point past the zone
+edge (to trigger a crossing).  Clamping pulls it back inside the zone, so the
+player walks to the interior clamped point instead of the edge, the crossing
+commit never fires, and the path stalls.
+
+A secondary contributing factor is that resolve-click-destination-zone uses a
+one-axis-at-a-time overshoot walk which can pick a different intermediate zone
+than BFS.  When the two disagree, translate-click-along-path may fail to produce
+a valid hop target for the BFS path.
+
+
+Root Cause #1 (Primary): Hop target clamping kills zone crossings
+-----------------------------------------------------------------
+File: src/input.lisp:144-169
+File: src/main.lisp:898-901
+
+The continuation at main.lisp:894-901 sets the next-hop walk target:
+
+    (let ((hop-target (first still-targets)))
+      (if hop-target
+          (let ((target-x (car hop-target))
+                (target-y (cdr hop-target)))
+            (when (and ci player)
+              (set-player-walk-target player ci target-x target-y nil world))  ; <-- HERE
+            (when p-intent
+              (set-player-walk-target player p-intent target-x target-y nil world)))
+
+The call passes `world`, which activates clamping inside set-player-walk-target
+(input.lisp:153-169):
+
+    (when world
+      ...
+      (let ((clamped-x (clamp world-x min-x max-x))
+            (clamped-y (clamp world-y min-y max-y)))
+        (when (or (/= clamped-x world-x) (/= clamped-y world-y))
+          (setf (intent-target-clamped-p intent) t))
+        (setf world-x clamped-x
+              world-y clamped-y)))
+
+The hop target is precomputed by translate-click-along-path as the raw click
+coordinates in the source zone's space BEFORE seam translation.  For a first
+hop going east, the hop target x is the raw click x (e.g., 700.0), which is
+deliberately past the zone's max-x (e.g., 624.0).
+
+After clamping: target-x becomes 624.0 (the zone edge).
+After clamping: intent-target-clamped-p is set to T.
+After clamping: intent-target-raw-x/y = 700.0/320.0 (unclamped, stored at
+                input.lisp:150-151 before the clamp block runs).
+
+This looks like it SHOULD work because the clamped-crossing-p path in
+movement-transition.lisp:97-163 uses raw-x/raw-y to drive the player past the
+boundary.  But there is a subtle interaction that breaks it for diagonal hops:
+
+### Why it breaks for diagonal (2+ hop) paths specifically:
+
+For a diagonal click (e.g., east then south), the first hop target is
+(700.0, 320.0) — pointing east.  After clamping to (624.0, 320.0) with
+raw = (700.0, 320.0), the player walks east toward x=624.0.
+
+When the player reaches x=624.0 (the clamped target), the movement code at
+movement-transition.lisp:114-116 checks:
+
+    (if (<= dist *target-epsilon*)
+        (if clamped-crossing-p
+            ;; nudge attempted past boundary using raw direction ...
+
+The raw direction is (700 - player-x, 320 - player-y).  If the player is at
+(624, 320), the raw direction is (76, 0) — purely east.  The attempted position
+is set to raw-x=700, raw-y=320.
+
+This triggers world-crossing-edge (movement-transition.lisp:341-370), which
+checks:
+- attempted-x (700) > max-x (624) ✓
+- dx > 0 ✓  (dx is the normalized raw direction component)
+- edge-direction-passes-p(dx=1.0, dy=0.0, :east) ✓
+
+So far so good — the first hop transition DOES fire.  After arriving in the
+intermediate zone (e.g., zone-E), handle-zone-transition runs the continuation
+(main.lisp:857-913).  It pops the path and calls set-player-walk-target with
+the SECOND hop target.
+
+THE PROBLEM: The second hop target is the raw click translated through the
+first seam.  For a diagonal path (east then south), this second target has
+a y-coordinate past the intermediate zone's max-y.  But the x-coordinate
+after seam translation may be INSIDE the intermediate zone.
+
+When set-player-walk-target clamps this second hop target:
+- x gets clamped to within bounds (possibly unchanged)
+- y gets clamped to max-y (zone edge)
+- raw-x/raw-y are set to the UNCLAMPED second hop target
+- intent-target-clamped-p = T
+
+The player walks south toward y=max-y.  When they reach it, the nudge logic
+computes the raw direction as (raw-x - player-x, raw-y - player-y).
+
+HERE IS THE FAILURE: If the raw-x component of the second hop target is
+INSIDE the zone bounds (not past an edge), then the raw direction has a
+significant x-component pointing away from the south edge.  The
+edge-direction-passes-p check for :south requires dy/mag >= 0.3.  If the
+x-component is large relative to the y-component, the dot product drops
+below the threshold and the directional gate REJECTS the crossing.
+
+In other words: the hop target points "south-east" or "south-west" in raw
+coordinates, but the directional gate requires a strong enough southward
+component.  For most player positions this fails because the raw-x offset
+is too large.
+
+### Why it works from the extreme corner:
+
+From the extreme corner tile, the player is already near both edges.  The
+raw click in the diagonal zone is close enough that the translated hop
+target has a small x-offset in the intermediate zone.  The directional gate
+passes because dy/mag is high enough.
+
+
+Root Cause #2 (Contributing): Overshoot walk vs BFS path disagreement
+---------------------------------------------------------------------
+File: src/movement-core.lisp:527-593 (resolve-click-destination-zone)
+File: src/movement-core.lisp:661-699 (compute-minimap-click-path)
+
+resolve-click-destination-zone uses a one-axis-at-a-time greedy overshoot walk
+to find the destination zone.  compute-minimap-click-path then uses BFS
+(world-graph-find-path) to find the shortest path from the current zone to
+that destination.
+
+The overshoot walk picks the axis with the largest overshoot at each step
+(lines 557-567).  For a click that is diagonally far (e.g., east+south),
+the walk might go east first (if east overshoot is larger), then south.
+BFS agrees in this case.
+
+But if the click is closer to the boundary on one axis vs the other, the
+overshoot walk can pick a different intermediate zone than BFS.  The walked
+path and the BFS path go through different intermediate zones.
+
+This matters because translate-click-along-path translates the raw click
+along the BFS path (not the walked path).  If the BFS intermediate zone
+has different bounds or the seam alignment differs, the translated coordinates
+may not point toward the correct exit edge.
+
+In practice this is a minor issue for uniform-bounds grids, but it adds
+fragility.
+
+
+Root Cause #3 (Bug 6 specific): Minimap hop target direction
+-------------------------------------------------------------
+File: src/main.lisp:894-901
+
+For minimap clicks, the raw-x/raw-y can be very far from the zone (the
+minimap maps the entire world).  The first hop target is the full raw click
+coordinate (e.g., x=2000 for a zone whose max-x is 624).
+
+After clamping in set-player-walk-target, the intent has:
+- target-x = 624.0 (clamped)
+- raw-x = 2000.0 (unclamped)
+
+The player walks to x=624, then the nudge fires with raw direction toward
+x=2000.  This is purely east, so the first hop works.
+
+After arriving in zone-E, the second hop target is the raw click translated
+through the first seam.  For a minimap click that is very far south-east,
+the translated y might be something like 1500.0 (past zone-E's max-y of
+624.0), but the translated x is, say, 1376.0 (which is past zone-E's
+max-x of 624.0 — still in zone-E-east territory).
+
+When set-player-walk-target clamps this:
+- target-x = 624.0 (clamped from 1376.0)
+- target-y = 624.0 (clamped from 1500.0)
+- raw-x = 1376.0, raw-y = 1500.0
+
+The player walks toward (624, 624) — the corner.  When they arrive:
+- raw direction = (1376 - 624, 1500 - 624) = (752, 876)
+- magnitude = sqrt(752^2 + 876^2) ≈ 1155
+- For :south: dot = dy/mag = 876/1155 ≈ 0.758 → passes threshold (0.3)
+- For :east:  dot = dx/mag = 752/1155 ≈ 0.651 → also passes threshold
+
+world-crossing-edge picks the axis with the highest weight (abs component):
+- dy > 0 and ay > max-y: weight = abs(dy) = 876 * normalized = 0.758
+- dx > 0 and ax > max-x: weight = abs(dx) = 752 * normalized = 0.651
+- South wins (higher weight).
+
+But wait — world-crossing-edge uses (player-intent-direction player), not
+the raw offset.  Let me trace that:
+
+    (multiple-value-bind (dx dy) (player-intent-direction player) ...)
+
+player-intent-direction returns (player-dx, player-dy) — the MOVEMENT
+VELOCITY from the last update, not the raw target direction.
+
+When the player walks toward (624, 624) from position (say, 20, 320),
+the movement direction is toward the corner: dx > 0, dy > 0.
+
+When the player reaches (624, 624) and is blocked by collision bounds,
+the movement code at movement-transition.lisp:152-163 fires:
+
+    (when (and clamped-crossing-p (zerop dx) (zerop dy))
+      ;; blocked — set attempted from raw direction
+      ...)
+
+This sets dx = rdir-x, dy = rdir-y (normalized raw direction).
+
+So player-dx/dy = (0.651, 0.758).  world-crossing-edge then checks:
+- dy > 0 (yes) and ay > max-y (yes, ay = raw-y = 1500): south candidate
+- dx > 0 (yes) and ax > max-x (yes, ax = raw-x = 1376): east candidate
+- South weight = abs(0.758) = 0.758
+- East weight = abs(0.651) = 0.651
+- South wins.  edge-direction-passes-p(0.651, 0.758, :south)?
+  dot = dy/mag where mag = sqrt(0.651^2 + 0.758^2) = 1.0 (already normalized)
+  dot = 0.758 ≥ 0.3 → passes.
+
+So world-crossing-edge returns :south.  This SHOULD trigger a south
+transition.  But the continuation path expects to go to a specific next
+zone (first of still-remaining).  If the transition fires to the WRONG
+zone (south neighbor instead of the BFS-expected zone), the continuation
+finds zone-id not in its remaining list and clears the path (main.lisp:909).
+
+THIS is why Bug 6 manifests as "walks along the seam but never enters the
+diagonal zone":
+
+1. First hop works (transition to intermediate zone).
+2. In intermediate zone, hop target points to corner (both axes overshoot).
+3. Crossing detection picks ONE axis (south), transitions to south neighbor.
+4. But the BFS path expected a different next zone (e.g., south-east or east).
+5. Continuation sees unexpected zone, clears path.
+6. Player is now in the south neighbor with no path.  The original target
+   was cleared.  Player stops.
+
+Or alternatively: the crossing fires to the south neighbor, which IS in the
+BFS path (if BFS routes south-then-east).  But then the continuation pops
+it, and the NEXT hop target points toward a zone that requires going east
+from the south neighbor.  The same clamping + directional gating issue
+applies again.
+
+
+Detailed Call Flow (Annotated)
+------------------------------
+1. User clicks on minimap/floor
+   → input.lisp: update-target-from-mouse or minimap handler
+   → set-player-walk-target(player, intent, world-x, world-y, T, world)
+     → Clamps target to zone bounds, stores raw in intent-target-raw-x/y
+     → Sets intent-target-clamped-p if clamping occurred
+
+2. main.lisp:386-387: maybe-set-diagonal-path(game)
+   → movement-core.lisp:671: Checks intent-target-clamped-p AND intent-target-active
+   → resolve-click-destination-zone: walks raw click through zone graph
+   → world-graph-find-path: BFS for shortest path to destination
+   → translate-click-along-path: chains seam translations, stores hop targets
+   → Stores zone-click-path, zone-click-edges, zone-click-hop-targets,
+     zone-click-final-x/y on game struct
+
+3. Per tick: movement-transition.lisp:97-168 (update-player-position)
+   → Player walks toward clamped target (intent-target-x/y)
+   → When within epsilon: if clamped-crossing-p, nudges attempted past boundary
+   → When blocked by collision: if clamped-crossing-p, uses raw direction for
+     attempted position
+
+4. Per tick: world-crossing-edge (movement-transition.lisp:341-370)
+   → Checks if attempted-x/y exceeds bounds AND direction aligns with edge
+   → Returns crossing edge or NIL
+
+5. Zone transition fires (server-side or local mode)
+   → main.lisp:699: handle-zone-transition
+   → Lines 766-849: Rebases or clears the one-shot click target
+   → Lines 850-913: Multi-hop continuation
+     → Pops zone-click-path, edges, hop-targets
+     → If more hops: set-player-walk-target(player, ci, hop-target-x, hop-target-y, nil, world)
+       ↑ THIS IS WHERE CLAMPING KILLS THE NEXT HOP
+     → If final: sets final-x/y as target, clears path
+
+6. Back to step 3 — player walks toward next (clamped) hop target
+   → For diagonal hops, directional gate may reject the crossing
+   → Or crossing fires to wrong neighbor, continuation clears path
+
+
+Affected Code Locations
+-----------------------
+PRIMARY FIX NEEDED:
+  src/main.lisp:898-901 — continuation calls set-player-walk-target with world,
+    causing clamping.  Fix: either pass nil for world (skip clamping), or use
+    a new function that sets the raw target as the walk target without clamping.
+
+SECONDARY FIX NEEDED:
+  src/input.lisp:144-169 — set-player-walk-target always clamps when world is
+    provided.  Consider adding a skip-clamp parameter for hop targets that are
+    intentionally out of bounds.
+
+TERTIARY (NICE TO HAVE):
+  src/movement-transition.lisp:341-370 — world-crossing-edge picks a single
+    axis.  For multi-hop, the continuation knows which edge to cross (stored
+    in game-zone-click-edges).  Consider using the expected edge directly
+    instead of relying on commit detection to guess the right axis.
+
+
+Proposed Fix Strategy
+---------------------
+Option A (Minimal): Pass NIL for world in the continuation's set-player-walk-target
+  calls.  This skips clamping entirely.  The hop target becomes the un-clamped
+  walk target.  The player walks toward the raw coordinate (past the zone edge).
+  Movement code clamps position to bounds via collision, but the intent target
+  stays unclamped.  When player reaches the bounds, they stop (blocked), and the
+  attempted position is set to the raw target (past bounds).  Crossing detection
+  fires naturally.
+
+  Risk: Without clamping, the walk direction vector points directly at the raw
+  target, which includes both the crossing component AND any perpendicular
+  offset.  For a target that is far past one edge but also offset on the other
+  axis, the player walks diagonally toward the corner instead of straight at the
+  edge.  This may cause them to hit a wall tile before reaching the edge.  But
+  this is already the behavior for any clamped out-of-bounds click, so it should
+  be acceptable.
+
+  Code change: main.lisp:899 and 901 — change last arg from `world` to `nil`.
+
+Option B (Robust): Store the expected crossing edge per hop (already in
+  game-zone-click-edges) and use it directly in the continuation instead of
+  relying on world-crossing-edge commit detection.  After the player reaches
+  the hop target (or gets close enough), force the transition for the expected
+  edge.
+
+  This is more complex but eliminates the axis-ambiguity problem entirely.
+
+Option C (Hybrid): Use Option A for the walk target (no clamping), and add
+  a fallback in the continuation that checks if the player is near the expected
+  edge and forces the crossing even if world-crossing-edge picks a different
+  axis or fails the directional gate.
+
+
+Reproduction Analysis
+---------------------
+Bug 5: "Floor click diagonal only works from extreme corner"
+  - From corner: hop target after seam translation has small perpendicular
+    offset → directional gate passes → crossing fires → diagonal completes.
+  - From interior: hop target has large perpendicular offset → gate rejects
+    or crossing picks wrong axis → path clears → walk stops.
+
+Bug 6: "Minimap diagonal never completes hop"
+  - Minimap clicks produce very large raw coordinates → first hop works
+    (purely along one axis) → second hop target has large overshoot on
+    BOTH axes → crossing detection picks the dominant axis → if that axis
+    leads to the wrong zone, continuation clears path → player stalls at
+    the seam.
+
+
+Test Implications
+-----------------
+Existing tests verify:
+- Hop targets are precomputed from raw click (not player position) ✓
+- BFS path is used for route selection ✓
+- Parallel pop of path/edges/hop-targets ✓
+- Zone-bounds-with-origin arithmetic ✓
+
+Missing test coverage:
+- Hop target clamping behavior when set via continuation
+- Directional gate interaction with diagonal hop targets
+- world-crossing-edge axis selection for multi-axis overshoot
+- Continuation behavior when crossing fires to unexpected zone
+- End-to-end: click → path → walk → crossing → continuation → second walk → crossing
