@@ -18,7 +18,7 @@ Why we do it this way
 - Datagram transport keeps the loop simple and low-latency.
 - Compact serialization and delta compression support hundreds of concurrent players.
 
-Message format (plist, printed with `prin1`)
+Message format (plists by default; snapshots can be binary when enabled)
 
 **Client -> Server:**
 - `(:type :hello)` -> client announces itself to the server
@@ -57,7 +57,7 @@ Key functions
 - `send-net-message-with-retry`: Send critical messages (auth responses) with linear retry.
 - `send-auth-message`: Send login/register with optional encryption.
 - `intent->plist` / `apply-intent-plist`: serialize/deserialize intent payloads.
-- `apply-snapshot`: apply game state, update player id, queue events; clears interpolation buffer on zone change.
+- `apply-snapshot`: apply game state, update player id, queue events; performs soft reset on zone change and full reset on teleports/resyncs.
 - `apply-private-state`: apply owner-only inventory/equipment/stats updates to the local player.
 
 **Authentication:**
@@ -95,7 +95,8 @@ Key functions
 - `players-in-zone`: Returns array of players matching a specific zone-id.
 
 Design note
-- Serialization is ASCII for now; keep payloads under `*net-buffer-size*`.
+- Snapshot serialization is ASCII by default, but binary snapshots can be enabled (`MMORPG_BINARY_SNAPSHOTS=1`) when client/server versions match.
+- Non-snapshot messages remain ASCII plists; keep payloads under `*net-buffer-size*`.
 - `*read-eval*` is disabled during message parsing for safety.
 - Snapshots use `serialize-game-state-compact` / `serialize-game-state-delta`; compact vectors always include visual fields.
 - Server uses non-blocking UDP receive via `usocket:wait-for-input` with `:timeout 0`.
@@ -112,7 +113,7 @@ Security: Input Validation
 - Speed hack prevention: Server uses own `*player-speed*` constant, ignores magnitude of move-dx/dy.
 - Double-login prevention: `*active-sessions*` tracks logged-in usernames; second login attempt rejected.
 - Malformed packet handling: Invalid plists or types are dropped gracefully without crashing.
-- See `tests/security-test.lisp` (driven by `scripts/test-security.lisp`) for the security test suite (23 tests).
+- See `tests/unit/security-input-tests.lisp` and `tests/unit/security-gamestate-tests.lisp` for the security test suite (run via `make test-unit`).
 
 Client-Side Interpolation
 - Remote entities (other players, NPCs) are rendered slightly in the past for smooth movement.
@@ -124,12 +125,15 @@ Client-Side Interpolation
   - `capture-entity-positions` - Capture entity positions after snapshot applied
   - `find-interpolation-bounds` - Find two snapshots bracketing render time
   - `interpolate-remote-entities` - Apply lerped positions before drawing
-- Zone transitions clear the interpolation buffer (stale positions are invalid).
+- Zone transitions **may** clear interpolation/prediction buffers depending on the
+  position delta (soft reset preserves buffers for small seamless transitions).
+- Same‑zone teleports trigger a full reset to avoid frozen interpolation artifacts.
 
 Client-Side Prediction (Optional)
 - Local player movement can be predicted client-side for instant feedback.
-- Controlled by `*client-prediction-enabled*` flag (default nil = disabled).
-- Toggle via SLIME: `(setf *client-prediction-enabled* t)` takes effect immediately.
+- Controlled by `*client-prediction-enabled*` flag (default **t** = enabled).
+- Prediction state is created at startup. You can disable at runtime, but enabling
+  after startup has no effect if prediction state was never created.
 - When enabled:
   - Client applies local movement immediately using same physics as server
   - Intent messages include `:sequence` number for tracking
@@ -145,6 +149,7 @@ Client-Side Prediction (Optional)
 Performance & Scaling
 - Single server process can host multiple zones; snapshots and NPC simulation are filtered per zone.
 - Player and NPC collision use per-zone bounds from zone-state wall maps (see `docs/movement.md`).
+- Snapshots are rate‑limited by `*snapshot-rate-hz*` (default 20Hz) and decoupled from 60Hz sim ticks.
 - Horizontal scaling is by capacity, not by zone count: each server process can host many zones
   (hundreds+) and should be assigned a **cluster/shard** of zones when you add more processes.
   Example: for 10k users, add server processes based on CPU/network limits, not 1 process per zone.

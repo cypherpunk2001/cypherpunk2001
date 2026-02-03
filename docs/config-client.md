@@ -4,14 +4,16 @@ Purpose
 - Client-only configuration parameters.
 - Separated from server config for clarity and to prevent loading unnecessary options.
 
+Status
+- **Implemented.** This doc reflects `src/config-client.lisp` as of 2026-02-03.
+
 Why we do it this way
 - Clear separation: developers know which options affect client vs server.
 - Reduced cognitive load: client developers only see relevant settings.
 - All rendering, UI, and visual parameters are isolated here.
 
 How it connects
-- Values can be overridden by `data/game-data.lisp` via `load-game-data`.
-- New tunables should be added to `*tunable-keys*` in `data.lisp` so they can be data-driven.
+- Values can be overridden by `data/game-data.lisp` via `load-game-data` when included in `*tunable-keys*`.
 
 ---
 
@@ -24,27 +26,25 @@ How it connects
 | `*window-height*` | `720` | Window height in pixels |
 | `*window-resize-enabled*` | `nil` | When T, creates resizable window and uses dynamic screen dimensions |
 
-*Why restart:* Raylib creates the window once at startup. The resizable flag must be set before window creation.
-
-**Note:** When `*window-resize-enabled*` is T, the window is created with `+flag-window-resizable+` (raylib FLAG_WINDOW_RESIZABLE = 4), enabling OS window resizing. Viewport culling and UI layout use `current-screen-width`/`current-screen-height` functions from utils.lisp that query raylib for runtime dimensions. When NIL (default), uses fixed `*window-width*`/`*window-height*` values for maximum performance.
+*Why restart:* Raylib creates the window once at startup.
 
 ### Frame Rate Target
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `*client-target-fps*` | `60` | Target FPS for client rendering (0 = unlimited/vsync) |
 
-*Why restart:* Target FPS is set at startup. Changing it at runtime requires calling `raylib:set-target-fps` manually.
+*Note:* Changing at runtime requires `raylib:set-target-fps` manually.
 
 ### Asset Paths
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*player-sprite-dir*` | `"../assets/1 Characters/3"` | Directory for player sprite sheets |
-| `*npc-sprite-dir*` | `"../assets/3 Dungeon Enemies/1"` | Directory for NPC sprite sheets |
-| `*blood-sprite-dir*` | `"../assets/1 Characters/Other"` | Directory for blood effect sprites |
-| `*tileset-path*` | `"../assets/Zelda-like/Overworld.png"` | Atlas image for floor tiles |
-| `*soundtrack-dir*` | `"../assets/6 Soundtrack"` | Directory for soundtrack files |
-| `*soundtrack-tracks*` | (vector of paths) | Vector of soundtrack file paths |
-| `*soundtrack-display-names*` | (vector of names) | Vector of display names for soundtrack |
+| `*player-sprite-dir*` | `"../assets/1 Characters/3"` | Player sprite sheets |
+| `*npc-sprite-dir*` | `"../assets/3 Dungeon Enemies/1"` | NPC sprite sheets |
+| `*blood-sprite-dir*` | `"../assets/1 Characters/Other"` | Blood effect sprites |
+| `*tileset-path*` | `"../assets/Zelda-like/Overworld.png"` | Tileset atlas |
+| `*soundtrack-dir*` | `"../assets/6 Soundtrack"` | Soundtrack directory |
+| `*soundtrack-tracks*` | vector | Soundtrack file paths |
+| `*soundtrack-display-names*` | vector | Soundtrack display names |
 
 *Why restart:* Assets are loaded into GPU/audio memory once at startup.
 
@@ -54,9 +54,7 @@ How it connects
 | `*sprite-frame-width*` | `32.0` | Width of a single sprite frame in pixels |
 | `*sprite-frame-height*` | `32.0` | Height of a single sprite frame in pixels |
 | `*sprite-scale*` | `4.0` | Scale factor applied when drawing sprites |
-| `*player-animation-set-id*` | `:player` | Animation set ID for the player sprite set |
-
-*Why restart:* Frame dimensions define how sprites are sliced from sheets at load time.
+| `*player-animation-set-id*` | `:player` | Animation set ID for the player |
 
 ### Inventory UI Layout
 | Parameter | Default | Description |
@@ -64,27 +62,28 @@ How it connects
 | `*inventory-grid-columns*` | `5` | Inventory grid columns |
 | `*inventory-slot-gap*` | `8` | Inventory slot gap in pixels |
 
-*Why restart:* UI layout calculated once at startup.
-
 ### Editor Setup
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `*editor-tileset-paths*` | `nil` | Optional list of tileset sheets for editor |
 | `*editor-tileset-root*` | `"../assets/Zelda-like"` | Directory for editor tileset sheets |
-| `*editor-export-path*` | `"data/zones/editor-zone.lisp"` | Default export path for editor zones |
-| `*editor-tile-layer-id*` | `:floor` | Zone layer ID for tile painting |
-| `*editor-collision-layer-id*` | `:walls` | Zone layer ID for collision painting |
-| `*editor-object-layer-id*` | `:objects` | Zone layer ID for object painting |
+| `*editor-export-path*` | `"data/zones/editor-zone.lisp"` | Default export path |
+| `*editor-tile-layer-id*` | `:floor` | Zone layer for tile painting |
+| `*editor-collision-layer-id*` | `:walls` | Zone layer for collision painting |
+| `*editor-object-layer-id*` | `:objects` | Zone layer for object painting |
 
-*Why restart:* Layer IDs and tileset catalog parsed at zone load time.
+### Render Chunk Size
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `*render-chunk-size*` | `16` | Tiles per render chunk side (restart required) |
 
 ### Client Prediction
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*client-prediction-enabled*` | `t` | Enable client-side prediction for local player. Provides smooth 60fps movement while server snapshots run at lower rates (20Hz) |
-| `*prediction-error-threshold*` | `5.0` | Max prediction error in pixels before snapping to server position |
+| `*client-prediction-enabled*` | `t` | Enable local prediction (must be T at startup to create state) |
+| `*prediction-error-threshold*` | `5.0` | Pixels of error before snapping to server |
 
-*Why restart (to enable):* Prediction state is created once at client startup. If started with `nil`, no state exists and enabling at runtime has no effect. However, if started with `t`, you can **disable** at runtime via SLIME `(setf *client-prediction-enabled* nil)` — the code checks the flag each frame.
+*Note:* Prediction state is created at startup. You can disable it at runtime, but enabling after startup has no effect.
 
 ---
 
@@ -93,126 +92,101 @@ How it connects
 ### Debug Flags
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*debug-collision-overlay*` | `nil` | Draws debug grid and collision overlays |
-| `*debug-npc-logs*` | `nil` | Logs NPC AI/combat events and enables AI debug text overlay |
+| `*debug-collision-overlay*` | `nil` | Draw debug collision overlays |
+| `*debug-npc-logs*` | `nil` | Enable NPC AI/combat logs and overlays |
 
 ### Feature Flags
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*auto-walk-enabled*` | `t` | When true, WASD toggles auto-walk direction |
-| `*editor-start-enabled*` | `nil` | When true, editor mode starts enabled |
+| `*auto-walk-enabled*` | `t` | WASD toggles auto-walk direction |
+| `*editor-start-enabled*` | `nil` | Start in editor mode |
 
-### Interpolation
+### Interpolation / Teleport Handling
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation. Higher = smoother, more perceived lag. SLIME/config only (no UI toggle) |
+| `*interpolation-delay-seconds*` | `0.1` | Render delay for interpolation |
+| `*teleport-distance-threshold-sq*` | `10000.0` | Squared distance to detect teleports (reset buffers) |
+| `*soft-reset-threshold-sq*` | `1024.0` | Squared distance below which prediction/interpolation buffers are preserved on zone transition |
 
 ### Rendering
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*tile-point-filter*` | `t` | Use point (nearest-neighbor) filtering for tiles. Always on; SLIME-only via `toggle-tile-point-filter` |
-| `*render-cache-enabled*` | `t` | Enable chunk render caching for zoom-out performance. Always on; SLIME-only via `toggle-render-cache-enabled` |
-| `*render-cache-max-chunks*` | `64` | Maximum cached chunk textures before LRU eviction. Prevents unbounded VRAM growth |
-| `*render-chunk-size*` | `16` | Tiles per chunk side (restart required). Larger = fewer draw calls but more re-rendering on edits |
-| `*entity-render-max-distance*` | `nil` | Maximum distance (world pixels) from player to render NPCs. `nil` = unlimited. Only affects NPCs; players always render if in viewport |
+| `*tile-point-filter*` | `t` | Nearest-neighbor filtering for tiles |
+| `*render-cache-enabled*` | `t` | Enable chunk render cache |
+| `*render-cache-max-chunks*` | `64` | Max cached chunk textures before LRU eviction |
+| `*debug-render-cache*` | `nil` | Log cache stats and evictions |
+| `*entity-render-max-distance*` | `nil` | NPC render distance (pixels); players unaffected |
 
-**Note:** `*tile-point-filter*` and `*render-cache-enabled*` are always-on features with no in-game toggle. Use SLIME functions `toggle-tile-point-filter` or `toggle-render-cache-enabled` for debugging—these properly clear render caches (raw `setf` leaves stale textures).
+**Note:** Use `toggle-tile-point-filter` / `toggle-render-cache-enabled` to change filtering/cache at runtime (they clear caches correctly).
 
 ### Camera
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*camera-zoom-default*` | `1.0` | Default camera zoom level |
-| `*camera-zoom-min*` | `0.5` | Minimum zoom level |
-| `*camera-zoom-max*` | `3.0` | Maximum zoom level |
-| `*camera-zoom-step*` | `0.1` | Zoom step per mouse wheel tick |
+| `*camera-zoom-default*` | `1.0` | Default zoom |
+| `*camera-zoom-min*` | `0.5` | Min zoom |
+| `*camera-zoom-max*` | `3.0` | Max zoom |
+| `*camera-zoom-step*` | `0.1` | Zoom step per wheel tick |
 
 ### Click Marker
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*click-marker-duration*` | `0.6` | Seconds a click marker stays visible |
-| `*click-marker-size-scale*` | `0.35` | Marker size as a fraction of a tile |
-| `*click-marker-thickness*` | `5` | Marker line thickness in pixels |
+| `*click-marker-duration*` | `0.6` | Marker lifetime (seconds) |
+| `*click-marker-size-scale*` | `0.35` | Marker size as fraction of tile |
+| `*click-marker-thickness*` | `5` | Marker line thickness |
 | `*click-marker-walk-color*` | yellow | Marker color for walk targets |
 | `*click-marker-attack-color*` | red | Marker color for attack targets |
 
 ### HUD & UI Timing
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*hud-log-line-seconds*` | `30.0` | Seconds a HUD log line stays visible |
-| `*hud-log-fade-seconds*` | `0.4` | Seconds to fade out HUD log lines |
-| `*mouse-hold-repeat-seconds*` | `0.25` | Repeat rate for mouse-held updates |
-| `*chat-max-length*` | `180` | Maximum characters in a chat message |
-| `*zone-loading-seconds*` | `0.35` | Seconds to show the zone loading overlay after transitions |
+| `*hud-log-line-seconds*` | `30.0` | HUD log line lifetime |
+| `*hud-log-fade-seconds*` | `0.4` | HUD log fade duration |
+| `*mouse-hold-repeat-seconds*` | `0.25` | Repeat rate for held mouse updates |
+| `*chat-max-length*` | `180` | Max chat length |
+| `*zone-loading-seconds*` | `0.35` | Loading overlay duration |
 
 ### Minimap
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*minimap-width*` | `220` | Minimap width in pixels |
-| `*minimap-height*` | `220` | Minimap height in pixels |
-| `*minimap-padding*` | `12` | Padding from screen edges for minimap placement |
-| `*minimap-point-size*` | `4` | Size of player/NPC markers on the minimap |
-| `*minimap-preview-edge-tiles*` | `1.5` | Tiles from an exit edge to show adjacent zone spawn previews |
-| `*minimap-npc-view-radius*` | `2000.0` | Maximum distance in world pixels to show NPCs on minimap (culling) |
-
-### Minimap Colors
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `*minimap-bg-color*` | dark blue | Minimap background color |
-| `*minimap-border-color*` | light gray | Minimap border color |
-| `*minimap-player-color*` | cyan | Minimap player marker color |
-| `*minimap-npc-color*` | orange | Minimap NPC marker color |
-| `*minimap-collision-color*` | gray | Minimap collision marker color |
+| `*minimap-width*` | `220` | Minimap width |
+| `*minimap-height*` | `220` | Minimap height |
+| `*minimap-padding*` | `12` | Screen padding |
+| `*minimap-point-size*` | `4` | Marker size |
+| `*minimap-preview-edge-tiles*` | `1.5` | Edge distance to show preview spawns |
+| `*minimap-npc-view-radius*` | `2000.0` | NPC minimap view radius (pixels) |
 
 ### Animation Timing
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*idle-frame-count*` | `4` | Frames in each idle animation row |
-| `*walk-frame-count*` | `6` | Frames in each walk animation row |
-| `*attack-frame-count*` | `4` | Frames in each attack animation row |
-| `*idle-frame-time*` | `0.25` | Seconds per idle frame |
-| `*walk-frame-time*` | `0.12` | Seconds per walk frame |
-| `*attack-frame-time*` | `0.1` | Seconds per attack frame |
-| `*blood-frame-count*` | `4` | Frames in each blood animation row |
-| `*blood-frame-time*` | `0.08` | Seconds per blood frame |
+| `*idle-frame-count*` | `4` | Idle frames per row |
+| `*walk-frame-count*` | `6` | Walk frames per row |
+| `*attack-frame-count*` | `4` | Attack frames per row |
+| `*idle-frame-time*` | `0.25` | Idle frame time |
+| `*walk-frame-time*` | `0.12` | Walk frame time |
+| `*attack-frame-time*` | `0.1` | Attack frame time |
+| `*blood-frame-count*` | `4` | Blood frames per row |
+| `*blood-frame-time*` | `0.08` | Blood frame time |
 
 ### Health Bar
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*health-bar-height*` | `6` | Height of the health bar in pixels |
-| `*health-bar-offset*` | `10` | Vertical offset above the sprite center |
-| `*health-bar-back-color*` | dark gray | Health bar background color |
-| `*health-bar-fill-color*` | green | Health bar fill color |
-| `*health-bar-border-color*` | light gray | Health bar outline color |
+| `*health-bar-height*` | `6` | Health bar height |
+| `*health-bar-offset*` | `10` | Vertical offset above sprite center |
+| `*health-bar-back-color*` | dark gray | Background color |
+| `*health-bar-fill-color*` | green | Fill color |
+| `*health-bar-border-color*` | light gray | Border color |
 
 ### Debug Text
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*debug-npc-text-size*` | `12` | Debug text size for NPC AI overlay |
-| `*debug-npc-text-offset*` | `18` | Extra vertical offset for NPC debug text |
-| `*debug-npc-text-color*` | yellow | NPC AI debug text color |
+| `*debug-npc-text-size*` | `12` | NPC debug text size |
+| `*debug-npc-text-offset*` | `18` | NPC debug text offset |
+| `*debug-npc-text-color*` | yellow | NPC debug text color |
 
 ### Editor Visual Parameters
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `*editor-move-speed*` | `360.0` | Movement speed for editor camera |
+| `*editor-move-speed*` | `360.0` | Editor camera movement speed |
 | `*editor-cursor-color*` | cyan | Editor cursor highlight color |
 | `*editor-spawn-color*` | orange | Editor spawn marker color |
-| `*editor-tileset-preview-padding*` | `12` | Padding for the tileset preview panel |
-| `*editor-tileset-preview-max-width*` | `480` | Max width for the tileset preview panel |
-| `*editor-tileset-preview-max-height*` | `360` | Max height for the tileset preview panel |
-| `*editor-tileset-preview-bg-color*` | dark | Tileset preview background color |
-| `*editor-tileset-preview-border-color*` | gray | Tileset preview border color |
-| `*editor-tileset-preview-highlight-color*` | yellow | Tileset preview selection color |
-
-### Music Volume
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `*music-volume-steps*` | `10` | Number of volume steps for music controls |
-| `*music-default-volume-level*` | `1` | Default music volume step (0 mutes) |
-
-### Client Hooks
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `*client-zone-change-hook*` | `on-zone-change` | Called on zone transition with new zone-id. Set by rendering.lisp to clear all render caches |
-
-Client hooks allow presentation systems (rendering, audio) to register callbacks without creating dependencies from game logic to presentation code. The hook is called from client-only code paths in zone transition handling. The default implementation clears all render caches (strict Option A) to ensure editor changes aren't stale.
+| `*editor-tileset-preview-padding*` | `12` | Tileset preview padding |
