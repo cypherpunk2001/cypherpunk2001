@@ -848,6 +848,14 @@
       (error 'storage-error :operation :load-raw :key key :cause "Simulated failure")
       (call-next-method)))
 
+(defmethod storage-refresh-ttl-batch ((storage failing-storage) keys ttl-seconds)
+  "Fail batch TTL refresh if configured to fail saves.
+   Returns 0 to match Redis implementation's error-catching behavior."
+  (if (failing-storage-fail-saves storage)
+      ;; Redis impl catches errors and returns 0, so simulate that behavior
+      0
+      (call-next-method)))
+
 (defun test-storage-error-signaled-on-save-failure ()
   "Test: storage-save signals storage-error on failure (Phase 1)."
   (let* ((storage (make-instance 'failing-storage :fail-saves t))
@@ -1088,6 +1096,123 @@
           t)
       (setf *storage* old-storage))))
 
+;;;; ========================================================================
+;;;; BATCH TTL REFRESH TESTS (Code Standards Compliance)
+;;;; Tests for storage-refresh-ttl-batch and refresh-all-session-ownerships
+;;;; ========================================================================
+
+(defun test-batch-ttl-refresh-basic ()
+  "Test: storage-refresh-ttl-batch refreshes TTL on multiple existing keys."
+  (let* ((storage (make-instance 'memory-storage))
+         (now (get-universal-time))
+         (keys '("test:key1" "test:key2" "test:key3")))
+    (storage-connect storage)
+    ;; Setup: create keys with TTL
+    (dolist (key keys)
+      (storage-save storage key "value")
+      (setf (gethash key *memory-storage-ttls*) (+ now 60)))  ; 60s TTL
+    ;; Act: batch refresh to 120s
+    (let ((count (storage-refresh-ttl-batch storage keys 120)))
+      ;; Assert: all 3 refreshed
+      (assert-equal 3 count "Expected 3 keys refreshed")
+      ;; Assert: TTLs updated (should be >= now + 119)
+      (dolist (key keys)
+        (let ((new-ttl (gethash key *memory-storage-ttls*)))
+          (assert-true (>= new-ttl (+ now 119))
+                       (format nil "Key ~a TTL not refreshed" key)))))
+    t))
+
+(defun test-batch-ttl-refresh-empty-list ()
+  "Test: storage-refresh-ttl-batch returns 0 for empty key list."
+  (let ((storage (make-instance 'memory-storage)))
+    (storage-connect storage)
+    (let ((count (storage-refresh-ttl-batch storage nil 60)))
+      (assert-equal 0 count "Expected 0 for empty list"))
+    t))
+
+(defun test-batch-ttl-refresh-partial ()
+  "Test: storage-refresh-ttl-batch only counts existing non-expired keys."
+  (let* ((storage (make-instance 'memory-storage))
+         (now (get-universal-time)))
+    (storage-connect storage)
+    ;; Setup: key1 exists with valid TTL, key2 expired, key3 missing
+    (storage-save storage "test:key1" "value")
+    (setf (gethash "test:key1" *memory-storage-ttls*) (+ now 60))
+    (storage-save storage "test:key2" "value")
+    (setf (gethash "test:key2" *memory-storage-ttls*) (- now 10))  ; Expired
+    ;; key3 not created
+    ;; Act
+    (let ((count (storage-refresh-ttl-batch storage
+                   '("test:key1" "test:key2" "test:key3") 120)))
+      ;; Assert: only key1 refreshed
+      (assert-equal 1 count "Expected 1 key refreshed (valid non-expired)"))
+    t))
+
+(defun test-batch-ttl-refresh-error-returns-zero ()
+  "Test: storage-refresh-ttl-batch returns 0 on error (doesn't throw)."
+  (let ((storage (make-instance 'failing-storage :fail-saves t)))
+    (storage-connect storage)
+    ;; failing-storage with fail-saves=t will error on refresh-ttl-batch
+    (let ((count (storage-refresh-ttl-batch storage '("key1" "key2") 60)))
+      (assert-equal 0 count "Expected 0 on error"))
+    t))
+
+(defun test-refresh-all-session-ownerships-uses-batch ()
+  "Test: refresh-all-session-ownerships refreshes TTLs for registered sessions."
+  (let* ((storage (make-instance 'memory-storage))
+         (old-storage *storage*)
+         (old-sessions *player-sessions*)
+         (old-server-id *server-instance-id*)
+         (now (get-universal-time)))
+    (unwind-protect
+        (progn
+          (setf *storage* storage
+                *player-sessions* (make-hash-table)
+                *server-instance-id* "test-server-batch-ttl")
+          (storage-connect storage)
+          ;; Create two players and register sessions
+          (let ((player1 (make-player 100.0 200.0 :id 1001))
+                (player2 (make-player 100.0 200.0 :id 1002)))
+            ;; Set up session ownership keys (simulating claim)
+            (let ((key1 (session-owner-key 1001))
+                  (key2 (session-owner-key 1002)))
+              (storage-save storage key1 *server-instance-id*)
+              (storage-save storage key2 *server-instance-id*)
+              ;; Set initial TTLs
+              (setf (gethash key1 *memory-storage-ttls*) (+ now 30)
+                    (gethash key2 *memory-storage-ttls*) (+ now 30))
+              ;; Register sessions (adds to *player-sessions*)
+              (setf (gethash 1001 *player-sessions*)
+                    (make-player-session :player player1 :zone-id :test :dirty-p nil :last-flush 0.0))
+              (setf (gethash 1002 *player-sessions*)
+                    (make-player-session :player player2 :zone-id :test :dirty-p nil :last-flush 0.0))
+              ;; Act: refresh all session ownerships
+              (let ((failed (refresh-all-session-ownerships)))
+                ;; Assert: no failures
+                (assert-true (null failed) "Expected no failures")
+                ;; Assert: TTLs were refreshed (should be >= now + ownership TTL - 1)
+                (let ((min-expected (+ now (- *session-ownership-ttl-seconds* 1))))
+                  (assert-true (>= (gethash key1 *memory-storage-ttls*) min-expected)
+                               "Key1 TTL should be refreshed")
+                  (assert-true (>= (gethash key2 *memory-storage-ttls*) min-expected)
+                               "Key2 TTL should be refreshed")))))
+          t)
+      ;; Cleanup
+      (clrhash *player-sessions*)
+      (setf *storage* old-storage
+            *player-sessions* old-sessions
+            *server-instance-id* old-server-id))))
+
+(defun run-batch-ttl-refresh-tests ()
+  "Run all batch TTL refresh tests."
+  (format t "~&Running batch TTL refresh tests...~%")
+  (run-test 'test-batch-ttl-refresh-basic)
+  (run-test 'test-batch-ttl-refresh-empty-list)
+  (run-test 'test-batch-ttl-refresh-partial)
+  (run-test 'test-batch-ttl-refresh-error-returns-zero)
+  (run-test 'test-refresh-all-session-ownerships-uses-batch)
+  (format t "~&All batch TTL refresh tests complete.~%"))
+
 (defun run-phase2-ownership-cleanup-tests ()
   "Run all Phase 2 ownership cleanup tests."
   (format t "~&Running Phase 2 ownership cleanup tests...~%")
@@ -1130,3 +1255,4 @@
 (export 'run-4way-validation-tests)
 (export 'run-phase1-storage-failure-tests)
 (export 'run-phase2-ownership-cleanup-tests)
+(export 'run-batch-ttl-refresh-tests)

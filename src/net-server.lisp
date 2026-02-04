@@ -192,6 +192,10 @@
                      :with accumulator = 0.0
                      :with snapshot-seq = 0  ; Delta compression sequence counter
                      :with snapshot-accumulator = 0.0  ; Phase 3: decouple snapshot rate
+                     ;; Phase 3 (Code Standards): Pooled event plist buffers to avoid per-tick allocation
+                     ;; Size must match +event-ring-size+ to avoid silent event loss
+                     :with event-plist-pool = (loop :repeat +event-ring-size+ :collect (list :type nil :text nil))
+                     :with event-cons-pool = (loop :repeat +event-ring-size+ :collect (cons nil nil))
                      :with tick-units = (floor (* *sim-tick-seconds*
                                                   internal-time-units-per-second))
                      :until (or stop-flag
@@ -401,8 +405,12 @@
                          (when (and clients (>= snapshot-accumulator *snapshot-interval*))
                            (decf snapshot-accumulator *snapshot-interval*)
                            (handler-case
-                               (let* ((events (pop-combat-events (game-combat-events game)))
-                                      (event-plists (mapcar #'combat-event->plist events))
+                               ;; Pop events directly into pooled buffers (no intermediate list allocation)
+                               (let* ((event-plists (pop-combat-events-into
+                                                     (game-combat-events game)
+                                                     event-plist-pool
+                                                     event-cons-pool
+                                                     #'combat-event->plist-into))
                                       (current-seq (incf snapshot-seq)))
                                  (if *delta-compression-enabled*
                                      ;; Prong 2: Delta compression - dirty entities only

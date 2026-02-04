@@ -1000,3 +1000,50 @@
             (combat-event-queue-count queue) 0)
       ;; Return events in insertion order (nreverse since we pushed)
       (nreverse events))))
+
+(defun pop-combat-events-into (queue plist-pool cons-pool plist-filler)
+  "Pop events directly into pooled plist/cons lists, avoiding intermediate allocation.
+   PLIST-POOL: list of reusable plists to fill with event data.
+   CONS-POOL: list of reusable cons cells to build the result list.
+   PLIST-FILLER: function (event plist) -> plist that fills plist with event data.
+   Returns the head of the constructed list (reusing cons cells from CONS-POOL).
+   Clears the queue after processing."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (when queue
+    (let* ((count (combat-event-queue-count queue))
+           (buffer (combat-event-queue-buffer queue))
+           (size (length buffer))
+           (tail (combat-event-queue-tail queue))
+           (plist-tail plist-pool)
+           (cons-tail cons-pool)
+           (head nil)
+           (prev nil))
+      (declare (type fixnum count size tail))
+      ;; Process events from tail to head (insertion order)
+      (dotimes (i count)
+        (when (and plist-tail cons-tail)
+          (let* ((idx (mod (+ tail i) size))
+                 (event (aref buffer idx))
+                 (plist (car plist-tail))
+                 (cell (car cons-tail)))
+            (declare (type fixnum idx))
+            ;; Fill plist with event data
+            (funcall plist-filler event plist)
+            ;; Wire cons cell
+            (setf (car cell) plist)
+            (if prev
+                (setf (cdr prev) cell)
+                (setf head cell))
+            (setf prev cell)
+            ;; Clear slot for GC
+            (setf (aref buffer idx) nil)
+            ;; Advance pool tails
+            (setf plist-tail (cdr plist-tail)
+                  cons-tail (cdr cons-tail)))))
+      ;; Terminate the list
+      (when prev (setf (cdr prev) nil))
+      ;; Reset queue state
+      (setf (combat-event-queue-head queue) 0
+            (combat-event-queue-tail queue) 0
+            (combat-event-queue-count queue) 0)
+      head)))

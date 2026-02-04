@@ -734,6 +734,15 @@
     (list :type (combat-event-type event)
           :text (combat-event-text event))))
 
+(defun combat-event->plist-into (event plist)
+  "Fill PLIST with EVENT data. PLIST must be a mutable plist with :type and :text keys.
+   Returns PLIST. Used by pooled event serialization to avoid allocation."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (when (and event plist)
+    (setf (getf plist :type) (combat-event-type event)
+          (getf plist :text) (combat-event-text event)))
+  plist)
+
 (defun plist->combat-event (plist)
   ;; Convert a plist back into a combat event.
   (when plist

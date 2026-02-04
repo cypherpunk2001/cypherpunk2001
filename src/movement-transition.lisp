@@ -891,6 +891,9 @@
    - Commit: player with pending reaches zone edge → transition fires
    - Cancel: player retreats past cancel line → pending cleared
    Returns count of players that transitioned this frame."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type game game)
+           (type single-float dt))
   ;; Config invariant: cancel line must be further from edge than arm line
   (assert (> *zone-hysteresis-out* *zone-hysteresis-in*)
           (*zone-hysteresis-out* *zone-hysteresis-in*)
@@ -898,6 +901,9 @@
   (let* ((world (game-world game))
          (players (game-players game))
          (transition-count 0))
+    (declare (type (or null world) world)
+             (type (or null (simple-array t (*))) players)
+             (type fixnum transition-count))
     (when (and world players (> (length players) 0))
       (loop :for player :across players
             :when player
@@ -910,6 +916,7 @@
                          (half-w (world-collision-half-width world))
                          (half-h (world-collision-half-height world)))
                     (declare (ignore _zone-state))
+                    (declare (type single-float tile-size half-w half-h))
                     ;; Step 1: Cooldown — decrement and skip if active
                     (when (> (player-zone-transition-cooldown player) 0.0)
                       (decf (player-zone-transition-cooldown player) dt)
@@ -921,8 +928,10 @@
                             (get-zone-collision-bounds player-zone-id tile-size half-w half-h)
                             (values (world-wall-min-x world) (world-wall-max-x world)
                                     (world-wall-min-y world) (world-wall-max-y world)))
+                      (declare (type single-float min-x max-x min-y max-y))
                       (when (and min-x max-x min-y max-y)
                         (let ((pending (player-zone-transition-pending player)))
+                          (declare (type (or null keyword) pending))
                           (cond
                             ;; === PENDING SET: evaluate commit/cancel ===
                             (pending

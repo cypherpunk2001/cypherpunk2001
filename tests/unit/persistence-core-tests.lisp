@@ -133,7 +133,13 @@
                 ;; Ownership Loss Cleanup Tests (Phase 2 - Implementation Findings Fix)
                 #'test-ownership-reclaim-on-verification-failure
                 #'test-ownership-truly-lost-when-another-server-owns
-                #'test-local-unregister-preserves-online-set)))
+                #'test-local-unregister-preserves-online-set
+                ;; Batch TTL Refresh Tests (Code Standards Compliance)
+                #'test-batch-ttl-refresh-basic
+                #'test-batch-ttl-refresh-empty-list
+                #'test-batch-ttl-refresh-partial
+                #'test-batch-ttl-refresh-error-returns-zero
+                #'test-refresh-all-session-ownerships-uses-batch)))
     (format t "~%=== Running Persistence Tests ===~%")
     (dolist (test tests)
       (handler-case

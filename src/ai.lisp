@@ -162,6 +162,7 @@
   "Update NPC behavior state based on archetype rules and player range."
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc)
+           (type (or null player) player)
            (type world world))
   (let* ((archetype (npc-archetype npc))
          (old-state (npc-behavior-state npc))
@@ -205,6 +206,7 @@
    When PLAYER is nil, NPC runs idle/wander behavior."
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc)
+           (type (or null player) player)
            (type world world)
            (type single-float dt))
   (when (npc-alive npc)
@@ -229,6 +231,7 @@
              (home-dy (- (npc-home-y npc) (npc-y npc)))
              (home-dist-sq (+ (* home-dx home-dx) (* home-dy home-dy)))
              (home-radius-sq (* home-radius home-radius)))
+        (declare (type single-float home-radius home-dx home-dy home-dist-sq home-radius-sq))
         (if (and (not (eq state :flee))
                  (> home-radius 0.0)
                  (> home-dist-sq home-radius-sq))
@@ -241,6 +244,7 @@
               (:flee
                (let ((vx (- (npc-x npc) (player-x player)))
                      (vy (- (npc-y npc) (player-y player))))
+                 (declare (type single-float vx vy))
                  (setf face-dx vx
                        face-dy vy)
                  (if (and (zerop vx) (zerop vy))
@@ -252,6 +256,7 @@
                (let* ((vx (- (player-x player) (npc-x npc)))
                       (vy (- (player-y player) (npc-y npc)))
                       (dist-sq (+ (* vx vx) (* vy vy))))
+                 (declare (type single-float vx vy dist-sq))
                  (setf face-dx vx
                        face-dy vy)
                  (if (<= dist-sq attack-range-sq)
@@ -276,7 +281,8 @@
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc)
            (type world world)
-           (type single-float dt))
+           (type single-float dt)
+           (type (or null zone-state) zone-state))
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
            (state (npc-behavior-state npc))
@@ -296,10 +302,12 @@
                 (not (zerop dy)))
         (multiple-value-bind (half-w half-h)
             (npc-collision-half world)
+          (declare (type single-float half-w half-h))
           ;; Use per-zone collision if zone-state is available, otherwise fallback to world
           (let* ((tile-size (world-tile-dest-size world))
                  (zone-wall-map (and zone-state (zone-state-wall-map zone-state)))
                  (zone (and zone-state (zone-state-zone zone-state))))
+            (declare (type single-float tile-size))
             (if zone-wall-map
                 ;; Per-zone collision with zone-state wall-map
                 (multiple-value-bind (min-x max-x min-y max-y)
@@ -307,6 +315,7 @@
                                               (zone-width zone)
                                               (zone-height zone)
                                               half-w half-h)
+                  (declare (type single-float min-x max-x min-y max-y))
                   (multiple-value-bind (nx ny out-dx out-dy)
                       (attempt-move-with-map zone-wall-map
                                               (npc-x npc) (npc-y npc)

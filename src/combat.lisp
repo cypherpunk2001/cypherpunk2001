@@ -388,11 +388,16 @@
 (defun update-npc-respawns (npcs dt &optional zone-state)
   "Tick respawn timers and restore NPCs when timers expire.
    When ZONE-STATE is provided, updates the NPC's grid cell on respawn."
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (declare (type (simple-array t (*)) npcs)
+           (type single-float dt)
+           (type (or null zone-state) zone-state))
   (let ((npc-grid (and zone-state (zone-state-npc-grid zone-state))))
     (loop :for npc :across npcs
           :when (and (not (npc-alive npc))
                      (> (npc-respawn-timer npc) 0.0))
           :do (let ((timer (max 0.0 (- (npc-respawn-timer npc) dt))))
+                (declare (type single-float timer))
                 (setf (npc-respawn-timer npc) timer)
                 (when (<= timer 0.0)
                   ;; Remove from old grid cell before respawn moves NPC
@@ -781,8 +786,10 @@
   "Handle NPC melee attacks and cooldowns (server-side)."
   (declare (optimize (speed 3) (safety 1) (debug 0)))
   (declare (type npc npc)
+           (type player player)
            (type world world)
-           (type single-float dt))
+           (type single-float dt)
+           (type (or null combat-event-queue) event-queue))
   (when (npc-alive npc)
     (let* ((intent (npc-intent npc))
            (timer (max 0.0f0 (- (npc-attack-timer npc) dt)))
@@ -798,6 +805,7 @@
         (let* ((dx (- (player-x player) (npc-x npc)))
                (dy (- (player-y player) (npc-y npc)))
                (dist-sq (+ (* dx dx) (* dy dy))))
+          (declare (type single-float dx dy dist-sq))
           (when (<= dist-sq attack-range-sq)
             (multiple-value-bind (hit chance roll)
                 (roll-melee-hit npc player)
