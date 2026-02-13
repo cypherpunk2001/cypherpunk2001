@@ -1,0 +1,53 @@
+Curious, what method is our code currently handling this when i fullscreen F11 the game? I have only tested on my 1440p monitor and zoom in  / standard where camera rests seems OK.
+But I am trying to get a feel for how everyone's experience is going to be in the game. Thanks.
+
+---
+
+The 3 normal ways to “use the whole monitor” at 4K
+1) True fullscreen at native res (recommended)
+
+Run the window at 3840×2160 (or borderless fullscreen).
+Your sprites can stay the same pixel size; you’ll just see more world area.
+
+Pros: crisp, simple, no blur
+
+Con: player/tiles look “smaller” relative to the screen unless you zoom in
+
+This is what many 2D games do: bigger monitors = more viewport.
+
+2) Fullscreen + camera zoom (common, what you probably want)
+
+Still run at 4K fullscreen, but increase camera zoom so the character remains the same apparent size as at 1080p.
+
+Pros: fills monitor and keeps the “feel” consistent
+
+Con: you’ll see roughly the same amount of world as 1080p (unless you allow zoom-out on 4K)
+
+This is usually the best experience.
+
+3) Internal render resolution + upscale (pixel-art style)
+
+Render the world to a smaller internal resolution (like 1920×1080 or 1280×720), then scale that up to 4K to fill the screen.
+
+Pros: consistent look, consistent workload
+
+Con: can look blurry unless you do integer-ish scaling; UI needs care
+
+This is popular for crisp pixel games, but for isometric “Diablo-ish” art you might prefer native 4K rendering + zoom.
+
+---
+
+someone told me:
+
+What I’d do for your MMO
+
+Always support borderless fullscreen at native resolution.
+
+Set a default zoom so the player is ~the same on-screen size across resolutions.
+
+Optionally let 4K users zoom out more to see extra world (nice MMO advantage).
+
+If you tell me your target “player height on screen” (e.g. ~80px), that single number basically defines the zoom rules for 1080p/1440p/4K while keeping one art set.
+
+
+Don'tt change anything, but is this what we are doing? curious also.
