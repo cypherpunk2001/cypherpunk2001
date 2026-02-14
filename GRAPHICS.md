@@ -159,25 +159,29 @@ Connect Existing keeps the chain visually consistent across terrain types.
 
 All assets must be created at these sizes to match the engine spec.
 
-| Asset | Size |
-|-------|------|
-| Floor tiles | 32x32 |
-| Wall/roof tiles | 32x32 |
-| Player sprites | 32x32/frame |
-| NPC sprites | 32x32/frame |
-| Small props | 32x32 |
-| Medium props | 64x64 (spans 2x2 tiles) |
-| Large/special | 128x128 (spans 4x4 tiles) |
-| Item icons | 32x32 |
+| Asset | Size | Pipeline |
+|-------|------|----------|
+| Floor/terrain tiles | 32x32 | B (tileset creator) |
+| Wall/roof tiles | 32x32 | B (tileset creator) |
+| Player sprites | 32x32/frame | A (style reference) |
+| NPC sprites | 32x32/frame | A (style reference) |
+| Small props (doors, signs, vents) | 32x32 | A (style reference) |
+| Medium props (vehicles, machines) | 64x64 (spans 2x2 tiles) | A (style reference) |
+| Large/special (bosses, landmarks) | 128x128 (spans 4x4 tiles) | A (style reference) |
+| Item icons | 32x32 | A (style reference) |
 
 ### Character Sprite Sheets
 
 Directions, frame counts, and sheet layout TBD -- will spec after generating base content
 and assessing what PixelLab produces.
 
-### Buildings
+### Buildings (Both Pipelines)
 
-Buildings are **not** one big image. They're composed from wall/roof Wang tilesets:
+Buildings use **both** pipelines:
+
+**Pipeline B (structure):** Wall surfaces, roof fills, floor textures -- anything that
+repeats and tiles. Generate a wall/roof Wang tileset, then paint the building shape
+in the editor. A 10x8 warehouse is mostly the same wall tile repeated with corner pieces.
 
 ```
 +----------+----------+----------+----------+
@@ -187,13 +191,14 @@ Buildings are **not** one big image. They're composed from wall/roof Wang tilese
 +----------+----------+----------+----------+
 | wall-W   | roof     | roof     | wall-E   |
 +----------+----------+----------+----------+
-| wall-SW  | door     | wall-S   | wall-SE  |
+| wall-SW  | wall-S   | wall-S   | wall-SE  |
 +----------+----------+----------+----------+
-         Each cell = one 32x32 tile
+         Each cell = one 32x32 tile (Pipeline B)
 ```
 
-Create a cyberpunk wall Wang tileset (edges, corners, inner corners, roof fill, door
-variations). Buildings of any size use the same tileset.
+**Pipeline A (details):** Unique doors, neon signs, AC units, windows with holograms,
+vendor awnings -- one-off details placed on top of the tiled structure as decoration
+layer objects.
 
 ## Art Workflow Summary
 
