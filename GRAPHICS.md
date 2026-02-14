@@ -73,59 +73,27 @@ or make creative decisions about art style.
 
 ---
 
-## Tooling: PixelLab.ai
+## Tooling
 
-PixelLab is an AI pixel art generation platform with an MCP server that integrates into
-Claude Code. Used by the human to generate assets, with Claude available to call MCP tools
-on request.
-
-### Setup
-
-```bash
-claude mcp add pixellab https://api.pixellab.ai/mcp -t http -H "Authorization: Bearer YOUR_API_KEY"
-```
-
-Requires a Tier 1 subscription for style reference features.
-
-### Available MCP Tools
-
-| Tool | What It Does | Our Use |
-|------|-------------|---------|
-| `create_topdown_tileset` | Generates Wang tilesets with seamless terrain transitions | Cyberpunk ground, walls, terrain |
-| `create_character` | Pixel art characters with 4 or 8 directional views | Player classes, NPCs |
-| `animate_character` | Adds walk/run/idle/attack animations to existing characters | Full animation sets |
-| `create_map_object` | Props with transparent backgrounds, supports style matching | Neon signs, terminals, crates, dumpsters |
-| `create_isometric_tile` | Individual isometric tiles | NOT using |
-
-### Style Reference System (Pro Feature)
-
-Provide up to 5 reference images that define the visual style. All subsequent generations
-stay in that visual lane. The references do the heavy lifting - the text prompt is just a
-one-liner saying *what* to generate (e.g., `"cyberpunk street thug with neon visor"`).
-Not a multi-page prompt - one sentence, the images carry the style.
-
-Frame output by size:
-- 32x32 -> 64 frames (8x8 grid) -- up to 64 style images
-- 64x64 -> 16 frames (4x4 grid) -- up to 16 style images
-- 128x128 -> 4 frames (2x2 grid) -- up to 4 style images
-- 256x256 -> 1 frame -- 1 style image
-
-Costs 40 generations per style reference call.
+- **PixelLab.ai** -- AI pixel art generation (web UI, Aseprite extension). Used for
+  generating base sprites and tilesets. Human curates and refines output.
+- **Aseprite** -- Pixel art editor for manual refinement, animation, and sprite sheet assembly.
+- **In-game tile editor** -- Manual tile placement and collision marking.
 
 ## Asset Specifications
 
-All assets must be generated at these sizes to match the engine spec.
+All assets must be created at these sizes to match the engine spec.
 
-| Asset | Size | PixelLab Frames/Call | Tool |
-|-------|------|---------------------|------|
-| Floor tiles | 32x32 | 64 | `create_topdown_tileset` / style ref |
-| Wall/roof tiles | 32x32 | 64 | `create_topdown_tileset` / style ref |
-| Player sprites | 32x32/frame | N/A | `create_character` + `animate_character` |
-| NPC sprites | 32x32/frame | N/A | `create_character` + `animate_character` |
-| Small props | 32x32 | 64 | `create_map_object` / style ref |
-| Medium props | 64x64 | 16 | `create_map_object` |
-| Large/special | 128x128 | 4 | `create_map_object` |
-| Item icons | 32x32 | 64 | Style reference |
+| Asset | Size |
+|-------|------|
+| Floor tiles | 32x32 |
+| Wall/roof tiles | 32x32 |
+| Player sprites | 32x32/frame |
+| NPC sprites | 32x32/frame |
+| Small props | 32x32 |
+| Medium props | 64x64 (spans 2x2 tiles) |
+| Large/special | 128x128 (spans 4x4 tiles) |
+| Item icons | 32x32 |
 
 ### Buildings
 
@@ -144,31 +112,17 @@ Buildings are **not** one big image. They're composed from wall/roof Wang tilese
          Each cell = one 32x32 tile
 ```
 
-Generate a cyberpunk wall Wang tileset (edges, corners, inner corners, roof fill, door
+Create a cyberpunk wall Wang tileset (edges, corners, inner corners, roof fill, door
 variations). Buildings of any size use the same tileset.
-
-## Asset Generation Budget (Estimated)
-
-| Asset Category | PixelLab Calls | Output |
-|---|---|---|
-| Ground terrain variants | 1-2 style ref calls | 64-128 tile variations |
-| Wall/roof building tiles | 1-2 style ref calls | 64-128 wall variants |
-| Cyberpunk small props | 2-3 style ref calls | 128-192 small objects |
-| Medium props (vehicles etc.) | 1-2 map object calls | 16-32 medium objects |
-| Item icons (inventory) | 1-2 style ref calls | 64-128 icons |
-| Player characters | Character creator | 4-dir animated sprites per class |
-| NPCs | Character creator | 4-dir animated sprites per type |
-
-~8-12 PixelLab calls for the base tileset and props, plus character generation for sprites.
 
 ## Art Workflow
 
-1. Pick 3-5 cyberpunk pixel art reference images (creative direction)
-2. Generate assets via PixelLab + Aseprite at the sizes above
-3. Curate - pick which variations look good (human eye, not AI)
-4. Place tiles manually in the interactive editor
-5. Mark collision manually in the editor
-6. Hand assets to Claude for engine integration
+1. Find/create cyberpunk pixel art style references
+2. Create assets using PixelLab + Aseprite at the sizes above
+3. Manually refine and curate (human eye judges quality)
+4. Place tiles in the interactive editor
+5. Mark collision in the editor
+6. Hand finished assets to Claude for engine integration
 
 ---
 ---
