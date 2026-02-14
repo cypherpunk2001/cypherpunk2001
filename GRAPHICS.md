@@ -83,7 +83,9 @@ or make creative decisions about art style.
 
 Starting point: https://www.pixellab.ai/create
 
-Two separate pipelines: one for characters/objects, one for tilesets.
+**Pipeline A** (characters/objects): HD image -> "Image to pixel art" -> seed sprite -> "Style reference" -> 16 variations at 64x64 -> downscale 32x32 -> "8-directional" -> Aseprite touchup
+
+**Pipeline B** (tilesets): Tileset creator -> define Lower/Upper terrain pair -> set transition/style -> Generate 32x32 Wang tileset -> chain via Connect Existing for multi-terrain
 
 ### Pipeline A: Characters, NPCs, Objects, Icons (Pro required)
 
