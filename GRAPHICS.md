@@ -13,7 +13,9 @@ The game uses a grab bag of free assets from OpenGameArt with no visual cohesion
 
 ## Target
 
-Cohesive cyberpunk pixel art. Dark, atmospheric, Diablo 2 *feel* (gritty, moody, visceral) but keeping the top-down perspective. Fullscreen support from 1080p to 4K.
+Hyper Light Drifter-style gameplay reimagining of Cyberpunk 2077 as a top-down MMO. Same atmospheric pixel art approach as HLD but at 32x32 (double HLD's 16x16) for higher definition. Dark, neon-lit, gritty cyberpunk world. Fullscreen support from 1080p to 4K.
+
+RuneScape Classic is an inspiration for **game loops only** (PvP/PvE combat, skilling systems) - not for art style or graphics.
 
 ---
 
@@ -35,7 +37,7 @@ All integer. All pixel-perfect. No fuzzy scaling at any resolution.
 
 With 32x32 tiles in a 640x360 virtual buffer:
 - **20 tiles across, ~11 tiles tall** visible at default zoom
-- Right in the Diablo 2 ballpark (~20-25 tiles across at 800x600)
+- Similar field of view to Hyper Light Drifter
 - Existing zoom range (0.5x-3.0x) works within the virtual buffer: zoomed out shows ~40x22 tiles
 
 ### Engine Changes
@@ -50,9 +52,24 @@ With 32x32 tiles in a 640x360 virtual buffer:
 
 ## Standardized Asset Sizes
 
-### The Rule: Everything is 32x32 Unless There's a Specific Reason
+### The Rule: Everything is 32x32 (LOCKED)
 
-32x32 is the standard for tiles, sprites, and small props. This gives us:
+**This is final.** 32x32 is the only tile size that integer-scales to all three target resolutions
+with no letterboxing and a consistent field of view:
+
+```
+32x32 tiles, 20 tiles across:
+  1080p (1920x1080): scale 3x → 96px tiles  ✓ integer
+  1440p (2560x1440): scale 4x → 128px tiles ✓ integer
+  4K    (3840x2160): scale 6x → 192px tiles ✓ integer
+
+64x64 fails: 1920/(64×20) = 1.5x ✗ (1440p kills every tile count)
+```
+
+32x32 gives 1024 pixels of detail per tile - Hyper Light Drifter looks stunning at half that (16x16).
+Sharpness comes from art quality and post-processing (lighting, glow, particles), not pixel count.
+
+This gives us:
 - Maximum PixelLab efficiency (64 frames per style reference call at 32x32)
 - Clean alignment with the 640x360 virtual resolution (20x11 tile grid)
 - Same sprite frame size we already use (no animation system changes)
@@ -66,7 +83,7 @@ Wang tiles handle seamless transitions automatically
 64 variations per style reference call
 ```
 
-Procedural generator places these. Collision determined by tile type (concrete=walkable, etc.)
+Placed manually in tile editor. Collision marked manually in editor.
 
 Engine changes:
 - `*tile-size*`: 16 -> 32
@@ -196,15 +213,17 @@ Costs 40 generations per style reference call.
 
 ### Staying Top-Down (Not Isometric)
 
-We evaluated isometric (Diablo 2 camera angle) and decided against it:
+We evaluated isometric and decided against it:
 
 - **PixelLab's isometric tooling is bare-bones** - `create_isometric_tile` makes one tile at a time with no Wang tileset transitions. Top-down has full seamless tileset generation.
 - **Isometric requires significant engine surgery** - coordinate system overhaul, diamond-grid projection, depth sorting, mouse picking rework, zone transition changes. Touches nearly every spatial file.
-- **The Diablo 2 feel comes from art direction, not camera angle** - dark atmosphere, gritty characters, visceral combat, moody lighting. All achievable in top-down.
+- **Hyper Light Drifter proves top-down works** - atmospheric, visceral, beautiful pixel art without isometric projection. The feel comes from art direction, not camera angle.
 
-### Everything at 32x32
+### Everything at 32x32 (LOCKED)
 
-- Matches tile grid, character sprites, and PixelLab's most efficient generation size
+32x32 is the only size that integer-scales to 1080p/1440p/4K with no letterboxing and
+consistent 20-tile field of view. This is final - see "Standardized Asset Sizes" for the math.
+
 - Same sprite frame size we already use (32x32) - minimal animation system changes
 - Only go bigger (64x64, 128x128) for multi-tile props and special assets
 
