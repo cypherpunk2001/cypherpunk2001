@@ -75,10 +75,85 @@ or make creative decisions about art style.
 
 ## Tooling
 
-- **PixelLab.ai** -- AI pixel art generation (web UI, Aseprite extension). Used for
-  generating base sprites and tilesets. Human curates and refines output.
-- **Aseprite** -- Pixel art editor for manual refinement, animation, and sprite sheet assembly.
-- **In-game tile editor** -- Manual tile placement and collision marking.
+- **PixelLab.ai** (https://www.pixellab.ai/create) -- AI pixel art generation (web UI + Aseprite extension)
+- **Aseprite** -- Pixel art editor with PixelLab extension installed for AI-assisted touchups
+- **In-game tile editor** -- Manual tile placement and collision marking
+
+## Art Pipelines
+
+Starting point: https://www.pixellab.ai/create
+
+Two separate pipelines: one for characters/objects, one for tilesets.
+
+### Pipeline A: Characters, NPCs, Objects, Icons (Pro required)
+
+**Step 1: Seed sprite**
+- Use **"Image to pixel art"** (free) to bootstrap
+- Take a Cyberpunk 2077 screenshot, ArtStation reference, or ChatGPT-generated image
+- Convert to pixel art -- this gives the first seed to establish visual style
+
+**Step 2: Batch variations**
+- Use **"Create from style reference"** (Pro)
+- Upload up to 8 seed sprites as style references
+- Describe what to generate (e.g., "cyberpunk street thug", "neon weapons", "med kits")
+- Outputs 16 frames (4x4 grid) at 64x64 each
+- Downscale to 32x32 in Aseprite (Sprite > Sprite Size > 32x32, Nearest Neighbor)
+- Pick the best variations from each batch
+
+**Step 3: Character directions**
+- Use **"Create 8-directional sprite"** (Pro)
+- Feed a character sprite you like from Step 2
+- Generates all 8 directional views
+
+**Step 4: Touchups**
+- Aseprite with PixelLab extension for cleanup, animation, sprite sheet assembly
+- Create Map tool (Aseprite extension) for hand-crafted unique areas (boss rooms, landmarks)
+  using inpainting -- paint a map tile by tile, expanding outward
+
+### Pipeline B: Tilesets (Terrain, Walls, Floors)
+
+Uses the dedicated tileset creator at https://www.pixellab.ai/create (Maps section).
+Generates 32x32 Wang tilesets natively -- no downscaling needed.
+
+**How it works:**
+- **Lower Terrain** = base ground (e.g., cracked asphalt)
+- **Upper Terrain** = what sits on top (e.g., concrete sidewalk, metal grating)
+- Generator produces all Wang transition tiles between the pair
+
+**Terrain buttons:**
+- **Create New** -- describe a terrain in text, generates from scratch
+- **Upload Image** -- upload an existing tile as the terrain base
+- **Connect Existing** -- chain to a previously created terrain for multi-terrain consistency
+
+**Transition** (how terrains meet):
+- **None** -- flat, same height (street to sidewalk)
+- **Small (25%)** -- slight step (sidewalk to curb)
+- **Large (50%)** -- noticeable elevation (ground to raised platform)
+- **Full (100%)** -- cliff edge (street to building wall base)
+
+**Style Options:**
+- **Outline**: Lineless (fits HLD aesthetic, no black outlines)
+- **Shading**: Detailed or Highly Detailed (cyberpunk surface grime and texture)
+- **Detail Level**: High (32x32 has the pixel budget)
+
+**Chaining terrains for a cyberpunk city:**
+```
+1. Create: "dark asphalt road" (Lower) -> "cracked concrete sidewalk" (Upper), Transition: Small
+2. Connect Existing: sidewalk (Lower) -> Create: "metal building wall base" (Upper), Transition: Full
+3. Connect Existing: asphalt (Lower) -> Create: "neon-lit puddle" (Upper), Transition: None
+```
+
+Each Generate call produces all Wang transition tiles for that pair.
+Connect Existing keeps the chain visually consistent across terrain types.
+
+### Other Useful Tools on the Create Page
+
+| Tool | Use |
+|------|-----|
+| Create S-M image | One-off sprites at 16-64px (needs init image to work well) |
+| Create M-XL image | Larger assets (64px+) |
+| Create image (Pro) | High quality single generation |
+| Create UI elements | HUD/menu components |
 
 ## Asset Specifications
 
@@ -120,14 +195,25 @@ Buildings are **not** one big image. They're composed from wall/roof Wang tilese
 Create a cyberpunk wall Wang tileset (edges, corners, inner corners, roof fill, door
 variations). Buildings of any size use the same tileset.
 
-## Art Workflow
+## Art Workflow Summary
 
-1. Find/create cyberpunk pixel art style references
-2. Create assets using PixelLab + Aseprite at the sizes above
-3. Manually refine and curate (human eye judges quality)
-4. Place tiles in the interactive editor
-5. Mark collision in the editor
-6. Hand finished assets to Claude for engine integration
+**Characters/Objects (Pipeline A):**
+1. Seed: HD image -> "Image to pixel art" -> first sprite
+2. Batch: seed sprites -> "Create from style reference" -> 16 variations at 64x64
+3. Downscale: 64x64 -> 32x32 in Aseprite (Nearest Neighbor)
+4. Directions: best sprites -> "Create 8-directional sprite" -> all facings
+5. Touchup: Aseprite + PixelLab extension for cleanup and animation
+
+**Tilesets (Pipeline B):**
+1. Create first terrain pair in tileset creator (32x32 native)
+2. Chain additional terrains via Connect Existing
+3. Set transition/style/detail options per pair
+4. Generate Wang tilesets -- ready to use, no downscaling
+
+**Final steps (both):**
+1. Place tiles in the interactive editor
+2. Mark collision in the editor
+3. Hand finished assets to Claude for engine integration
 
 ---
 ---
