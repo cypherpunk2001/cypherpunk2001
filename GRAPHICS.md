@@ -95,6 +95,39 @@ All assets must be created at these sizes to match the engine spec.
 | Large/special | 128x128 (spans 4x4 tiles) |
 | Item icons | 32x32 |
 
+### Character Sprite Sheets
+
+**Directions: 3 + flip.** Draw Down, Up, and Side. Engine flips Side horizontally for
+left vs right. Diagonal movement shows nearest cardinal facing (standard for top-down
+pixel art -- same as HLD, Zelda, Stardew Valley).
+
+**Animation states and frame counts:**
+
+| State | Frames |
+|-------|--------|
+| Idle | 4 |
+| Walk | 6 |
+| Attack | 4 |
+
+**Per character: 42 frames total** (14 frames x 3 directions), each 32x32.
+
+**Sheet layout** (one PNG per character):
+
+```
+        F1    F2    F3    F4    F5    F6
+Row 0: [idle ][idle ][idle ][idle ]                <- Down
+Row 1: [walk ][walk ][walk ][walk ][walk ][walk ]  <- Down
+Row 2: [atk  ][atk  ][atk  ][atk  ]               <- Down
+Row 3: [idle ][idle ][idle ][idle ]                <- Up
+Row 4: [walk ][walk ][walk ][walk ][walk ][walk ]  <- Up
+Row 5: [atk  ][atk  ][atk  ][atk  ]               <- Up
+Row 6: [idle ][idle ][idle ][idle ]                <- Side
+Row 7: [walk ][walk ][walk ][walk ][walk ][walk ]  <- Side
+Row 8: [atk  ][atk  ][atk  ][atk  ]               <- Side
+
+Canvas: 192x288 pixels (6 cols x 9 rows x 32px)
+```
+
 ### Buildings
 
 Buildings are **not** one big image. They're composed from wall/roof Wang tilesets:
