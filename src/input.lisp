@@ -302,8 +302,8 @@
   ;; Update the UI hover label for the NPC under the cursor.
   (multiple-value-bind (npc _world-x _world-y)
       (find-npc-at-screen npcs world player camera
-                          (raylib:get-mouse-x)
-                          (raylib:get-mouse-y))
+                          (virtual-mouse-x)
+                          (virtual-mouse-y))
     (declare (ignore _world-x _world-y))
     (setf (ui-hover-npc-name ui)
           (and npc (combatant-display-name npc)))))
@@ -346,8 +346,8 @@
     (when mouse-clicked
       (clear-player-auto-walk player)
       (multiple-value-bind (target-x target-y)
-          (screen-to-world (raylib:get-mouse-x)
-                           (raylib:get-mouse-y)
+          (screen-to-world (virtual-mouse-x)
+                           (virtual-mouse-y)
                            cam-x cam-y
                            (camera-offset camera)
                            (camera-zoom camera))
@@ -359,8 +359,8 @@
         (setf (player-mouse-hold-timer player) 0.0)
         (clear-player-auto-walk player)
         (multiple-value-bind (target-x target-y)
-            (screen-to-world (raylib:get-mouse-x)
-                             (raylib:get-mouse-y)
+            (screen-to-world (virtual-mouse-x)
+                             (virtual-mouse-y)
                              cam-x cam-y
                              (camera-offset camera)
                              (camera-zoom camera))
@@ -396,8 +396,8 @@
 
 (defun update-target-from-minimap (player intent ui world dt mouse-clicked mouse-down)
   ;; Handle minimap click/hold to update the player target position.
-  (let* ((mouse-x (raylib:get-mouse-x))
-         (mouse-y (raylib:get-mouse-y))
+  (let* ((mouse-x (virtual-mouse-x))
+         (mouse-y (virtual-mouse-y))
          (inside (point-in-rect-p mouse-x mouse-y
                                   (ui-minimap-x ui)
                                   (ui-minimap-y ui)
@@ -510,17 +510,18 @@
 
 (defun make-camera ()
   ;; Initialize camera offset and zoom settings.
-  (%make-camera :offset (raylib:make-vector2 :x (/ *window-width* 2.0)
-                                             :y (/ *window-height* 2.0))
+  ;; Camera offset is always virtual center (320, 180).
+  (%make-camera :offset (raylib:make-vector2 :x (/ *virtual-width* 2.0)
+                                             :y (/ *virtual-height* 2.0))
                 :zoom *camera-zoom-default*))
 
 (defun update-camera-for-window-resize (camera)
-  "Update camera offset to center on new screen dimensions.
-   Called when the window is resized and *window-resize-enabled* is T."
+  "Update camera offset to virtual center.
+   Camera always uses virtual dimensions (320, 180) regardless of display size."
   (when camera
     (let ((offset (camera-offset camera)))
-      (setf (raylib:vector2-x offset) (/ (current-screen-width) 2.0)
-            (raylib:vector2-y offset) (/ (current-screen-height) 2.0))))
+      (setf (raylib:vector2-x offset) (/ *virtual-width* 2.0)
+            (raylib:vector2-y offset) (/ *virtual-height* 2.0))))
   camera)
 
 (defun update-camera-leash (camera player world editor)

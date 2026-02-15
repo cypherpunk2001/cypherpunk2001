@@ -80,7 +80,7 @@
 (defun test-pack-npc-flags-roundtrip ()
   "Test NPC flag packing and unpacking."
   (ensure-test-game-data)
-  (let* ((archetype (gethash :goblin *npc-archetypes*))
+  (let* ((archetype (gethash :street-punk *npc-archetypes*))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     ;; Test default state (alive)
     (let ((flags (pack-npc-flags npc)))

@@ -159,8 +159,8 @@
            (dragging (ui-drag-active ui))
            (drag-source-slot (and dragging (ui-drag-slot-index ui)))
            (drag-item-id (and dragging (ui-drag-item-id ui)))
-           (mouse-x (raylib:get-mouse-x))
-           (mouse-y (raylib:get-mouse-y))
+           (mouse-x (virtual-mouse-x))
+           (mouse-y (virtual-mouse-y))
            ;; Colors for drag feedback
            (dimmed-slot-color (raylib:fade slot-color 0.3))
            (highlight-color (raylib:make-color :r 255 :g 255 :b 100 :a 100)))
@@ -425,8 +425,8 @@
 
 (defun draw-menu (ui audio editor)
   ;; Render the pause menu and hover states.
-  (let* ((mouse-x (raylib:get-mouse-x))
-         (mouse-y (raylib:get-mouse-y))
+  (let* ((mouse-x (virtual-mouse-x))
+         (mouse-y (virtual-mouse-y))
          (hover-logout (point-in-rect-p mouse-x mouse-y
                                         (ui-menu-logout-x ui)
                                         (ui-menu-logout-y ui)
@@ -690,8 +690,8 @@
            (height (* count option-height))
            (text-color (ui-menu-text-color ui))
            (panel-color (ui-menu-panel-color ui))
-           (mouse-x (raylib:get-mouse-x))
-           (mouse-y (raylib:get-mouse-y))
+           (mouse-x (virtual-mouse-x))
+           (mouse-y (virtual-mouse-y))
            (hover-index (when (point-in-rect-p mouse-x mouse-y x y width height)
                           (floor (/ (- mouse-y y) option-height))))
            (hover-color (raylib:fade (ui-menu-button-hover-color ui) 0.6)))

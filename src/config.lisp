@@ -48,11 +48,11 @@
   "Default save file path used by the ESC menu Save/Load.")
 
 ;;; Tileset/Map Layout - Parsed once when loading zones
-(defparameter *tile-size* 16
+(defparameter *tile-size* 32
   "Source tile size in the atlas, in pixels.")
-(defparameter *tile-scale* 4.0
-  "Scale factor for drawing tiles to the screen.")
-(defparameter *tileset-columns* 40
+(defparameter *tile-scale* 1.0
+  "Scale factor for drawing tiles. 1.0 = native size in virtual buffer (640x360).")
+(defparameter *tileset-columns* 8
   "Number of columns in the atlas grid.")
 (defparameter *floor-tile-index* 0
   "Which atlas tile index to use for the floor fill (0 disables fill).")

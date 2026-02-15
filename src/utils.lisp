@@ -480,12 +480,9 @@
 ;;; These are used by rendering, UI, and input modules for viewport calculations.
 
 (defun current-screen-width ()
-  "Return the current screen width for rendering calculations.
-   When *window-resize-enabled* is T, queries raylib for runtime dimensions.
-   When NIL, returns the fixed *window-width* value."
-  (if *window-resize-enabled*
-      (raylib:get-screen-width)
-      *window-width*))
+  "Return the virtual screen width for rendering calculations.
+   Always returns *virtual-width* (640) — all game code works in virtual space."
+  *virtual-width*)
 
 (defun position-distance-sq (x1 y1 x2 y2)
   "Compute squared distance between two positions. Avoids sqrt for efficiency."
@@ -495,12 +492,62 @@
     (+ (* dx dx) (* dy dy))))
 
 (defun current-screen-height ()
-  "Return the current screen height for rendering calculations.
-   When *window-resize-enabled* is T, queries raylib for runtime dimensions.
-   When NIL, returns the fixed *window-height* value."
-  (if *window-resize-enabled*
-      (raylib:get-screen-height)
-      *window-height*))
+  "Return the virtual screen height for rendering calculations.
+   Always returns *virtual-height* (360) — all game code works in virtual space."
+  *virtual-height*)
+
+(defun virtual-mouse-x ()
+  "Return mouse X coordinate in virtual space.
+   Delegates to display-to-virtual-mouse for consistent conversion logic."
+  (nth-value 0 (display-to-virtual-mouse
+                (raylib:get-mouse-x) (raylib:get-mouse-y)
+                (max 1 *present-scale*) *present-offset-x* *present-offset-y*
+                *virtual-width* *virtual-height*)))
+
+(defun virtual-mouse-y ()
+  "Return mouse Y coordinate in virtual space.
+   Delegates to display-to-virtual-mouse for consistent conversion logic."
+  (nth-value 1 (display-to-virtual-mouse
+                (raylib:get-mouse-x) (raylib:get-mouse-y)
+                (max 1 *present-scale*) *present-offset-x* *present-offset-y*
+                *virtual-width* *virtual-height*)))
+
+(defun display-screen-width ()
+  "Return the actual display/window width in physical pixels.
+   Always queries raylib for the real display size."
+  (raylib:get-screen-width))
+
+(defun display-screen-height ()
+  "Return the actual display/window height in physical pixels.
+   Always queries raylib for the real display size."
+  (raylib:get-screen-height))
+
+(defun compute-present-scale (display-width display-height virtual-width virtual-height)
+  "Compute integer scale factor and letterbox offsets for presenting
+   a virtual buffer onto a display. Returns (values scale offset-x offset-y).
+   Pure function — no GPU dependency, safe for unit tests."
+  (declare (type fixnum display-width display-height virtual-width virtual-height))
+  (let* ((scale (max 1 (min (floor display-width virtual-width)
+                             (floor display-height virtual-height))))
+         (scaled-w (* virtual-width scale))
+         (scaled-h (* virtual-height scale))
+         (offset-x (floor (- display-width scaled-w) 2))
+         (offset-y (floor (- display-height scaled-h) 2)))
+    (values scale offset-x offset-y)))
+
+(defun display-to-virtual-mouse (mouse-x mouse-y scale offset-x offset-y
+                                  virtual-width virtual-height)
+  "Convert display mouse coordinates to virtual coordinates.
+   Subtracts letterbox offset and divides by scale.
+   Clamps result to virtual bounds. Pure function for unit testing."
+  (declare (type fixnum mouse-x mouse-y scale offset-x offset-y
+                 virtual-width virtual-height))
+  (let* ((safe-scale (max 1 scale))
+         (vx (floor (- mouse-x offset-x) safe-scale))
+         (vy (floor (- mouse-y offset-y) safe-scale))
+         (clamped-x (max 0 (min vx (1- virtual-width))))
+         (clamped-y (max 0 (min vy (1- virtual-height)))))
+    (values clamped-x clamped-y)))
 
 (defun zone-bounds-zero-origin (tile-dest-size width height collision-half-w collision-half-h)
   "Calculate movement bounds for a zone with zero-origin wall-map.

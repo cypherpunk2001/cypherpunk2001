@@ -7,11 +7,28 @@
 ;;;; These are read once at client initialization (window, assets).
 ;;;; ========================================================================
 
+;;; Virtual Resolution — the canonical game resolution.
+;;; All gameplay, UI, and rendering operates in this coordinate space.
+;;; The virtual buffer is integer-scaled to the display via RenderTexture.
+(defparameter *virtual-width* 640
+  "Virtual resolution width. All game rendering happens at this width.")
+(defparameter *virtual-height* 360
+  "Virtual resolution height. All game rendering happens at this height.")
+
 ;;; Window Size - Read once at raylib:init-window
 (defparameter *window-width* 1280
   "Window width in pixels. Requires restart to change.")
 (defparameter *window-height* 720
   "Window height in pixels. Requires restart to change.")
+
+;;; Present metrics — updated by refresh-present-metrics, read by virtual-mouse-x/y.
+;;; These are globals so that input/UI code doesn't need the render struct.
+(defparameter *present-scale* 2
+  "Current integer scale factor for virtual-to-display scaling.")
+(defparameter *present-offset-x* 0
+  "Letterbox X offset in display pixels.")
+(defparameter *present-offset-y* 0
+  "Letterbox Y offset in display pixels.")
 
 ;;; Window Resize - Enable dynamic screen dimensions
 ;;; Raylib FLAG_WINDOW_RESIZABLE = 4 (from raylib.h)
@@ -39,7 +56,7 @@
   "Directory that holds NPC sprite sheets.")
 (defparameter *blood-sprite-dir* "../assets/1 Characters/Other"
   "Directory that holds blood effect sprites.")
-(defparameter *tileset-path* "../assets/Zelda-like/Overworld.png"
+(defparameter *tileset-path* "../assets2/tilesets/cyberpunk_atlas.png"
   "Atlas image used for floor tiles.")
 (defparameter *soundtrack-dir* "../assets/6 Soundtrack"
   "Directory that holds soundtrack files.")
@@ -65,8 +82,8 @@
   "Width of a single sprite frame in pixels.")
 (defparameter *sprite-frame-height* 32.0
   "Height of a single sprite frame in pixels.")
-(defparameter *sprite-scale* 4.0
-  "Scale factor applied when drawing sprites.")
+(defparameter *sprite-scale* 1.0
+  "Scale factor applied when drawing sprites. 1.0 = native size in virtual buffer (640x360).")
 (defparameter *player-animation-set-id* :player
   "Animation set ID used for the player sprite set.")
 
@@ -79,7 +96,7 @@
 ;;; Editor Setup - Paths parsed at zone load
 (defparameter *editor-tileset-paths* nil
   "Optional list of tileset sheets to use in the editor.")
-(defparameter *editor-tileset-root* "../assets/Zelda-like"
+(defparameter *editor-tileset-root* "../assets2/tilesets"
   "Directory that holds editor tileset sheets.")
 (defparameter *editor-export-path* "data/zones/editor-zone.lisp"
   "Default export path for editor zones.")

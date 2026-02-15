@@ -99,9 +99,7 @@
                               (setf busy-retry-time 0.0)) ; Clear so we don't resend
                             ;; Update login input
                             (update-login-input ui)
-                            ;; F11 toggles fullscreen on login screen
-                            (when (raylib:is-key-pressed +key-f11+)
-                              (raylib:toggle-fullscreen))
+                            ;; F11 fullscreen toggle handled by handle-window-resize
                             ;; Enter key triggers login (only if server online)
                             (when (and (raylib:is-key-pressed +key-enter+)
                                       (ui-username-buffer ui)
@@ -207,31 +205,44 @@
                                         (ui-server-last-heard ui) elapsed)
                                   (when (> (- elapsed (ui-server-last-heard ui)) 10.0)
                                     (setf (ui-server-status ui) :offline))))
-                            ;; Draw login screen and handle button clicks
-                            (raylib:begin-drawing)
-                            (let ((action (draw-login-screen ui)))
-                              (when action
-                                (let ((username (ui-username-buffer ui)))
-                                  (when (and username (plusp (length username)))
-                                    (if (eq (ui-server-status ui) :offline)
-                                        (setf (ui-auth-error-message ui) "Server is offline")
-                                        ;; For MVP: password = username
-                                        (handler-case
-                                            (case action
-                                              (:login
-                                               (send-auth-message socket :login username username)
-                                               (setf (ui-auth-error-message ui) nil
-                                                     last-auth-type :login)
-                                               (log-verbose "Sending login request for ~a" username))
-                                              (:register
-                                               (send-auth-message socket :register username username)
-                                               (setf (ui-auth-error-message ui) nil
-                                                     last-auth-type :register)
-                                               (log-verbose "Sending register request for ~a" username)))
-                                          (error ()
-                                            (setf (ui-server-status ui) :offline
-                                                  (ui-auth-error-message ui) "Server is offline"))))))))
-                            (raylib:end-drawing))
+                            ;; Draw login screen through virtual pipeline
+                            (let* ((render (game-render game))
+                                   (vt (render-virtual-target render)))
+                              (raylib:begin-texture-mode vt)
+                              (raylib:clear-background raylib:+black+)
+                              (let ((action (draw-login-screen ui)))
+                                (when action
+                                  (let ((username (ui-username-buffer ui)))
+                                    (when (and username (plusp (length username)))
+                                      (if (eq (ui-server-status ui) :offline)
+                                          (setf (ui-auth-error-message ui) "Server is offline")
+                                          ;; For MVP: password = username
+                                          (handler-case
+                                              (case action
+                                                (:login
+                                                 (send-auth-message socket :login username username)
+                                                 (setf (ui-auth-error-message ui) nil
+                                                       last-auth-type :login)
+                                                 (log-verbose "Sending login request for ~a" username))
+                                                (:register
+                                                 (send-auth-message socket :register username username)
+                                                 (setf (ui-auth-error-message ui) nil
+                                                       last-auth-type :register)
+                                                 (log-verbose "Sending register request for ~a" username)))
+                                            (error ()
+                                              (setf (ui-server-status ui) :offline
+                                                    (ui-auth-error-message ui) "Server is offline"))))))))
+                              (raylib:end-texture-mode)
+                              ;; Present virtual texture to display
+                              (raylib:with-drawing
+                                (raylib:clear-background raylib:+black+)
+                                (raylib:draw-texture-pro
+                                 (raylib:render-texture-texture vt)
+                                 (render-present-source render)
+                                 (render-present-dest render)
+                                 (render-origin render)
+                                 0.0
+                                 raylib:+white+))))
 
                            ;; Gameplay phase (after authentication)
                            (t

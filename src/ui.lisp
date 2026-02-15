@@ -508,6 +508,7 @@
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
+     ;; Toggle fullscreen — present metrics refreshed by handle-window-resize
      (raylib:toggle-fullscreen))
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-leash-x ui) (ui-menu-leash-y ui)
@@ -525,8 +526,8 @@
                mouse-clicked
                (not (ui-chat-active ui)))
       (setf action (handle-menu-click ui audio
-                                      (raylib:get-mouse-x)
-                                      (raylib:get-mouse-y))))
+                                      (virtual-mouse-x)
+                                      (virtual-mouse-y))))
     action))
 
 (defun open-context-menu (ui screen-x screen-y world-x world-y
@@ -807,8 +808,8 @@
       ;; Login button
       (let* ((button-y (+ panel-y 330))
              (login-button-x (truncate (/ (- screen-width button-width) 2)))
-             (mouse-x (raylib:get-mouse-x))
-             (mouse-y (raylib:get-mouse-y))
+             (mouse-x (virtual-mouse-x))
+             (mouse-y (virtual-mouse-y))
              (login-hover (and (>= mouse-x login-button-x)
                               (<= mouse-x (+ login-button-x button-width))
                               (>= mouse-y button-y)
@@ -829,8 +830,8 @@
       ;; Register button
       (let* ((button-y (+ panel-y 400))
              (register-button-x (truncate (/ (- screen-width button-width) 2)))
-             (mouse-x (raylib:get-mouse-x))
-             (mouse-y (raylib:get-mouse-y))
+             (mouse-x (virtual-mouse-x))
+             (mouse-y (virtual-mouse-y))
              (register-hover (and (>= mouse-x register-button-x)
                                  (<= mouse-x (+ register-button-x button-width))
                                  (>= mouse-y button-y)
@@ -851,8 +852,8 @@
       ;; Quit button
       (let* ((button-y (+ panel-y 470))
              (quit-button-x (truncate (/ (- screen-width button-width) 2)))
-             (mouse-x (raylib:get-mouse-x))
-             (mouse-y (raylib:get-mouse-y))
+             (mouse-x (virtual-mouse-x))
+             (mouse-y (virtual-mouse-y))
              (quit-hover (and (>= mouse-x quit-button-x)
                              (<= mouse-x (+ quit-button-x button-width))
                              (>= mouse-y button-y)

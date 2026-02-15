@@ -6,7 +6,7 @@
 ;;;; Migrations run lazily on player load (default) or eagerly via admin command.
 ;;;; Each migration function takes a plist and returns the updated plist.
 
-(defparameter *player-schema-version* 4
+(defparameter *player-schema-version* 5
   "Current player schema version. Increment when changing player format.")
 
 (defun migrate-player-v1->v2 (data)
@@ -32,10 +32,27 @@
     (setf data (plist-put data :deaths 0)))
   data)
 
+(defun migrate-player-v4->v5 (data)
+  "v4->v5: Rename fantasy item IDs to cyberpunk equivalents in inventory.
+   :rat-tail -> :drone-scrap, :goblin-ear -> :punk-tag."
+  (let ((inv (getf data :inventory)))
+    (when inv
+      (let ((slots (getf inv :slots)))
+        (when slots
+          (dolist (slot slots)
+            (let ((item-id (getf slot :item-id)))
+              (case item-id
+                (:rat-tail (setf (getf slot :item-id) :drone-scrap))
+                (:goblin-ear (setf (getf slot :item-id) :punk-tag)))))
+          (setf (getf inv :slots) slots)
+          (setf data (plist-put data :inventory inv))))))
+  data)
+
 (defparameter *player-migrations*
   '((2 . migrate-player-v1->v2)
     (3 . migrate-player-v2->v3)
-    (4 . migrate-player-v3->v4))
+    (4 . migrate-player-v3->v4)
+    (5 . migrate-player-v4->v5))
   "Alist of (version . migration-function) for player data.
    Each migration takes a plist and returns the updated plist.
    Migrations are chained: v1->v2, v2->v3, etc.")

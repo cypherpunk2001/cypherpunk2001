@@ -122,11 +122,11 @@
 
 (defun test-loot-table-from-plist ()
   "Test loot table creation from plist."
-  (let ((table (loot-table-from-plist :goblin-loot
+  (let ((table (loot-table-from-plist :street-punk-loot
                                        '(:rolls 2
                                          :entries ((:coins 100 1 10)
                                                    (:health-potion 20 1 1))))))
-    (assert (eq (loot-table-id table) :goblin-loot) () "loot-table: id")
+    (assert (eq (loot-table-id table) :street-punk-loot) () "loot-table: id")
     (assert (= (loot-table-rolls table) 2) () "loot-table: rolls")
     (assert (= (length (loot-table-entries table)) 2) () "loot-table: 2 entries")))
 
@@ -172,7 +172,7 @@
   ;; Mixed tunables and sections
   (let ((result (parse-game-data-forms '((:player-speed 100.0)
                                           :npcs
-                                          (:goblin (:name "Goblin"))))))
+                                          (:street-punk (:name "Street Punk"))))))
     (assert (= (getf result :player-speed) 100.0) () "parse-forms: tunable preserved")
     (assert (listp (getf result :npcs)) () "parse-forms: section present")))
 

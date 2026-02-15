@@ -259,7 +259,16 @@
 
 (defstruct (render (:constructor %make-render))
   ;; Reusable render rectangles and vectors to avoid consing.
-  origin tile-source tile-dest player-source player-dest npc-source npc-dest)
+  origin tile-source tile-dest player-source player-dest npc-source npc-dest
+  ;; Virtual RenderTexture for pixel-perfect scaling pipeline
+  (virtual-target nil)       ; raylib RenderTexture2D at *virtual-width* x *virtual-height*
+  (present-scale 2 :type fixnum)   ; Integer scale factor for blitting to display
+  (present-offset-x 0 :type fixnum) ; Letterbox X offset in display pixels
+  (present-offset-y 0 :type fixnum) ; Letterbox Y offset in display pixels
+  ;; Reusable rectangles for present blit (avoid consing)
+  (present-source nil)       ; Source rect for virtual texture
+  (present-dest nil)         ; Dest rect on display
+  )
 
 (defstruct (npc-textures (:constructor %make-npc-textures))
   ;; Loaded NPC textures for idle directions.

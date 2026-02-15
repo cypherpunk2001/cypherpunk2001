@@ -158,6 +158,113 @@
 
 
 
+;;; ============================================================
+;;; VIRTUAL DISPLAY TESTS
+;;; ============================================================
+
+(defun test-compute-present-scale ()
+  "Test integer scale computation for common display resolutions."
+  ;; 1280x720 display → scale 2 (640*2=1280, 360*2=720, perfect fit)
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 1280 720 640 360)
+    (assert (= scale 2) () "present-scale: 1280x720 = 2x")
+    (assert (= ox 0) () "present-scale: 1280x720 no X offset")
+    (assert (= oy 0) () "present-scale: 1280x720 no Y offset"))
+  ;; 1920x1080 → scale 3
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 1920 1080 640 360)
+    (assert (= scale 3) () "present-scale: 1920x1080 = 3x")
+    (assert (= ox 0) () "present-scale: 1920x1080 no X offset")
+    (assert (= oy 0) () "present-scale: 1920x1080 no Y offset"))
+  ;; 2560x1440 → scale 4
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 2560 1440 640 360)
+    (assert (= scale 4) () "present-scale: 2560x1440 = 4x")
+    (assert (= ox 0) () "present-scale: 2560x1440 no X offset")
+    (assert (= oy 0) () "present-scale: 2560x1440 no Y offset"))
+  ;; 3840x2160 → scale 6
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 3840 2160 640 360)
+    (assert (= scale 6) () "present-scale: 3840x2160 = 6x")
+    (assert (= ox 0) () "present-scale: 3840x2160 no X offset")
+    (assert (= oy 0) () "present-scale: 3840x2160 no Y offset")))
+
+(defun test-compute-present-scale-letterbox ()
+  "Test letterbox offsets for non-standard aspect ratios."
+  ;; 1920x1200 (16:10) → scale 3, letterbox Y
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 1920 1200 640 360)
+    (assert (= scale 3) () "present-scale: 1920x1200 = 3x")
+    (assert (= ox 0) () "present-scale: 1920x1200 X offset = 0")
+    (assert (= oy 60) () "present-scale: 1920x1200 Y offset = 60"))
+  ;; Small display that can only fit 1x
+  (multiple-value-bind (scale ox oy)
+      (compute-present-scale 800 600 640 360)
+    (assert (= scale 1) () "present-scale: 800x600 = 1x")
+    (assert (= ox 80) () "present-scale: 800x600 X offset = 80")
+    (assert (= oy 120) () "present-scale: 800x600 Y offset = 120")))
+
+(defun test-display-to-virtual-mouse ()
+  "Test display-to-virtual coordinate conversion."
+  ;; Scale 2, no offset: pixel-perfect mapping
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 100 200 2 0 0 640 360)
+    (assert (= vx 50) () "virtual-mouse: 100/2 = 50")
+    (assert (= vy 100) () "virtual-mouse: 200/2 = 100"))
+  ;; Scale 3 with letterbox offset
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 10 70 3 0 60 640 360)
+    (assert (= vx 3) () "virtual-mouse: (10-0)/3 = 3")
+    (assert (= vy 3) () "virtual-mouse: (70-60)/3 = 3"))
+  ;; Clamp to bounds
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 0 0 2 100 100 640 360)
+    (assert (= vx 0) () "virtual-mouse: clamped X to 0")
+    (assert (= vy 0) () "virtual-mouse: clamped Y to 0"))
+  ;; Clamp upper bound
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 5000 5000 2 0 0 640 360)
+    (assert (= vx 639) () "virtual-mouse: clamped X to 639")
+    (assert (= vy 359) () "virtual-mouse: clamped Y to 359")))
+
+(defun test-display-to-virtual-mouse-zero-scale ()
+  "Test display-to-virtual-mouse clamps scale to 1 when given 0 or negative."
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 100 200 0 0 0 640 360)
+    (assert (= vx 100) () "virtual-mouse-zero-scale: X with scale 0 treated as 1")
+    (assert (= vy 200) () "virtual-mouse-zero-scale: Y with scale 0 treated as 1"))
+  (multiple-value-bind (vx vy)
+      (display-to-virtual-mouse 100 200 -1 0 0 640 360)
+    (assert (= vx 100) () "virtual-mouse-neg-scale: X with scale -1 treated as 1")
+    (assert (= vy 200) () "virtual-mouse-neg-scale: Y with scale -1 treated as 1")))
+
+(defun test-current-screen-always-virtual ()
+  "Test that current-screen-width/height always return virtual dimensions.
+   Phase 1 contract: all game code works in 640x360 virtual space."
+  (assert (= (current-screen-width) *virtual-width*)
+          () "current-screen-width: returns *virtual-width*")
+  (assert (= (current-screen-height) *virtual-height*)
+          () "current-screen-height: returns *virtual-height*")
+  ;; Verify contract holds regardless of virtual resolution values
+  (let ((*virtual-width* 800)
+        (*virtual-height* 450))
+    (assert (= (current-screen-width) 800)
+            () "current-screen-width: tracks *virtual-width* changes")
+    (assert (= (current-screen-height) 450)
+            () "current-screen-height: tracks *virtual-height* changes")))
+
+(defun test-camera-offset-always-virtual-center ()
+  "Test that make-camera creates camera with virtual center offset.
+   Phase 1 contract: camera offset is always (virtual-width/2, virtual-height/2)."
+  (let* ((*virtual-width* 640)
+         (*virtual-height* 360)
+         (cam (make-camera))
+         (offset (camera-offset cam)))
+    (assert (= (raylib:vector2-x offset) 320.0)
+            () "camera: X offset = virtual-width/2")
+    (assert (= (raylib:vector2-y offset) 180.0)
+            () "camera: Y offset = virtual-height/2")))
+
 (defvar *tests-utils*
   '(test-clamp
     test-clamp-edge-cases
@@ -177,5 +284,11 @@
     test-u32-hash-deterministic
     test-exponential-backoff-delay
     test-player-animation-params
-    test-relative-path-from-root)
+    test-relative-path-from-root
+    test-compute-present-scale
+    test-compute-present-scale-letterbox
+    test-display-to-virtual-mouse
+    test-display-to-virtual-mouse-zero-scale
+    test-current-screen-always-virtual
+    test-camera-offset-always-virtual-center)
   "Utils domain test functions.")

@@ -97,14 +97,55 @@
           (error "Required texture load failed for ~a" path)))))
 
 (defun make-render ()
-  ;; Allocate reusable rectangles and origin vector for rendering.
-  (%make-render :origin (raylib:make-vector2 :x 0.0 :y 0.0)
-                :tile-source (raylib:make-rectangle)
-                :tile-dest (raylib:make-rectangle)
-                :player-source (raylib:make-rectangle)
-                :player-dest (raylib:make-rectangle)
-                :npc-source (raylib:make-rectangle)
-                :npc-dest (raylib:make-rectangle)))
+  ;; Allocate reusable rectangles, origin vector, and virtual render target.
+  (let* ((vt (raylib:load-render-texture *virtual-width* *virtual-height*))
+         (render (%make-render
+                  :origin (raylib:make-vector2 :x 0.0 :y 0.0)
+                  :tile-source (raylib:make-rectangle)
+                  :tile-dest (raylib:make-rectangle)
+                  :player-source (raylib:make-rectangle)
+                  :player-dest (raylib:make-rectangle)
+                  :npc-source (raylib:make-rectangle)
+                  :npc-dest (raylib:make-rectangle)
+                  :virtual-target vt
+                  :present-source (raylib:make-rectangle
+                                   :x 0.0 :y 0.0
+                                   :width (float *virtual-width*)
+                                   :height (float (- *virtual-height*))) ; negative = Y flip
+                  :present-dest (raylib:make-rectangle))))
+    ;; Set point filtering on the virtual target texture
+    (raylib:set-texture-filter (raylib:render-texture-texture vt) 0) ; POINT filter
+    ;; Compute initial present metrics
+    (refresh-present-metrics render)
+    render))
+
+(defun refresh-present-metrics (render)
+  "Recompute scale and letterbox offsets from current display size.
+   Call after fullscreen toggle, window resize, or at startup.
+   Also syncs global *present-scale/offset-x/offset-y* for virtual-mouse-x/y."
+  (let ((dw (display-screen-width))
+        (dh (display-screen-height)))
+    (multiple-value-bind (scale ox oy)
+        (compute-present-scale dw dh *virtual-width* *virtual-height*)
+      (setf (render-present-scale render) scale
+            (render-present-offset-x render) ox
+            (render-present-offset-y render) oy
+            ;; Sync globals for input code
+            *present-scale* scale
+            *present-offset-x* ox
+            *present-offset-y* oy)
+      ;; Update dest rectangle for blit
+      (let ((dest (render-present-dest render)))
+        (setf (raylib:rectangle-x dest) (float ox)
+              (raylib:rectangle-y dest) (float oy)
+              (raylib:rectangle-width dest) (float (* *virtual-width* scale))
+              (raylib:rectangle-height dest) (float (* *virtual-height* scale)))))))
+
+(defun unload-virtual-target (render)
+  "Unload the virtual RenderTexture. Call at shutdown."
+  (when (render-virtual-target render)
+    (raylib:unload-render-texture (render-virtual-target render))
+    (setf (render-virtual-target render) nil)))
 
 (defun load-assets (world)
   ;; Load textures and compute sprite sizing for rendering.

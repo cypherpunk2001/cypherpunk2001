@@ -162,7 +162,7 @@
   "Pixels to consider wander target reached.")
 (defparameter *npc-respawn-seconds* 5.0
   "Default respawn cooldown in seconds.")
-(defparameter *npc-default-archetype-id* :rat
+(defparameter *npc-default-archetype-id* :sewer-drone
   "Default NPC archetype ID to spawn.")
 (defparameter *npc-default-loot-table-id* nil
   "Fallback loot table when NPC archetypes omit one.")

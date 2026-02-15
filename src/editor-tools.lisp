@@ -65,8 +65,8 @@
       (editor-tileset-preview-layout editor)
     (declare (ignore _scale _tileset))
     (and x
-         (point-in-rect-p (raylib:get-mouse-x)
-                          (raylib:get-mouse-y)
+         (point-in-rect-p (virtual-mouse-x)
+                          (virtual-mouse-y)
                           x y w h))))
 
 (defun editor-update-tileset-selection (editor tileset tx ty shift-held)
@@ -101,12 +101,12 @@
     (multiple-value-bind (x y w h scale tileset)
         (editor-tileset-preview-layout editor)
       (when (and x tileset
-                 (point-in-rect-p (raylib:get-mouse-x)
-                                  (raylib:get-mouse-y)
+                 (point-in-rect-p (virtual-mouse-x)
+                                  (virtual-mouse-y)
                                   x y w h))
         (let* ((tile-size (* (max 1.0 (float *tile-size* 1.0)) scale))
-               (local-x (- (raylib:get-mouse-x) x))
-               (local-y (- (raylib:get-mouse-y) y))
+               (local-x (- (virtual-mouse-x) x))
+               (local-y (- (virtual-mouse-y) y))
                (tx (floor local-x tile-size))
                (ty (floor local-y tile-size))
                (columns (max 1 (editor-tileset-columns tileset)))
@@ -122,8 +122,8 @@
 (defun editor-mouse-tile (editor world camera)
   ;; Return the tile coordinate under the mouse pointer.
   (multiple-value-bind (wx wy)
-      (screen-to-world (raylib:get-mouse-x)
-                       (raylib:get-mouse-y)
+      (screen-to-world (virtual-mouse-x)
+                       (virtual-mouse-y)
                        (editor-camera-x editor)
                        (editor-camera-y editor)
                        (camera-offset camera)

@@ -60,7 +60,7 @@
                                                 :npcs (make-array 0)
                                                 :npc-grid (make-spatial-grid 64.0f0)))
                   ;; Create game with NPC array that differs from zone-state
-                  (archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+                  (archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
                   (npc1 (make-npc 100.0f0 100.0f0 :archetype archetype :id 1))
                   (npc2 (make-npc 200.0f0 200.0f0 :archetype archetype :id 2))
                   (game-npcs (make-array 2 :initial-contents (list npc1 npc2)))

@@ -5,30 +5,32 @@ STRESS_CLIENTS ?= 10
 STRESS_DURATION ?= 60
 # Build environment: dev (default) or prod
 MMORPG_ENV ?= dev
+SBCL_HEAP ?= 4096
+SBCL := sbcl --dynamic-space-size $(SBCL_HEAP)
 
 tests: checkparens ci smoke test-unit checkdocs
 	@echo "All tests passed!"
 
 ci:
-	MMORPG_DB_BACKEND=memory sbcl --script scripts/ci.lisp
+	MMORPG_DB_BACKEND=memory $(SBCL) --script scripts/ci.lisp
 
 test-unit:
-	MMORPG_DB_BACKEND=memory sbcl --script scripts/test-unit.lisp
+	MMORPG_DB_BACKEND=memory $(SBCL) --script scripts/test-unit.lisp
 
 smoke:
-	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) sbcl --script scripts/smoke.lisp
+	MMORPG_DB_BACKEND=memory MMORPG_SMOKE_SECONDS=$(MMORPG_SMOKE_SECONDS) timeout $(SMOKE_TIMEOUT) $(SBCL) --script scripts/smoke.lisp
 
 server:
-	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/server.lisp
+	MMORPG_ENV=$(MMORPG_ENV) $(SBCL) --script scripts/server.lisp
 
 server-prod:
-	MMORPG_ENV=prod sbcl --script scripts/server.lisp
+	MMORPG_ENV=prod $(SBCL) --script scripts/server.lisp
 
 client:
-	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/client.lisp
+	MMORPG_ENV=$(MMORPG_ENV) $(SBCL) --script scripts/client.lisp
 
 local:
-	MMORPG_ENV=$(MMORPG_ENV) sbcl --script scripts/local.lisp
+	MMORPG_ENV=$(MMORPG_ENV) $(SBCL) --script scripts/local.lisp
 
 checkparens:
 	./scripts/checkparens.sh
@@ -37,7 +39,7 @@ checkdocs:
 	./scripts/checkdocs.sh
 
 stress:
-	sbcl --script scripts/stress-test.lisp $(STRESS_CLIENTS) $(STRESS_DURATION)
+	$(SBCL) --script scripts/stress-test.lisp $(STRESS_CLIENTS) $(STRESS_DURATION)
 
 profile:
-	MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 sbcl --script scripts/server.lisp
+	MMORPG_PROFILE=1 MMORPG_VERBOSE_GC=1 $(SBCL) --script scripts/server.lisp

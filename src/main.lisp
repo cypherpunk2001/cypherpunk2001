@@ -58,18 +58,29 @@
   (log-verbose "Shutting down game resources")
   (shutdown-audio (game-audio game))
   (unload-editor-tilesets (game-editor game) (game-assets game))
+  (unload-virtual-target (game-render game))
   (unload-assets (game-assets game)))
 
 (defun handle-window-resize (game)
-  "Check for window resize and update game components accordingly.
-   Only active when *window-resize-enabled* is T."
-  (when (and *window-resize-enabled*
-             (raylib:is-window-resized))
-    (log-verbose "Window resized to ~dx~d"
-                 (raylib:get-screen-width)
-                 (raylib:get-screen-height))
-    (update-ui-for-window-resize (game-ui game))
-    (update-camera-for-window-resize (game-camera game))))
+  "Check for window resize/fullscreen toggle and update game components.
+   Handles F11 fullscreen toggle and refreshes present metrics for virtual pipeline."
+  ;; F11 toggles fullscreen (centralized here for all modes)
+  (when (raylib:is-key-pressed +key-f11+)
+    (raylib:toggle-fullscreen))
+  ;; Refresh present metrics whenever display dimensions might have changed.
+  ;; Compare scale AND offsets — display can change offsets without changing scale.
+  (let ((render (game-render game)))
+    (when render
+      (let ((dw (display-screen-width))
+            (dh (display-screen-height)))
+        (multiple-value-bind (new-scale new-ox new-oy)
+            (compute-present-scale dw dh *virtual-width* *virtual-height*)
+          (when (or (/= new-scale (render-present-scale render))
+                    (/= new-ox (render-present-offset-x render))
+                    (/= new-oy (render-present-offset-y render)))
+            (log-verbose "Display resized to ~dx~d (scale ~d)" dw dh new-scale)
+            (refresh-present-metrics render)
+            (update-camera-for-window-resize (game-camera game))))))))
 
 (defun npc-array-for-player-zone (game player)
   "Return the correct NPC array for PLAYER's current zone.
@@ -93,11 +104,9 @@
          (mouse-clicked (raylib:is-mouse-button-pressed +mouse-left+))
          (mouse-down (raylib:is-mouse-button-down +mouse-left+))
          (mouse-right-clicked (raylib:is-mouse-button-pressed +mouse-right+))
-         (mouse-x (raylib:get-mouse-x))
-         (mouse-y (raylib:get-mouse-y)))
-    ;; F11 toggles fullscreen globally (works in menus, gameplay, etc)
-    (when (raylib:is-key-pressed +key-f11+)
-      (raylib:toggle-fullscreen))
+         (mouse-x (virtual-mouse-x))
+         (mouse-y (virtual-mouse-y)))
+    ;; F11 fullscreen toggle handled by handle-window-resize
     (update-audio audio)
     (update-camera-zoom camera)
     (update-camera-leash camera player world editor)

@@ -8,7 +8,7 @@
 (defun test-sync-attack-target-accepts-distant ()
   "Test that sync-player-attack-target accepts distant NPCs (range-gate removed)."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (player (make-player 100.0 100.0 :id 1))
          (intent (make-intent :target-x 100.0 :target-y 100.0))
          ;; NPC at 1000,1000 - far beyond *max-target-distance-tiles* (15 tiles * 32 = 480px)
@@ -26,7 +26,7 @@
 (defun test-sync-follow-target-accepts-distant ()
   "Test that sync-player-follow-target accepts distant NPCs (range-gate removed)."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (player (make-player 100.0 100.0 :id 1))
          (intent (make-intent :target-x 100.0 :target-y 100.0))
          ;; NPC at 1000,1000 - far beyond *max-target-distance-tiles*
@@ -44,7 +44,7 @@
 (defun test-click-marker-tracks-target ()
   "Test that click marker follows NPC position when target-id is set."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (player (make-player 100.0 100.0 :id 1))
          ;; NPC starts at 200,200
          (npc (make-npc 200.0 200.0 :archetype archetype :id 42))
@@ -70,7 +70,7 @@
 (defun test-click-marker-clears-on-target-death ()
   "Test that click marker clears when tracked NPC dies."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (player (make-player 100.0 100.0 :id 1))
          (npc (make-npc 200.0 200.0 :archetype archetype :id 77))
          (npcs (vector npc)))
@@ -91,7 +91,7 @@
 (defun test-npc-array-for-player-zone ()
   "Test that npc-array-for-player-zone returns zone-state NPCs when available."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          ;; Create game with global NPCs
          (global-npcs (vector (make-npc 100.0 100.0 :archetype archetype :id 1)))
          ;; Create zone-state with different NPCs
@@ -477,7 +477,7 @@
   "Test entity-in-render-distance-p distance filtering."
   (ensure-test-game-data)
   (let ((original-max-distance *entity-render-max-distance*)
-        (archetype (gethash :goblin *npc-archetypes*)))
+        (archetype (gethash :street-punk *npc-archetypes*)))
     (unwind-protect
         (let* ((player (make-player 100.0 100.0 :id 1))
                (near-npc (make-npc 150.0 100.0 :archetype archetype :id 2))   ; 50 pixels away

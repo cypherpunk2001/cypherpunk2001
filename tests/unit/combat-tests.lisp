@@ -77,7 +77,7 @@
       (assert (stringp name) () "display-name: player returns string")
       (assert (string= name "Player") () "display-name: player = Player")))
   ;; NPC display name - use default-npc-archetype for reliability
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((name (combatant-display-name npc)))
       (assert (stringp name) () "display-name: npc returns string"))))
@@ -85,7 +85,7 @@
 (defun test-find-npc-by-id ()
   "Test finding NPC by ID in array."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc1 (make-npc 0.0 0.0 :archetype archetype :id 100))
          (npc2 (make-npc 10.0 10.0 :archetype archetype :id 200))
          (npcs (vector npc1 npc2)))
@@ -130,7 +130,7 @@
 (defun test-npc-respawn-seconds ()
   "Test NPC respawn time from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((seconds (npc-respawn-seconds npc)))
       (assert (numberp seconds) () "npc-respawn: returns number")
@@ -139,7 +139,7 @@
 (defun test-npc-attack-cooldown ()
   "Test NPC attack cooldown from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((cooldown (npc-attack-cooldown npc)))
       (assert (numberp cooldown) () "npc-cooldown: returns number")
@@ -148,7 +148,7 @@
 (defun test-npc-attack-damage ()
   "Test NPC attack damage from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((damage (npc-attack-damage npc)))
       (assert (numberp damage) () "npc-damage: returns number")
@@ -176,7 +176,7 @@
 (defun test-target-in-range-p ()
   "Test if NPC is within targeting range."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (player (make-player 100.0 100.0 :id 1))
          (npc-near (make-npc 120.0 100.0 :archetype archetype :id 1))
          (npc-far (make-npc 500.0 500.0 :archetype archetype :id 2))
@@ -202,7 +202,7 @@
 (defun test-npc-attack-range ()
   "Test NPC attack range calculation."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1))
          (world (make-test-world :tile-size 32.0 :collision-half 12.0)))
     (let ((range (npc-attack-range npc world)))
@@ -217,7 +217,7 @@
 (defun test-player-attack-target-in-range-p ()
   "Test player attack target range check."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (world (make-test-world :tile-size 32.0 :collision-half 12.0))
          (player (make-player 100.0 100.0 :id 1))
          (npc-close (make-npc 110.0 100.0 :archetype archetype :id 1))

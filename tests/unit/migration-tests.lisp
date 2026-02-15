@@ -55,6 +55,38 @@
     (assert (= (getf migrated :id) 789) () "chain: preserves id")
     (assert (= (getf migrated :hp) 100) () "chain: preserves hp")))
 
+(defun test-migrate-player-v4-to-v5 ()
+  "Test migration from v4 to v5 renames fantasy item IDs in inventory."
+  ;; Player with rat-tail and goblin-ear in inventory
+  (let* ((v4-data (list :version 4 :id 100 :x 0.0 :y 0.0
+                        :inventory (list :slots (list (list :item-id :rat-tail :count 3)
+                                                      (list :item-id :coins :count 50)
+                                                      (list :item-id :goblin-ear :count 1)))))
+         (migrated (migrate-player-v4->v5 (copy-tree v4-data))))
+    ;; :rat-tail should become :drone-scrap
+    (let* ((inv (getf migrated :inventory))
+           (slots (getf inv :slots)))
+      (assert (eq (getf (first slots) :item-id) :drone-scrap)
+              () "v4->v5: rat-tail -> drone-scrap")
+      (assert (= (getf (first slots) :count) 3)
+              () "v4->v5: preserves count")
+      ;; :coins should be unchanged
+      (assert (eq (getf (second slots) :item-id) :coins)
+              () "v4->v5: coins unchanged")
+      ;; :goblin-ear should become :punk-tag
+      (assert (eq (getf (third slots) :item-id) :punk-tag)
+              () "v4->v5: goblin-ear -> punk-tag")))
+  ;; Player with no inventory should not error
+  (let* ((v4-no-inv '(:version 4 :id 200 :x 0.0 :y 0.0))
+         (migrated (migrate-player-v4->v5 (copy-list v4-no-inv))))
+    (assert (= (getf migrated :id) 200)
+            () "v4->v5: no-inventory preserves data"))
+  ;; Player with empty inventory should not error
+  (let* ((v4-empty '(:version 4 :id 300 :inventory (:slots nil)))
+         (migrated (migrate-player-v4->v5 (copy-list v4-empty))))
+    (assert (= (getf migrated :id) 300)
+            () "v4->v5: empty-inventory preserves data")))
+
 ;;; ============================================================
 
 
@@ -62,5 +94,6 @@
   '(test-migrate-player-v1-to-v2
     test-migrate-player-v2-to-v3
     test-migrate-player-v3-to-v4
+    test-migrate-player-v4-to-v5
     test-migrate-player-data-chain)
   "Migration domain test functions.")

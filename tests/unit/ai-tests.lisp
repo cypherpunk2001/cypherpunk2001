@@ -6,7 +6,7 @@
 (defun test-npc-should-flee-p ()
   "Test NPC flee decision."
   (ensure-test-game-data)
-  (let* ((archetype (gethash :goblin *npc-archetypes*))
+  (let* ((archetype (gethash :street-punk *npc-archetypes*))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     ;; Full hits should not flee
     (let ((max-hits (npc-hits-left npc)))
@@ -31,7 +31,7 @@
 (defun test-npc-home-radius ()
   "Test NPC home radius from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1))
          (world (make-test-world :tile-size 32.0)))
     (let ((radius (npc-home-radius npc world)))
@@ -41,7 +41,7 @@
 (defun test-npc-move-speed ()
   "Test NPC move speed from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((speed (npc-move-speed npc)))
       (assert (numberp speed) () "move-speed: returns number")
@@ -50,7 +50,7 @@
 (defun test-npc-wander-interval ()
   "Test NPC wander interval from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((interval (npc-wander-interval npc)))
       (assert (numberp interval) () "wander-interval: returns number")
@@ -59,7 +59,7 @@
 (defun test-npc-flee-speed-mult ()
   "Test NPC flee speed multiplier from archetype."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 0.0 0.0 :archetype archetype :id 1)))
     (let ((mult (npc-flee-speed-mult npc)))
       (assert (numberp mult) () "flee-speed-mult: returns number")
@@ -68,7 +68,7 @@
 (defun test-closest-player ()
   "Test finding closest player to NPC."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 50.0 50.0 :archetype archetype :id 1))
          (p1 (make-player 100.0 50.0 :id 1))   ;; 50 units away
          (p2 (make-player 60.0 50.0 :id 2))    ;; 10 units away (closest)
@@ -93,7 +93,7 @@
 (defun test-npc-in-perception-range-p ()
   "Test NPC perception range check."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 100.0 100.0 :archetype archetype :id 1))
          (player-near (make-player 110.0 100.0 :id 1))
          (player-far (make-player 1000.0 1000.0 :id 2))
@@ -122,7 +122,7 @@
 (defun test-update-npc-behavior ()
   "Test NPC behavior state machine."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 100.0 100.0 :archetype archetype :id 1))
          (player (make-player 110.0 100.0 :id 1))
          (world (make-test-world :tile-size 32.0)))
@@ -143,7 +143,7 @@
   "Test NPC intent with nil player (idle/wander path).
    Ensures no crash and that wander direction is computed."
   (ensure-test-game-data)
-  (let* ((archetype (or (gethash :goblin *npc-archetypes*) (default-npc-archetype)))
+  (let* ((archetype (or (gethash :street-punk *npc-archetypes*) (default-npc-archetype)))
          (npc (make-npc 100.0f0 100.0f0 :archetype archetype :id 1))
          (world (make-test-world :tile-size 32.0f0))
          (dt 0.016f0))

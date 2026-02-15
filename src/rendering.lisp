@@ -67,6 +67,7 @@
 
 (defun draw-game (game)
   ;; Render a full frame: world, entities, HUD, and menu.
+  ;; All content is rendered into a virtual RenderTexture, then blitted to display.
   ;; Reset cache stats at start of frame (Phase A instrumentation)
   (reset-render-cache-stats)
   (with-timing (:draw-game)
@@ -78,48 +79,57 @@
            (render (game-render game))
            (assets (game-assets game))
            (camera (game-camera game))
-           (editor (game-editor game)))
+           (editor (game-editor game))
+           (vt (render-virtual-target render)))
       ;; Phase B: Pre-render chunk textures BEFORE begin-drawing
       (prepare-game-render-caches game)
+      ;; === Render into virtual RenderTexture (640x360) ===
+      (raylib:begin-texture-mode vt)
+      (raylib:clear-background raylib:+black+)
+      (multiple-value-bind (raw-camera-x raw-camera-y)
+          (editor-camera-target editor player camera)
+        (let* ((zoom (camera-zoom camera))
+               ;; Screen-pixel snap - ensures camera aligns to screen pixels at any zoom
+               (camera-x (if (> zoom 0.0)
+                             (/ (fround (* raw-camera-x zoom)) zoom)
+                             raw-camera-x))
+               (camera-y (if (> zoom 0.0)
+                             (/ (fround (* raw-camera-y zoom)) zoom)
+                             raw-camera-y))
+               (margin-x (assets-half-sprite-width assets))
+               (margin-y (assets-half-sprite-height assets))
+               (camera-2d (raylib:make-camera-2d
+                           :target (raylib:make-vector2 :x camera-x :y camera-y)
+                           :offset (camera-offset camera)
+                           :rotation 0.0
+                           :zoom zoom)))
+          (raylib:with-mode-2d camera-2d
+            (draw-world world render assets camera player npcs ui editor)
+            (draw-zone-objects world render assets camera player editor)
+            (draw-entities-with-spatial-culling game player camera-x camera-y zoom
+                                                 margin-x margin-y assets render)
+            (draw-click-marker player world)
+            (draw-editor-world-overlay editor world camera))))
+      (draw-hud player ui world)
+      (draw-minimap world player npcs ui)
+      (draw-inventory player ui render assets)
+      (draw-context-menu ui)
+      (draw-loading-overlay ui)
+      (draw-editor-ui-overlay editor ui)
+      (draw-editor-tileset-preview editor render)
+      (draw-cache-debug-overlay)
+      (when (ui-menu-open ui)
+        (draw-menu ui audio editor))
+      (raylib:end-texture-mode)
+      ;; === Present virtual texture to display with point filtering ===
       (raylib:with-drawing
         (raylib:clear-background raylib:+black+)
-        (multiple-value-bind (raw-camera-x raw-camera-y)
-            (editor-camera-target editor player camera)
-          (let* ((zoom (camera-zoom camera))
-                 ;; Phase 2a: Screen-pixel snap - ensures camera aligns to screen pixels at any zoom
-                 ;; Formula: cam' = round(cam * zoom) / zoom
-                 ;; This prevents sub-pixel rendering artifacts (tile seams) during movement
-                 (camera-x (if (> zoom 0.0)
-                               (/ (fround (* raw-camera-x zoom)) zoom)
-                               raw-camera-x))
-                 (camera-y (if (> zoom 0.0)
-                               (/ (fround (* raw-camera-y zoom)) zoom)
-                               raw-camera-y))
-                 (margin-x (assets-half-sprite-width assets))
-                 (margin-y (assets-half-sprite-height assets))
-                 (camera-2d (raylib:make-camera-2d
-                             :target (raylib:make-vector2 :x camera-x :y camera-y)
-                             :offset (camera-offset camera)
-                             :rotation 0.0
-                             :zoom zoom)))
-            (raylib:with-mode-2d camera-2d
-              (draw-world world render assets camera player npcs ui editor)
-              (draw-zone-objects world render assets camera player editor)
-              ;; Use spatial culling for entity rendering (Phase 3 optimization)
-              (draw-entities-with-spatial-culling game player camera-x camera-y zoom
-                                                   margin-x margin-y assets render)
-              (draw-click-marker player world)
-              (draw-editor-world-overlay editor world camera))))
-        (draw-hud player ui world)
-        (draw-minimap world player npcs ui)
-        (draw-inventory player ui render assets)
-        (draw-context-menu ui)
-        (draw-loading-overlay ui)
-        (draw-editor-ui-overlay editor ui)
-        (draw-editor-tileset-preview editor render)
-        ;; Cache debug overlay (Phase A instrumentation)
-        (draw-cache-debug-overlay)
-        (when (ui-menu-open ui)
-          (draw-menu ui audio editor)))
-    ;; Log cache stats at end of frame (Phase A instrumentation)
-    (log-render-cache-stats))))
+        (raylib:draw-texture-pro
+         (raylib:render-texture-texture vt)
+         (render-present-source render)   ; source: (0, 0, 640, -360) Y-flipped
+         (render-present-dest render)     ; dest: centered on display at integer scale
+         (render-origin render)           ; origin: (0, 0)
+         0.0                              ; rotation: none
+         raylib:+white+))))              ; tint: no color modulation
+  ;; Log cache stats at end of frame (Phase A instrumentation)
+  (log-render-cache-stats))
