@@ -265,6 +265,37 @@
     (assert (= (raylib:vector2-y offset) 180.0)
             () "camera: Y offset = virtual-height/2")))
 
+(defun test-login-layout-fits-virtual-bounds ()
+  "Test that login panel and all buttons fit within 640x360 virtual space.
+   Regression test: panel was 550px tall, Quit button landed at y=375 (unreachable)."
+  (let* ((*virtual-width* 640)
+         (*virtual-height* 360)
+         (screen-width *virtual-width*)
+         (screen-height *virtual-height*)
+         (panel-width 380)
+         (panel-height 320)
+         (panel-x (truncate (/ (- screen-width panel-width) 2)))
+         (panel-y (truncate (/ (- screen-height panel-height) 2)))
+         (button-height 36)
+         ;; Button Y positions must match draw-login-screen in ui.lisp
+         (login-y (+ panel-y 170))
+         (register-y (+ panel-y 215))
+         (quit-y (+ panel-y 265)))
+    ;; Panel must be fully within virtual bounds
+    (assert (>= panel-x 0) () "login-layout: panel-x >= 0")
+    (assert (>= panel-y 0) () "login-layout: panel-y >= 0")
+    (assert (<= (+ panel-x panel-width) screen-width)
+            () "login-layout: panel right edge within bounds")
+    (assert (<= (+ panel-y panel-height) screen-height)
+            () "login-layout: panel bottom edge within bounds")
+    ;; All button bottoms must be reachable (< virtual height)
+    (assert (< (+ login-y button-height) screen-height)
+            () "login-layout: login button bottom reachable")
+    (assert (< (+ register-y button-height) screen-height)
+            () "login-layout: register button bottom reachable")
+    (assert (< (+ quit-y button-height) screen-height)
+            () "login-layout: quit button bottom reachable")))
+
 (defvar *tests-utils*
   '(test-clamp
     test-clamp-edge-cases
@@ -290,5 +321,6 @@
     test-display-to-virtual-mouse
     test-display-to-virtual-mouse-zero-scale
     test-current-screen-always-virtual
-    test-camera-offset-always-virtual-center)
+    test-camera-offset-always-virtual-center
+    test-login-layout-fits-virtual-bounds)
   "Utils domain test functions.")

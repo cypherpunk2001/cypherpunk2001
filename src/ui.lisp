@@ -725,20 +725,20 @@
   (when (ui-login-active ui)
     (let* ((screen-width (current-screen-width))
            (screen-height (current-screen-height))
-           (panel-width 500)
-           (panel-height 550)
+           (panel-width 380)
+           (panel-height 320)
            (panel-x (truncate (/ (- screen-width panel-width) 2)))
            (panel-y (truncate (/ (- screen-height panel-height) 2)))
            (title-text "MMORPG Login")
-           (title-size 40)
-           (label-size 20)
-           (input-size 18)
-           (error-size 16)
-           (button-width 200)
-           (button-height 50)
-           (input-width 400)
-           (input-height 45)
-           (padding 30)
+           (title-size 28)
+           (label-size 16)
+           (input-size 14)
+           (error-size 13)
+           (button-width 160)
+           (button-height 36)
+           (input-width 340)
+           (input-height 28)
+           (padding 15)
            (bg-color (raylib:make-color :r 20 :g 20 :b 30 :a 255))
            (panel-color (raylib:make-color :r 40 :g 40 :b 50 :a 255))
            (text-color (raylib:make-color :r 220 :g 220 :b 220 :a 255))
@@ -763,7 +763,7 @@
 
       ;; Server status indicator
       (let* ((status (ui-server-status ui))
-             (status-y (+ panel-y padding 50))
+             (status-y (+ panel-y padding 32))
              (status-text (case status
                            (:online "Server Online")
                            (:offline "Server Offline")
@@ -778,35 +778,35 @@
         (raylib:draw-text status-text (+ status-x 20) status-y 16 status-color))
 
       ;; Username label
-      (let ((username-label-y (+ panel-y padding 80)))
+      (let ((username-label-y (+ panel-y padding 52)))
         (raylib:draw-text "Username:" (+ panel-x padding) username-label-y label-size text-color)
 
         ;; Username input box
         (let ((input-x (+ panel-x (truncate (/ (- panel-width input-width) 2))))
-              (input-y (+ username-label-y 30)))
+              (input-y (+ username-label-y 20)))
           (raylib:draw-rectangle input-x input-y input-width input-height input-bg-color)
           (raylib:draw-rectangle-lines input-x input-y input-width input-height text-color)
-          (raylib:draw-text (ui-username-buffer ui) (+ input-x 10) (+ input-y 12) input-size text-color)))
+          (raylib:draw-text (ui-username-buffer ui) (+ input-x 8) (+ input-y 6) input-size text-color)))
 
       ;; Password label and hint (no real password input for MVP - just text saying to use username)
-      (let ((password-label-y (+ panel-y padding 200)))
+      (let ((password-label-y (+ panel-y padding 100)))
         (raylib:draw-text "Password:" (+ panel-x padding) password-label-y label-size text-color)
-        (raylib:draw-text "(For MVP: will be same as username)"
+        (raylib:draw-text "(MVP: same as username)"
                          (+ panel-x padding)
-                         (+ password-label-y 25)
-                         14
+                         (+ password-label-y 18)
+                         12
                          (raylib:make-color :r 150 :g 150 :b 150 :a 255)))
 
       ;; Error message (if any)
       (when (ui-auth-error-message ui)
-        (let* ((error-y (+ panel-y padding 280))
+        (let* ((error-y (+ panel-y padding 140))
                (error-text (ui-auth-error-message ui))
                (error-width (raylib:measure-text error-text error-size))
                (error-x (truncate (/ (- screen-width error-width) 2))))
           (raylib:draw-text error-text error-x error-y error-size error-color)))
 
       ;; Login button
-      (let* ((button-y (+ panel-y 330))
+      (let* ((button-y (+ panel-y 170))
              (login-button-x (truncate (/ (- screen-width button-width) 2)))
              (mouse-x (virtual-mouse-x))
              (mouse-y (virtual-mouse-y))
@@ -818,17 +818,17 @@
 
         (raylib:draw-rectangle login-button-x button-y button-width button-height login-color)
         (let* ((text "Login")
-               (text-width (raylib:measure-text text 24))
+               (text-width (raylib:measure-text text 20))
                (text-x (+ login-button-x (truncate (/ (- button-width text-width) 2))))
-               (text-y (+ button-y 12)))
-          (raylib:draw-text text text-x text-y 24 text-color))
+               (text-y (+ button-y 8)))
+          (raylib:draw-text text text-x text-y 20 text-color))
 
         ;; Return :login if clicked
         (when (and login-hover (raylib:is-mouse-button-pressed +mouse-left+))
           (return-from draw-login-screen :login)))
 
       ;; Register button
-      (let* ((button-y (+ panel-y 400))
+      (let* ((button-y (+ panel-y 215))
              (register-button-x (truncate (/ (- screen-width button-width) 2)))
              (mouse-x (virtual-mouse-x))
              (mouse-y (virtual-mouse-y))
@@ -840,17 +840,17 @@
 
         (raylib:draw-rectangle register-button-x button-y button-width button-height register-color)
         (let* ((text "Register")
-               (text-width (raylib:measure-text text 24))
+               (text-width (raylib:measure-text text 20))
                (text-x (+ register-button-x (truncate (/ (- button-width text-width) 2))))
-               (text-y (+ button-y 12)))
-          (raylib:draw-text text text-x text-y 24 text-color))
+               (text-y (+ button-y 8)))
+          (raylib:draw-text text text-x text-y 20 text-color))
 
         ;; Return :register if clicked
         (when (and register-hover (raylib:is-mouse-button-pressed +mouse-left+))
           (return-from draw-login-screen :register)))
 
       ;; Quit button
-      (let* ((button-y (+ panel-y 470))
+      (let* ((button-y (+ panel-y 265))
              (quit-button-x (truncate (/ (- screen-width button-width) 2)))
              (mouse-x (virtual-mouse-x))
              (mouse-y (virtual-mouse-y))
@@ -864,10 +864,10 @@
 
         (raylib:draw-rectangle quit-button-x button-y button-width button-height quit-color)
         (let* ((text "Quit")
-               (text-width (raylib:measure-text text 24))
+               (text-width (raylib:measure-text text 20))
                (text-x (+ quit-button-x (truncate (/ (- button-width text-width) 2))))
-               (text-y (+ button-y 12)))
-          (raylib:draw-text text text-x text-y 24 text-color))
+               (text-y (+ button-y 8)))
+          (raylib:draw-text text text-x text-y 20 text-color))
 
         ;; Quit application if clicked
         (when (and quit-hover (raylib:is-mouse-button-pressed +mouse-left+))
