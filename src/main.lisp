@@ -142,6 +142,11 @@
             (net-role (game-net-role game)))
         (when menu-action
           (case menu-action
+            (:toggle-fullscreen
+             (raylib:toggle-fullscreen)
+             (refresh-present-metrics (game-render game))
+             (update-camera-for-window-resize (game-camera game))
+             (setf (ui-menu-open ui) nil))
             (:toggle-editor
              (log-verbose "Toggle editor requested")
              (if (eq net-role :client)

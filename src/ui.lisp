@@ -508,8 +508,7 @@
                       (ui-menu-fullscreen-x ui) (ui-menu-fullscreen-y ui)
                       (ui-menu-fullscreen-size ui)
                       (ui-menu-fullscreen-size ui))
-     ;; Toggle fullscreen — present metrics refreshed by handle-window-resize
-     (raylib:toggle-fullscreen))
+     :toggle-fullscreen)
     ((point-in-rect-p mouse-x mouse-y
                       (ui-menu-leash-x ui) (ui-menu-leash-y ui)
                       (ui-menu-leash-size ui)
