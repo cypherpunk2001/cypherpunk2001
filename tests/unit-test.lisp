@@ -59,7 +59,8 @@
           *tests-combat-targeting*
           *tests-auth*
           *tests-zone-cache*
-          *tests-zone-continuity*))
+          *tests-zone-continuity*
+          *tests-editor*))
 
 ;;; ============================================================
 ;;; Test runners
