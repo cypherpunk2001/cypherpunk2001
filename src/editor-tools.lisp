@@ -267,13 +267,15 @@
                    (setf (editor-dirty editor) t))
                  (let ((object-id (editor-current-object-id editor)))
                    (when object-id
-                     (zone-add-object zone (list :id object-id
-                                                 :x tx
-                                                 :y ty
-                                                 :count 1
-                                                 :respawn 0.0
-                                                 :respawnable t
-                                                 :snapshot-dirty nil))
+                     (zone-add-object zone (%make-zone-object
+                                            :id object-id
+                                            :x tx
+                                            :y ty
+                                            :count 1
+                                            :base-count 1
+                                            :respawn 0.0
+                                            :respawnable t
+                                            :snapshot-dirty nil))
                      (setf (editor-dirty editor) t)))))
             (:spawn
              (if right-down

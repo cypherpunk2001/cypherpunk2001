@@ -54,39 +54,6 @@
  (:blood-frame-time 0.08))
 
 :animation-sets
- (:player-archer
-  (:dir "../assets/1 Characters/1"
-   :down-idle "D_Idle.png"
-   :down-walk "D_Walk.png"
-   :down-attack "D_Attack.png"
-   :up-idle "U_Idle.png"
-   :up-walk "U_Walk.png"
-   :up-attack "U_Attack.png"
-   :side-idle "S_Idle.png"
-   :side-walk "S_Walk.png"
-   :side-attack "S_Attack.png"))
- (:player-warrior
-  (:dir "../assets/1 Characters/2"
-   :down-idle "D_Idle.png"
-   :down-walk "D_Walk.png"
-   :down-attack "D_Attack.png"
-   :up-idle "U_Idle.png"
-   :up-walk "U_Walk.png"
-   :up-attack "U_Attack.png"
-   :side-idle "S_Idle.png"
-   :side-walk "S_Walk.png"
-   :side-attack "S_Attack.png"))
- (:player-wizard
-  (:dir "../assets/1 Characters/3"
-   :down-idle "D_Idle.png"
-   :down-walk "D_Walk.png"
-   :down-attack "D_Attack.png"
-   :up-idle "U_Idle.png"
-   :up-walk "U_Walk.png"
-   :up-attack "U_Attack.png"
-   :side-idle "S_Idle.png"
-   :side-walk "S_Walk.png"
-   :side-attack "S_Attack.png"))
  (:player-cyberpunk
   (:dir "../assets2/characters/player/sprites"
    :down-idle "D_Idle.png"

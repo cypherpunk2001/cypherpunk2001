@@ -240,6 +240,53 @@
 
 ;;; ============================================================
 
+(defun test-zone-add-object ()
+  "Test zone-add-object adds a zone-object struct and replaces duplicates."
+  (let ((zone (%make-zone :id :test :width 10 :height 10)))
+    ;; Add first object
+    (let ((obj (%make-zone-object :id :coins :x 3 :y 4 :count 5 :base-count 5
+                                  :respawn 0.0 :respawnable t :snapshot-dirty nil)))
+      (zone-add-object zone obj)
+      (assert (= (length (zone-objects zone)) 1) () "add-object: one object")
+      (assert (eq (zone-object-id (first (zone-objects zone))) :coins) ()
+              "add-object: correct id")
+      (assert (= (zone-object-x (first (zone-objects zone))) 3) ()
+              "add-object: correct x"))
+    ;; Add second object at different tile
+    (let ((obj2 (%make-zone-object :id :bones :x 5 :y 6 :count 1 :base-count 1
+                                   :respawn 0.0 :respawnable t :snapshot-dirty nil)))
+      (zone-add-object zone obj2)
+      (assert (= (length (zone-objects zone)) 2) () "add-object: two objects"))
+    ;; Replace object at same tile
+    (let ((obj3 (%make-zone-object :id :arrows :x 3 :y 4 :count 10 :base-count 10
+                                   :respawn 0.0 :respawnable t :snapshot-dirty nil)))
+      (zone-add-object zone obj3)
+      (assert (= (length (zone-objects zone)) 2) () "add-object: replaced, still two")
+      ;; The one at 3,4 should now be :arrows
+      (let ((found (find-if (lambda (o) (and (= (zone-object-x o) 3)
+                                             (= (zone-object-y o) 4)))
+                            (zone-objects zone))))
+        (assert (eq (zone-object-id found) :arrows) () "add-object: replaced id")))))
+
+(defun test-zone-remove-object-at ()
+  "Test zone-remove-object-at removes object by tile coordinates."
+  (let ((zone (%make-zone :id :test :width 10 :height 10)))
+    (zone-add-object zone (%make-zone-object :id :coins :x 3 :y 4 :count 1 :base-count 1
+                                             :respawn 0.0 :respawnable t :snapshot-dirty nil))
+    (zone-add-object zone (%make-zone-object :id :bones :x 5 :y 6 :count 1 :base-count 1
+                                             :respawn 0.0 :respawnable t :snapshot-dirty nil))
+    (assert (= (length (zone-objects zone)) 2) () "remove-object: starts with 2")
+    ;; Remove one
+    (zone-remove-object-at zone 3 4)
+    (assert (= (length (zone-objects zone)) 1) () "remove-object: now 1")
+    (assert (eq (zone-object-id (first (zone-objects zone))) :bones) ()
+            "remove-object: correct one remains")
+    ;; Remove non-existent (no-op)
+    (zone-remove-object-at zone 99 99)
+    (assert (= (length (zone-objects zone)) 1) () "remove-object: no-op on missing")))
+
+;;; ============================================================
+
 
 (defvar *tests-zone*
   '(test-zone-chunk-key
@@ -260,5 +307,8 @@
     test-zone-slice
     test-zone-resize
     ;; Final Zone Tests
-    test-load-write-zone-roundtrip)
+    test-load-write-zone-roundtrip
+    ;; Object management tests
+    test-zone-add-object
+    test-zone-remove-object-at)
   "Zone domain test functions.")
