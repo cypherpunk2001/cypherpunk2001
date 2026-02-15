@@ -1,0 +1,33 @@
+{
+  "id": "287d51c8-8976-41e4-b9c2-2c14e55d0830",
+  "name": "cyberpunk mercenary, dark jacket with hood, glowin...",
+  "prompt": "cyberpunk mercenary, dark jacket with hood, glowing cyan visor, armored vest, combat boots, futuristic street runner",
+  "size": {
+    "width": 32,
+    "height": 32
+  },
+  "directions": 8,
+  "created_at": "2026-02-15T01:35:52.794837+00:00",
+  "animation_count": 0,
+  "template_id": "mannequin",
+  "view": "low top-down",
+  "rotation_urls": {
+    "south": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/south.png?t=1771119514030",
+    "west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/west.png?t=1771119514030",
+    "east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/east.png?t=1771119514030",
+    "north": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/north.png?t=1771119514030",
+    "south-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/south-east.png?t=1771119514030",
+    "north-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/north-east.png?t=1771119514030",
+    "north-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/north-west.png?t=1771119514030",
+    "south-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/287d51c8-8976-41e4-b9c2-2c14e55d0830/rotations/south-west.png?t=1771119514030"
+  },
+  "style_settings": {
+    "detail": "highly detailed",
+    "outline": "lineless",
+    "shading": "detailed shading"
+  },
+  "guidance": null,
+  "ai_freedom": null,
+  "tags": [],
+  "skeletons": null
+}

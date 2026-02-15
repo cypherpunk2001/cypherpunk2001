@@ -1,0 +1,33 @@
+{
+  "id": "953733a5-db04-4838-ac32-8660d4835121",
+  "name": "small hovering patrol drone, cracked lens, sparkin...",
+  "prompt": "small hovering patrol drone, cracked lens, sparking wires, dull metal chassis, single red eye sensor, cyberpunk robotic",
+  "size": {
+    "width": 32,
+    "height": 32
+  },
+  "directions": 8,
+  "created_at": "2026-02-15T02:10:27.674989+00:00",
+  "animation_count": 0,
+  "template_id": "mannequin",
+  "view": "low top-down",
+  "rotation_urls": {
+    "south": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/south.png?t=1771121496729",
+    "west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/west.png?t=1771121496729",
+    "east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/east.png?t=1771121496729",
+    "north": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/north.png?t=1771121496729",
+    "south-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/south-east.png?t=1771121496729",
+    "north-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/north-east.png?t=1771121496729",
+    "north-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/north-west.png?t=1771121496729",
+    "south-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/953733a5-db04-4838-ac32-8660d4835121/rotations/south-west.png?t=1771121496729"
+  },
+  "style_settings": {
+    "detail": "high",
+    "outline": "none",
+    "shading": "soft"
+  },
+  "guidance": null,
+  "ai_freedom": null,
+  "tags": [],
+  "skeletons": null
+}

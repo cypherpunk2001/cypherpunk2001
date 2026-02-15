@@ -1,0 +1,33 @@
+{
+  "id": "1df7abf7-6742-45d4-9fea-c59fba038230",
+  "name": "rogue netrunner hacker, long hooded cloak, hologra...",
+  "prompt": "rogue netrunner hacker, long hooded cloak, holographic wrist display, glowing purple visor, slim build, cyberpunk",
+  "size": {
+    "width": 32,
+    "height": 32
+  },
+  "directions": 8,
+  "created_at": "2026-02-15T02:12:54.835727+00:00",
+  "animation_count": 0,
+  "template_id": "mannequin",
+  "view": "low top-down",
+  "rotation_urls": {
+    "south": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/south.png?t=1771121642970",
+    "west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/west.png?t=1771121642970",
+    "east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/east.png?t=1771121642970",
+    "north": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/north.png?t=1771121642970",
+    "south-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/south-east.png?t=1771121642970",
+    "north-east": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/north-east.png?t=1771121642970",
+    "north-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/north-west.png?t=1771121642970",
+    "south-west": "https://backblaze.pixellab.ai/file/pixellab-characters/bab6b10e-3de9-4c9f-ba6c-bad22ea453e2/1df7abf7-6742-45d4-9fea-c59fba038230/rotations/south-west.png?t=1771121642970"
+  },
+  "style_settings": {
+    "detail": "high",
+    "outline": "none",
+    "shading": "soft"
+  },
+  "guidance": null,
+  "ai_freedom": null,
+  "tags": [],
+  "skeletons": null
+}
