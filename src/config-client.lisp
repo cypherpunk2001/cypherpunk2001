@@ -84,7 +84,7 @@
   "Height of a single sprite frame in pixels.")
 (defparameter *sprite-scale* 1.0
   "Scale factor applied when drawing sprites. 1.0 = native size in virtual buffer (640x360).")
-(defparameter *player-animation-set-id* :player
+(defparameter *player-animation-set-id* :player-cyberpunk
   "Animation set ID used for the player sprite set.")
 
 ;;; Inventory UI Layout - Read when building inventory UI

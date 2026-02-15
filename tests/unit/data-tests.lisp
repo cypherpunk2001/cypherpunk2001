@@ -197,6 +197,34 @@
     (assert (eq (npc-archetype-aggro-mode archetype) :always) ()
             "npc-from-plist: aggro-mode")))
 
+(defun test-apply-tunables-graphics-keys ()
+  "Test that Phase 6 graphics tunables are applied by apply-tunables."
+  ;; Save originals
+  (let ((orig-tile-size *tile-size*)
+        (orig-tile-scale *tile-scale*)
+        (orig-sprite-scale *sprite-scale*)
+        (orig-tileset-path *tileset-path*)
+        (orig-anim-set-id *player-animation-set-id*))
+    (unwind-protect
+         (progn
+           ;; Apply test tunables
+           (apply-tunables '((:tile-size 64)
+                             (:tile-scale 2.0)
+                             (:sprite-scale 0.5)
+                             (:tileset-path "test/atlas.png")
+                             (:player-animation-set-id :test-set)))
+           (assert (= *tile-size* 64) () "tunables: tile-size applied")
+           (assert (= *tile-scale* 2.0) () "tunables: tile-scale applied")
+           (assert (= *sprite-scale* 0.5) () "tunables: sprite-scale applied")
+           (assert (string= *tileset-path* "test/atlas.png") () "tunables: tileset-path applied")
+           (assert (eq *player-animation-set-id* :test-set) () "tunables: player-animation-set-id applied"))
+      ;; Restore originals
+      (setf *tile-size* orig-tile-size
+            *tile-scale* orig-tile-scale
+            *sprite-scale* orig-sprite-scale
+            *tileset-path* orig-tileset-path
+            *player-animation-set-id* orig-anim-set-id))))
+
 ;;; ============================================================
 
 
@@ -216,5 +244,6 @@
     test-merge-animation-sets
     ;; Additional Data Tests
     test-parse-game-data-forms
-    test-make-npc-archetype-from-plist)
+    test-make-npc-archetype-from-plist
+    test-apply-tunables-graphics-keys)
   "Data domain test functions.")
